@@ -12,7 +12,7 @@ Guests scan a QR code on a pew card, enter their first name and phone number, an
 
 Pastors get a mobile-friendly dashboard with visitors, replies and returns this month, plus every guest's message status. You (the owner) get a private `/admin` dashboard across all churches.
 
-**Stack:** Next.js 16 (App Router) · Postgres + Drizzle ORM · Stripe · pluggable SMS (Twilio included) · Vercel (hosting + cron).
+**Stack:** Next.js 16 (App Router) · Postgres + Drizzle ORM · PayPal Subscriptions · pluggable SMS (Twilio included) · Vercel (hosting + cron).
 
 ---
 
@@ -26,7 +26,7 @@ Pastors get a mobile-friendly dashboard with visitors, replies and returns this 
 | `/dashboard/guests/[id]` | Pastor | Full text thread with a guest, including replies |
 | `/dashboard/share` | Pastor | QR code, guest link, **pew card PDF** (4 per letter page), QR PNG |
 | `/dashboard/settings` | Pastor | Edit church name, service times, what to expect, welcome message |
-| `/dashboard/billing` | Pastor | Trial status, subscribe ($39/mo via Stripe Checkout), manage billing |
+| `/dashboard/billing` | Pastor | Trial status, subscribe ($39/mo with PayPal), cancel |
 | `/g/[slug]` | Guests | The QR landing page — no app, no login |
 | `/g/[slug]/welcome` | Guests | Welcome pack (linked from the thank-you text) |
 | `/admin` | **Owner only** | All churches, signups, visitors, texts sent, trial/paid status, MRR |
@@ -87,16 +87,28 @@ Message wording lives in `buildMessage()` in [`src/lib/messaging.ts`](src/lib/me
 
 ---
 
-## Billing (Stripe)
+## Billing (PayPal Subscriptions)
 
-1. In Stripe, create a Product "ChurchFollow" with a **recurring $39/month** price. Copy its ID to `STRIPE_PRICE_ID`.
-2. Set `STRIPE_SECRET_KEY`.
-3. Add a webhook endpoint `https://YOUR-DOMAIN/api/stripe/webhook` with events:
-   `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`.
-   Copy its signing secret to `STRIPE_WEBHOOK_SECRET`.
-4. Turn on the **Customer Portal** in Stripe (Settings → Billing → Customer portal) so pastors can update cards and cancel.
+Churches pay $39/month through PayPal.
 
-How the trial works: every church gets 7 days free at signup, with no card needed. If they subscribe mid-trial, Stripe keeps their remaining free days before the first charge. When a trial ends unpaid, the guest page keeps collecting visitors but **texts pause** (pending ones are marked "skipped") until they subscribe. Without Stripe keys, the billing page shows a friendly "payments aren't switched on yet" note.
+1. **Get API keys.** Log in at [developer.paypal.com](https://developer.paypal.com) with your PayPal **Business** account → **Apps & Credentials** → create an app. Copy the **Client ID** and **Secret**. The **Sandbox** tab gives test keys (fake money); the **Live** tab gives real ones.
+2. **Create the plan and webhook in one go** (from your computer, after the site is deployed):
+   ```bash
+   PAYPAL_ENV=sandbox PAYPAL_CLIENT_ID=... PAYPAL_CLIENT_SECRET=... \
+   APP_URL=https://your-domain.com npm run paypal:setup
+   ```
+   It creates a "ChurchFollow" product, a **$39/month** plan, and a webhook pointing at `https://your-domain.com/api/paypal/webhook`, then prints `PAYPAL_PLAN_ID` and `PAYPAL_WEBHOOK_ID`.
+3. **In Vercel**, set `PAYPAL_ENV`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_PLAN_ID`, `PAYPAL_WEBHOOK_ID`, then redeploy.
+4. **Test with sandbox:** subscribe from `/dashboard/billing` using a sandbox *personal* test account (developer.paypal.com → Testing Tools → Sandbox Accounts).
+5. **Go live:** repeat steps 2–3 with your **Live** keys and `PAYPAL_ENV=live`. Sandbox and live plans/webhooks are separate.
+
+How it works:
+- Every church gets 7 days free at signup with nothing to enter. If they subscribe mid-trial, PayPal's first charge is scheduled for the day the trial ends.
+- After approving in PayPal, the pastor returns to `/dashboard/billing/paypal-return`; the app confirms the subscription with PayPal directly (it doesn't trust the URL) and checks it belongs to that church.
+- Webhooks keep it in sync: payments, failed payments ("past due" warning), suspension, cancellation. Each webhook is verified with PayPal's signature-verification API, and the subscription is re-fetched from PayPal so stale or out-of-order events can't set the wrong state.
+- Pastors can cancel from the billing page (or from their PayPal account). They keep full access until the end of the month they paid for.
+- When a trial or subscription ends unpaid, the guest page keeps collecting visitors but **texts pause** until they subscribe.
+- Without PayPal keys, the billing page shows a friendly "payments aren't switched on yet" note.
 
 ---
 
@@ -127,7 +139,7 @@ After changing `src/db/schema.ts`, run `npm run db:generate` to create a new mig
 
 ## Data model
 
-- **churches**: profile, login, `slug` (guest URL / QR), trial end, Stripe subscription status
+- **churches**: profile, login, `slug` (guest URL / QR), trial end, subscription status, PayPal subscription id, paid-through date
 - **visitors**: first name, phone (E.164), opted-out flag, `returned_at`, `last_reply_at`
 - **messages**: every outbound (`welcome` / `checkin` / `invite`) and inbound (`reply` / `optout` / `optin`) text, with status `scheduled → sending → sent | failed | skipped`
 

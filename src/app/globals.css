@@ -201,3 +201,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .site-header, .subnav, .no-print { display: none !important; }
   body { background: #fff; }
 }
+
+/* Fit all four dashboard tabs on small phones without sideways scrolling. */
+@media (max-width: 480px) {
+  .subnav .nav { gap: 0; justify-content: space-between; }
+  .subnav .nav a { padding: 7px 9px; font-size: 0.86rem; }
+}

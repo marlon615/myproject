@@ -24,7 +24,7 @@ export default async function AdminPage() {
   const vMap = new Map(visitorCounts.map((v) => [v.churchId, v]));
   const sMap = new Map(sentCounts.map((s) => [s.churchId, s.total]));
   const rows = list.map((c) => ({ c, plan: planState(c), v: vMap.get(c.id), sent: sMap.get(c.id) ?? 0 }));
-  const paying = rows.filter((r) => r.plan.kind === "active").length;
+  const paying = rows.filter((r) => r.plan.kind === "active" && !r.plan.cancelsAt).length;
   const trialing = rows.filter((r) => r.plan.kind === "trial").length;
 
   return (

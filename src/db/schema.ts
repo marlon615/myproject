@@ -22,10 +22,10 @@ export const churches = pgTable(
     whatToExpect: text("what_to_expect").notNull(),
     welcomeMessage: text("welcome_message").notNull(),
     trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }).notNull(),
-    // Mirrors the Stripe subscription status: active, trialing, past_due, canceled, ...
+    // Our normalized subscription status: active | past_due | canceled (null = never subscribed).
     subscriptionStatus: text("subscription_status"),
-    stripeCustomerId: text("stripe_customer_id"),
-    stripeSubscriptionId: text("stripe_subscription_id"),
+    paypalSubscriptionId: text("paypal_subscription_id"),
+    // Paid-through date (PayPal's next billing time). A canceled church stays active until then.
     currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -1,7 +1,7 @@
 import "server-only";
 import { headers } from "next/headers";
 
-/** Monthly price shown in the UI. The real charge comes from your Stripe price (STRIPE_PRICE_ID). */
+/** Monthly price shown in the UI. The real charge comes from your PayPal plan (PAYPAL_PLAN_ID, see `npm run paypal:setup`). */
 export const PRICE_MONTHLY_USD = 39;
 export const TRIAL_DAYS = 7;
 

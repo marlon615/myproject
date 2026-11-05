@@ -27,7 +27,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <NavLinks
               links={[
                 { href: "/dashboard", label: "Guests", exact: true },
-                { href: "/dashboard/share", label: "QR & pew cards" },
+                { href: "/dashboard/share", label: "Pew cards" },
                 { href: "/dashboard/settings", label: "Church info" },
                 { href: "/dashboard/billing", label: "Billing" },
               ]}
@@ -45,13 +45,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
           )}
           {plan.kind === "expired" && (
             <div className="alert alert-error row between">
-              <span><strong>Your trial has ended.</strong> Guests can still sign up, but follow-up texts are paused.</span>
+              <span><strong>Your {church.subscriptionStatus === "canceled" ? "subscription" : "trial"} has ended.</strong> Guests can still sign up, but follow-up texts are paused.</span>
               <Link href="/dashboard/billing" className="btn btn-sm btn-primary">Subscribe for $39/mo</Link>
             </div>
           )}
           {plan.kind === "past_due" && (
             <div className="alert alert-error row between">
-              <span><strong>Payment issue.</strong> Please update your card to keep texts going.</span>
+              <span><strong>Payment issue.</strong> Please update your payment method in PayPal to keep texts going.</span>
               <Link href="/dashboard/billing" className="btn btn-sm btn-primary">Fix billing</Link>
             </div>
           )}
