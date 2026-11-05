@@ -33,7 +33,25 @@ async function call(path, { method = "GET", body, token } = {}) {
   return data;
 }
 
-const { access_token: token } = await call("/v1/oauth2/token", { method: "POST", body: "grant_type=client_credentials" });
+process.on("unhandledRejection", (err) => {
+  console.error(`\nSetup stopped: ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+});
+
+let token;
+try {
+  ({ access_token: token } = await call("/v1/oauth2/token", { method: "POST", body: "grant_type=client_credentials" }));
+} catch (err) {
+  if (String(err.message).includes("HTTP 401")) {
+    console.error(
+      `PayPal didn't accept that Client ID / Secret for ${env.toUpperCase()}.\n` +
+        `Check you copied both from the ${env === "live" ? "Live" : "Sandbox"} tab in developer.paypal.com → Apps & Credentials,\n` +
+        `and that PAYPAL_ENV=${env} matches the tab you copied them from.`,
+    );
+    process.exit(1);
+  }
+  throw err;
+}
 console.log(`Connected to PayPal (${env}).`);
 
 let planId = process.env.PAYPAL_PLAN_ID;
