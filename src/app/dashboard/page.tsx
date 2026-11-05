@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { and, count, countDistinct, desc, eq, gte, inArray } from "drizzle-orm";
 import { db, visitors, messages } from "@/db";
 import { requireChurch } from "@/lib/session";
-import { formatDate, formatPhone, startOfMonth } from "@/lib/utils";
+import { formatDate, formatPhone, startOfMonth, monthName as currentMonthName } from "@/lib/utils";
 import { MessageBadge } from "@/components/MessageBadge";
 import { ReturnedButton } from "@/components/ReturnedButton";
 
@@ -35,7 +35,7 @@ export default async function DashboardPage() {
     byVisitor.set(m.visitorId, list);
   }
 
-  const monthName = new Date().toLocaleDateString("en-US", { month: "long" });
+  const monthName = currentMonthName();
 
   return (
     <div className="stack-lg">

@@ -51,7 +51,7 @@ Pastors get a mobile-friendly dashboard with visitors, replies and returns this 
 
 ### Scheduled texts (cron)
 
-`vercel.json` runs `/api/cron/send` **once a day at 15:00 UTC** (10–11am Eastern), which sends the day-3 and day-7 texts that are due. Vercel's free Hobby plan only allows daily cron jobs.
+`vercel.json` runs `/api/cron/send` **once a day at 15:00 UTC** (9–10am Central), which sends the day-3 and day-7 texts that are due. Vercel's free Hobby plan only allows daily cron jobs.
 
 - **Thank-you texts don't wait for cron.** They're sent right after the guest submits (using Next.js `after()`), so they arrive within seconds.
 - On **Vercel Pro**, you can change the schedule to hourly (`"0 * * * *"`) for more precise timing.

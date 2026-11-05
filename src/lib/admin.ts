@@ -4,8 +4,10 @@ import { db, churches, visitors, messages, type Church } from "@/db";
 import { planState, type PlanState } from "@/lib/billing";
 import { PRICE_MONTHLY_USD } from "@/lib/config";
 
-/** Time zone used for "per day" / "per week" buckets in the owner dashboard. */
-export const OWNER_TZ = process.env.OWNER_TIMEZONE || "America/New_York";
+import { APP_TZ } from "@/lib/utils";
+
+/** Time zone used for "per day" / "per week" buckets in the owner dashboard (same as the rest of the app). */
+export const OWNER_TZ = APP_TZ;
 
 // ───────────── Status grouping (for the filter + badges) ─────────────
 
@@ -250,5 +252,5 @@ export function timeAgo(d: Date | string | null | undefined): string {
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
   const days = Math.round(s / 86400);
   if (days < 45) return `${days} day${days === 1 ? "" : "s"} ago`;
-  return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: APP_TZ });
 }

@@ -40,18 +40,43 @@ export function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
+/**
+ * The one time zone the whole app uses for dates, times, "this month" and chart buckets.
+ * Vercel servers run on UTC, so without this every time would be shown 5–6 hours ahead.
+ * Override with APP_TIMEZONE (OWNER_TIMEZONE is still accepted).
+ */
+export const APP_TZ = process.env.APP_TIMEZONE || process.env.OWNER_TIMEZONE || "America/Chicago";
+
+/** Offset (ms) between APP_TZ wall-clock time and UTC at a given instant. */
+function tzOffset(at: Date): number {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone: APP_TZ, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
+      .formatToParts(at)
+      .map((x) => [x.type, x.value]),
+  );
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(at.getTime() / 1000) * 1000;
+}
+
+/** Midnight on the 1st of the current month, in APP_TZ. */
 export function startOfMonth(d = new Date()): Date {
-  return new Date(d.getFullYear(), d.getMonth(), 1);
+  const local = new Date(d.getTime() + tzOffset(d));
+  const guess = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1);
+  return new Date(guess - tzOffset(new Date(guess)));
+}
+
+export function monthName(d = new Date()): string {
+  return d.toLocaleDateString("en-US", { month: "long", timeZone: APP_TZ });
 }
 
 export function formatDate(d: Date | string | null | undefined): string {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: APP_TZ });
 }
 
 export function formatDateTime(d: Date | string | null | undefined): string {
   if (!d) return "—";
   return new Date(d).toLocaleString("en-US", {
+    timeZone: APP_TZ,
     month: "short",
     day: "numeric",
     hour: "numeric",

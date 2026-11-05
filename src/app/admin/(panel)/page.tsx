@@ -137,7 +137,7 @@ export default async function AdminOverview() {
         </div>
       </section>
 
-      <p className="tiny muted center">Days and weeks are counted in {OWNER_TZ} time · updated {formatDate(new Date())}</p>
+      <p className="tiny muted center">Times, days and weeks are in {OWNER_TZ.replace("America/Chicago", "US Central").replace(/_/g, " ")} time · updated {formatDate(new Date())}</p>
     </div>
   );
 }
