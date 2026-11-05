@@ -113,6 +113,15 @@ export async function sendMessage(messageId: string): Promise<"sent" | "failed" 
 
 /** Send everything that's due. Called by the cron route. */
 export async function processDueMessages(limit = 200) {
+  // A send that was cut off mid-flight (e.g. the serverless function was stopped) would
+  // otherwise sit in "sending" forever. Surface it as failed rather than retrying, since
+  // the provider may already have delivered it and a duplicate text is worse.
+  const interrupted = await db
+    .update(messages)
+    .set({ status: "failed", error: "Interrupted while sending – not retried to avoid a duplicate text" })
+    .where(and(eq(messages.status, "sending"), lte(messages.scheduledFor, new Date(Date.now() - 10 * 60 * 1000))))
+    .returning({ id: messages.id });
+
   const due = await db
     .select({ id: messages.id })
     .from(messages)
@@ -122,7 +131,7 @@ export async function processDueMessages(limit = 200) {
 
   const tally = { sent: 0, failed: 0, skipped: 0, noop: 0 };
   for (const { id } of due) tally[await sendMessage(id)]++;
-  return { processed: due.length, ...tally };
+  return { processed: due.length, ...tally, interrupted: interrupted.length };
 }
 
 const STOP_WORDS = new Set(["stop", "stopall", "unsubscribe", "cancel", "end", "quit", "optout"]);

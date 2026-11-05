@@ -1,4 +1,7 @@
-import "dotenv/config";
+import { config } from "dotenv";
+
+// Same precedence as Next.js: .env.local overrides .env. (On Vercel, real env vars win.)
+config({ path: [".env.local", ".env"], quiet: true });
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
