@@ -87,3 +87,10 @@ export async function isAdmin(): Promise<boolean> {
 export async function requireAdmin() {
   if (!(await isAdmin())) redirect("/admin/login");
 }
+
+/** Record that the pastor was here, at most once an hour (powers "last activity" in /admin). */
+export async function touchLastSeen(church: Church) {
+  const last = church.lastSeenAt ? new Date(church.lastSeenAt).getTime() : 0;
+  if (Date.now() - last < 60 * 60 * 1000) return;
+  await db.update(churches).set({ lastSeenAt: new Date() }).where(eq(churches.id, church.id));
+}

@@ -4,11 +4,13 @@ import { NavLinks } from "@/components/NavLinks";
 import { requireChurch } from "@/lib/session";
 import { planState } from "@/lib/billing";
 import { logout } from "@/app/actions/auth";
+import { touchLastSeen } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const church = await requireChurch();
+  await touchLastSeen(church);
   const plan = planState(church);
 
   return (

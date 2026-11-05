@@ -29,7 +29,10 @@ Pastors get a mobile-friendly dashboard with visitors, replies and returns this 
 | `/dashboard/billing` | Pastor | Trial status, subscribe ($39/mo with PayPal), cancel |
 | `/g/[slug]` | Guests | The QR landing page — no app, no login |
 | `/g/[slug]/welcome` | Guests | Welcome pack (linked from the thank-you text) |
-| `/admin` | **Owner only** | All churches, signups, visitors, texts sent, trial/paid status, MRR |
+| `/admin` | **Owner only** | Revenue (MRR, paying, past due, trials ending in 3 days), visitors & texts per day (30 days), new churches per week (12 weeks), latest failed texts |
+| `/admin/churches` | **Owner only** | All churches with search and a status filter (trial, paying, canceled, trial ended) |
+| `/admin/churches/[id]` | **Owner only** | One church: visitors, texts sent, replies, failures, plan status, last activity |
+| `/admin/failed` | **Owner only** | Failed texts grouped by reason, plus the 100 most recent |
 
 ---
 

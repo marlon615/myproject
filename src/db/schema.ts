@@ -27,6 +27,8 @@ export const churches = pgTable(
     paypalSubscriptionId: text("paypal_subscription_id"),
     // Paid-through date (PayPal's next billing time). A canceled church stays active until then.
     currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+    // Last time the pastor opened their dashboard (updated at most hourly).
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
