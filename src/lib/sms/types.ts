@@ -13,10 +13,10 @@ export type InboundMessage = { from: string; to: string; body: string; providerM
  */
 export interface SmsProvider {
   readonly name: string;
-  /** Send a text. `to` is always E.164 (+1XXXXXXXXXX). */
-  send(to: string, body: string): Promise<SendResult>;
+  /** Send a text. `to`/`from` are E.164 (+1XXXXXXXXXX). `from` is the contractor's CallCairn line. */
+  send(to: string, body: string, from?: string): Promise<SendResult>;
   /**
-   * Optional: parse an inbound-message webhook (replies, STOP) into a common shape.
+   * Optional: parse an inbound-message webhook (caller texts, STOP) into a common shape.
    * Return null if the request isn't valid / can't be verified.
    */
   parseInbound?(req: Request): Promise<InboundMessage | null>;

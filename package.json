@@ -1,8 +1,8 @@
 {
-  "name": "churchfollow",
+  "name": "callcairn",
   "version": "1.0.0",
   "private": true,
-  "description": "Done-for-you first-time visitor follow-up for small churches.",
+  "description": "CallCairn: AI answering for HVAC contractors. Never miss an HVAC call again.",
   "scripts": {
     "dev": "next dev",
     "build": "node scripts/migrate.mjs && next build",
@@ -17,20 +17,19 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.4",
     "jose": "^6.2.15",
     "next": "^16.4.5",
-    "pdf-lib": "^1.17.1",
     "postgres": "^3.4.9",
-    "qrcode": "^1.5.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "server-only": "^0.0.1"
+    "server-only": "^0.0.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
-    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "dotenv": "^18.0.9",

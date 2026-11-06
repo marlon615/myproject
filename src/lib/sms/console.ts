@@ -3,8 +3,8 @@ import type { SmsProvider } from "./types";
 /** Development provider: logs texts to the server console instead of sending them. */
 export const consoleProvider: SmsProvider = {
   name: "console",
-  async send(to, body) {
-    console.log(`\n[sms:console] → ${to}\n${body}\n`);
+  async send(to, body, from) {
+    console.log(`\n[sms:console] ${from ?? "?"} → ${to}\n${body}\n`);
     return { ok: true, providerMessageId: `console_${Date.now()}` };
   },
   async parseInbound(req) {

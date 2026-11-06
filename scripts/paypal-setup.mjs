@@ -1,4 +1,4 @@
-// One-time PayPal setup: creates the ChurchFollow product, the $39/month plan, and the webhook.
+// One-time PayPal setup: creates the CallCairn product, the $149/month plan (US dollars), and the webhook.
 //
 //   PAYPAL_ENV=sandbox PAYPAL_CLIENT_ID=... PAYPAL_CLIENT_SECRET=... \
 //   APP_URL=https://your-domain.com npm run paypal:setup
@@ -13,7 +13,7 @@ const env = process.env.PAYPAL_ENV === "live" ? "live" : "sandbox";
 const base = env === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
 const { PAYPAL_CLIENT_ID: id, PAYPAL_CLIENT_SECRET: secret } = process.env;
 const appUrl = (process.env.APP_URL ?? "").replace(/\/$/, "");
-const PRICE = process.env.PRICE_MONTHLY_USD ?? "39";
+const PRICE = process.env.PRICE_MONTHLY_USD ?? "149";
 
 if (!id || !secret) {
   console.error("Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET first (developer.paypal.com → Apps & Credentials).");
@@ -61,14 +61,14 @@ if (planId) {
   const product = await call("/v1/catalogs/products", {
     method: "POST",
     token,
-    body: JSON.stringify({ name: "ChurchFollow", description: "First-time visitor follow-up for churches", type: "SERVICE", category: "SOFTWARE" }),
+    body: JSON.stringify({ name: "CallCairn", description: "AI answering for HVAC contractors: missed and after-hours calls, text-back, booking", type: "SERVICE", category: "SOFTWARE" }),
   });
   const plan = await call("/v1/billing/plans", {
     method: "POST",
     token,
     body: JSON.stringify({
       product_id: product.id,
-      name: `ChurchFollow Monthly ($${PRICE}/mo)`,
+      name: `CallCairn Monthly ($${PRICE}/mo)`,
       status: "ACTIVE",
       billing_cycles: [
         {
@@ -113,6 +113,8 @@ if (webhookId) {
           "BILLING.SUBSCRIPTION.EXPIRED",
           "BILLING.SUBSCRIPTION.PAYMENT.FAILED",
           "PAYMENT.SALE.COMPLETED",
+          "PAYMENT.SALE.REFUNDED",
+          "PAYMENT.SALE.REVERSED",
         ].map((name) => ({ name })),
       }),
     });

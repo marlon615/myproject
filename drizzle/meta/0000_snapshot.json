@@ -1,11 +1,11 @@
 {
-  "id": "ef21e255-4f02-432b-bbc5-ae07ca897c20",
+  "id": "86b5061c-00aa-4bd8-8241-580588bc81ad",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.churches": {
-      "name": "churches",
+    "public.bookings": {
+      "name": "bookings",
       "schema": "",
       "columns": {
         "id": {
@@ -15,26 +15,344 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "slug": {
-          "name": "slug",
+        "contractor_id": {
+          "name": "contractor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer_name": {
+          "name": "customer_name",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "name": {
-          "name": "name",
+        "phone": {
+          "name": "phone",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "city": {
-          "name": "city",
+        "address": {
+          "name": "address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issue": {
+          "name": "issue",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "urgency": {
+          "name": "urgency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ends_at": {
+          "name": "ends_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'booked'"
+        },
+        "reminder_sent_at": {
+          "name": "reminder_sent_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "bookings_contractor_idx": {
+          "name": "bookings_contractor_idx",
+          "columns": [
+            {
+              "expression": "contractor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "bookings_created_idx": {
+          "name": "bookings_created_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "bookings_contractor_id_contractors_id_fk": {
+          "name": "bookings_contractor_id_contractors_id_fk",
+          "tableFrom": "bookings",
+          "tableTo": "contractors",
+          "columnsFrom": [
+            "contractor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "bookings_conversation_id_conversations_id_fk": {
+          "name": "bookings_conversation_id_conversations_id_fk",
+          "tableFrom": "bookings",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.calls": {
+      "name": "calls",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "contractor_id": {
+          "name": "contractor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "call_sid": {
+          "name": "call_sid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_phone": {
+          "name": "from_phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_phone": {
+          "name": "to_phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "forwarded_from": {
+          "name": "forwarded_from",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "pastor_name": {
-          "name": "pastor_name",
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'in-progress'"
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "duration_sec": {
+          "name": "duration_sec",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "transcript": {
+          "name": "transcript",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "ended_at": {
+          "name": "ended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "calls_sid_idx": {
+          "name": "calls_sid_idx",
+          "columns": [
+            {
+              "expression": "call_sid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "calls_contractor_idx": {
+          "name": "calls_contractor_idx",
+          "columns": [
+            {
+              "expression": "contractor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "started_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "calls_contractor_id_contractors_id_fk": {
+          "name": "calls_contractor_id_contractors_id_fk",
+          "tableFrom": "calls",
+          "tableTo": "contractors",
+          "columnsFrom": [
+            "contractor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "calls_conversation_id_conversations_id_fk": {
+          "name": "calls_conversation_id_conversations_id_fk",
+          "tableFrom": "calls",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.contractors": {
+      "name": "contractors",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_name": {
+          "name": "business_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "owner_name": {
+          "name": "owner_name",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -51,20 +369,93 @@
           "primaryKey": false,
           "notNull": true
         },
-        "service_times": {
-          "name": "service_times",
+        "business_phone": {
+          "name": "business_phone",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "what_to_expect": {
-          "name": "what_to_expect",
+        "alert_phone": {
+          "name": "alert_phone",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "welcome_message": {
-          "name": "welcome_message",
+        "ai_number": {
+          "name": "ai_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "twilio_number_sid": {
+          "name": "twilio_number_sid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "service_area": {
+          "name": "service_area",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "timezone": {
+          "name": "timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'America/Chicago'"
+        },
+        "hours_start": {
+          "name": "hours_start",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 8
+        },
+        "hours_end": {
+          "name": "hours_end",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 17
+        },
+        "work_days": {
+          "name": "work_days",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'1,2,3,4,5'"
+        },
+        "slot_minutes": {
+          "name": "slot_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 120
+        },
+        "jobs_per_slot": {
+          "name": "jobs_per_slot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "emergency_dispatch": {
+          "name": "emergency_dispatch",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "emergency_note": {
+          "name": "emergency_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "calendar_token": {
+          "name": "calendar_token",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -81,20 +472,20 @@
           "primaryKey": false,
           "notNull": false
         },
-        "stripe_customer_id": {
-          "name": "stripe_customer_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "stripe_subscription_id": {
-          "name": "stripe_subscription_id",
+        "paypal_subscription_id": {
+          "name": "paypal_subscription_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
         "current_period_end": {
           "name": "current_period_end",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -108,11 +499,11 @@
         }
       },
       "indexes": {
-        "churches_slug_idx": {
-          "name": "churches_slug_idx",
+        "contractors_email_idx": {
+          "name": "contractors_email_idx",
           "columns": [
             {
-              "expression": "slug",
+              "expression": "email",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -123,11 +514,26 @@
           "method": "btree",
           "with": {}
         },
-        "churches_email_idx": {
-          "name": "churches_email_idx",
+        "contractors_ai_number_idx": {
+          "name": "contractors_ai_number_idx",
           "columns": [
             {
-              "expression": "email",
+              "expression": "ai_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "contractors_calendar_token_idx": {
+          "name": "contractors_calendar_token_idx",
+          "columns": [
+            {
+              "expression": "calendar_token",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -146,8 +552,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.messages": {
-      "name": "messages",
+    "public.conversations": {
+      "name": "conversations",
       "schema": "",
       "columns": {
         "id": {
@@ -157,15 +563,401 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "church_id": {
-          "name": "church_id",
+        "contractor_id": {
+          "name": "contractor_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "visitor_id": {
-          "name": "visitor_id",
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "channel": {
+          "name": "channel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "step": {
+          "name": "step",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'issue'"
+        },
+        "urgency": {
+          "name": "urgency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unknown'"
+        },
+        "hazard": {
+          "name": "hazard",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer_name": {
+          "name": "customer_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "address": {
+          "name": "address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "issue": {
+          "name": "issue",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "time_pref": {
+          "name": "time_pref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "offered_slots": {
+          "name": "offered_slots",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "offer_round": {
+          "name": "offer_round",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "alerted_at": {
+          "name": "alerted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_activity_at": {
+          "name": "last_activity_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "conversations_contractor_idx": {
+          "name": "conversations_contractor_idx",
+          "columns": [
+            {
+              "expression": "contractor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "conversations_phone_idx": {
+          "name": "conversations_phone_idx",
+          "columns": [
+            {
+              "expression": "contractor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "phone",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "last_activity_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "conversations_contractor_id_contractors_id_fk": {
+          "name": "conversations_contractor_id_contractors_id_fk",
+          "tableFrom": "conversations",
+          "tableTo": "contractors",
+          "columnsFrom": [
+            "contractor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.optouts": {
+      "name": "optouts",
+      "schema": "",
+      "columns": {
+        "contractor_id": {
+          "name": "contractor_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "optouts_pk": {
+          "name": "optouts_pk",
+          "columns": [
+            {
+              "expression": "contractor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "phone",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "optouts_contractor_id_contractors_id_fk": {
+          "name": "optouts_contractor_id_contractors_id_fk",
+          "tableFrom": "optouts",
+          "tableTo": "contractors",
+          "columnsFrom": [
+            "contractor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.payments": {
+      "name": "payments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "contractor_id": {
+          "name": "contractor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "paypal_id": {
+          "name": "paypal_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subscription_id": {
+          "name": "subscription_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_cents": {
+          "name": "amount_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'USD'"
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "payments_paypal_id_idx": {
+          "name": "payments_paypal_id_idx",
+          "columns": [
+            {
+              "expression": "paypal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payments_occurred_idx": {
+          "name": "payments_occurred_idx",
+          "columns": [
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "payments_contractor_id_contractors_id_fk": {
+          "name": "payments_contractor_id_contractors_id_fk",
+          "tableFrom": "payments",
+          "tableTo": "contractors",
+          "columnsFrom": [
+            "contractor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.texts": {
+      "name": "texts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "contractor_id": {
+          "name": "contractor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "direction": {
+          "name": "direction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -174,13 +966,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "direction": {
-          "name": "direction",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'outbound'"
         },
         "body": {
           "name": "body",
@@ -192,21 +977,7 @@
           "name": "status",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'scheduled'"
-        },
-        "scheduled_for": {
-          "name": "scheduled_for",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "sent_at": {
-          "name": "sent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "provider": {
           "name": "provider",
@@ -235,17 +1006,17 @@
         }
       },
       "indexes": {
-        "messages_due_idx": {
-          "name": "messages_due_idx",
+        "texts_contractor_idx": {
+          "name": "texts_contractor_idx",
           "columns": [
             {
-              "expression": "status",
+              "expression": "contractor_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
             {
-              "expression": "scheduled_for",
+              "expression": "created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -256,26 +1027,11 @@
           "method": "btree",
           "with": {}
         },
-        "messages_visitor_idx": {
-          "name": "messages_visitor_idx",
+        "texts_conversation_idx": {
+          "name": "texts_conversation_idx",
           "columns": [
             {
-              "expression": "visitor_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "messages_church_idx": {
-          "name": "messages_church_idx",
-          "columns": [
-            {
-              "expression": "church_id",
+              "expression": "conversation_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -294,12 +1050,12 @@
         }
       },
       "foreignKeys": {
-        "messages_church_id_churches_id_fk": {
-          "name": "messages_church_id_churches_id_fk",
-          "tableFrom": "messages",
-          "tableTo": "churches",
+        "texts_contractor_id_contractors_id_fk": {
+          "name": "texts_contractor_id_contractors_id_fk",
+          "tableFrom": "texts",
+          "tableTo": "contractors",
           "columnsFrom": [
-            "church_id"
+            "contractor_id"
           ],
           "columnsTo": [
             "id"
@@ -307,132 +1063,17 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "messages_visitor_id_visitors_id_fk": {
-          "name": "messages_visitor_id_visitors_id_fk",
-          "tableFrom": "messages",
-          "tableTo": "visitors",
+        "texts_conversation_id_conversations_id_fk": {
+          "name": "texts_conversation_id_conversations_id_fk",
+          "tableFrom": "texts",
+          "tableTo": "conversations",
           "columnsFrom": [
-            "visitor_id"
+            "conversation_id"
           ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.visitors": {
-      "name": "visitors",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "church_id": {
-          "name": "church_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "first_name": {
-          "name": "first_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "phone": {
-          "name": "phone",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "opted_out": {
-          "name": "opted_out",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "returned_at": {
-          "name": "returned_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_reply_at": {
-          "name": "last_reply_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "visitors_church_idx": {
-          "name": "visitors_church_idx",
-          "columns": [
-            {
-              "expression": "church_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "visitors_phone_idx": {
-          "name": "visitors_phone_idx",
-          "columns": [
-            {
-              "expression": "phone",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "visitors_church_id_churches_id_fk": {
-          "name": "visitors_church_id_churches_id_fk",
-          "tableFrom": "visitors",
-          "tableTo": "churches",
-          "columnsFrom": [
-            "church_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

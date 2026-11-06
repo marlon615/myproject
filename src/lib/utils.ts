@@ -15,21 +15,8 @@ export function formatPhone(e164: string): string {
   return m ? `(${m[1]}) ${m[2]}-${m[3]}` : e164;
 }
 
-export function slugify(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/&/g, " and ")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40) || "church"
-  );
-}
-
-export function randomSuffix(len = 4): string {
-  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+export function randomToken(len = 32): string {
+  const alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
   const bytes = crypto.getRandomValues(new Uint8Array(len));
   for (const b of bytes) out += alphabet[b % alphabet.length];
@@ -47,14 +34,32 @@ export function addDays(date: Date, days: number): Date {
  */
 export const APP_TZ = process.env.APP_TIMEZONE || process.env.OWNER_TIMEZONE || "America/Chicago";
 
-/** Offset (ms) between APP_TZ wall-clock time and UTC at a given instant. */
-function tzOffset(at: Date): number {
+/** Offset (ms) between wall-clock time in `tz` and UTC at a given instant. */
+export function tzOffset(at: Date, tz: string = APP_TZ): number {
+  const p = zonedParts(at, tz);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(at.getTime() / 1000) * 1000;
+}
+
+export type ZonedParts = { year: number; month: number; day: number; hour: number; minute: number; second: number; weekday: number };
+
+const WEEKDAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+/** Calendar parts of an instant as seen in time zone `tz`. */
+export function zonedParts(at: Date, tz: string): ZonedParts {
   const p = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", { timeZone: APP_TZ, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", weekday: "short", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
       .formatToParts(at)
       .map((x) => [x.type, x.value]),
   );
-  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(at.getTime() / 1000) * 1000;
+  return { year: +p.year, month: +p.month, day: +p.day, hour: +p.hour % 24, minute: +p.minute, second: +p.second, weekday: WEEKDAYS[p.weekday] ?? 0 };
+}
+
+/** The instant when the wall clock in `tz` reads the given local date and time. */
+export function zonedTime(year: number, month: number, day: number, hour: number, minute: number, tz: string): Date {
+  const guess = Date.UTC(year, month - 1, day, hour, minute);
+  const first = guess - tzOffset(new Date(guess), tz);
+  // Re-check once so times right after a DST switch land correctly.
+  return new Date(guess - tzOffset(new Date(first), tz));
 }
 
 /** Midnight on the 1st of the current month, in APP_TZ. */
@@ -94,4 +99,25 @@ export function relativeDays(d: Date): string {
 
 export function firstName(full: string): string {
   return full.trim().split(/\s+/)[0] ?? full;
+}
+
+/** "Tue, Nov 11, 8–10 AM" style label for an arrival window, in the contractor's zone. */
+export function windowLabel(start: Date | string, end: Date | string, tz: string): string {
+  const s = new Date(start);
+  const e = new Date(end);
+  const day = s.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz });
+  const t = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz }).replace(":00", "");
+  const a = t(s);
+  const b = t(e);
+  const sameHalf = a.slice(-2) === b.slice(-2);
+  return `${day}, ${sameHalf ? a.slice(0, -3) : a}–${b}`;
+}
+
+/** Spoken version: "Tuesday, November 11th, between 8 and 10 AM". */
+export function spokenWindow(start: Date | string, end: Date | string, tz: string): string {
+  const s = new Date(start);
+  const e = new Date(end);
+  const day = s.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz });
+  const t = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz }).replace(":00", "");
+  return `${day}, between ${t(s)} and ${t(e)}`;
 }
