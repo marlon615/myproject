@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { requireChurch } from "@/lib/session";
+import { requireContractor } from "@/lib/session";
 import { planState, planLabel } from "@/lib/billing";
 import { paypalConfigured, paypalAutopayUrl } from "@/lib/paypal";
 import { PRICE_MONTHLY_USD, TRIAL_DAYS } from "@/lib/config";
@@ -17,9 +17,9 @@ const ERRORS: Record<string, string> = {
 };
 
 export default async function BillingPage({ searchParams }: { searchParams: Promise<Search> }) {
-  const church = await requireChurch();
+  const c = await requireContractor();
   const q = await searchParams;
-  const plan = planState(church);
+  const plan = planState(c);
   const configured = paypalConfigured();
   const subscribed = (plan.kind === "active" && !plan.cancelsAt) || plan.kind === "past_due";
 
@@ -44,31 +44,31 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
             <h2 style={{ margin: 0 }}>{planLabel(plan)}</h2>
           </div>
           <span className={`badge ${plan.kind === "active" ? "badge-sent" : plan.kind === "trial" ? "badge-scheduled" : "badge-failed"}`}>
-            <span className="dot" /> {plan.kind === "expired" ? "Texts paused" : plan.kind === "past_due" ? "Action needed" : "Texts on"}
+            <span className="dot" /> {plan.kind === "expired" ? "Assistant paused" : plan.kind === "past_due" ? "Action needed" : "Assistant on"}
           </span>
         </div>
         <p className="muted small" style={{ marginTop: 12, marginBottom: 0 }}>
-          {plan.kind === "trial" && <>Your free trial ends on <strong>{formatDate(plan.endsAt)}</strong>. Subscribe anytime — PayPal won&apos;t charge you until it ends.</>}
+          {plan.kind === "trial" && <>Your free pilot ends on <strong>{formatDate(plan.endsAt)}</strong>. Subscribe anytime — PayPal won&apos;t charge you until it ends.</>}
           {plan.kind === "active" && !plan.cancelsAt && (plan.renewsAt ? <>Next payment on <strong>{formatDate(plan.renewsAt)}</strong>.</> : <>Your subscription is active.</>)}
           {plan.kind === "active" && plan.cancelsAt && <>Everything stays on until <strong>{formatDate(plan.cancelsAt)}</strong>. Resubscribe anytime to keep going after that.</>}
-          {plan.kind === "past_due" && <>PayPal couldn&apos;t collect your last payment. Update your payment method in PayPal to keep follow-up texts going.</>}
-          {plan.kind === "expired" && <>Your {church.subscriptionStatus === "canceled" ? "subscription" : "trial"} ended on {formatDate(plan.endedAt)}. Guests can still fill out your form, but texts are paused until you subscribe.</>}
+          {plan.kind === "past_due" && <>PayPal couldn&apos;t collect your last payment. Update your payment method in PayPal to keep the assistant answering.</>}
+          {plan.kind === "expired" && <>Your {c.subscriptionStatus === "canceled" ? "subscription" : "pilot"} ended on {formatDate(plan.endedAt)}. The assistant is paused until you subscribe.</>}
         </p>
       </div>
 
       <div className="card card-pad-lg">
         <div className="row between" style={{ alignItems: "flex-end" }}>
           <div>
-            <h3 style={{ marginBottom: 0 }}>ChurchFollow</h3>
-            <div className="muted small">{TRIAL_DAYS}-day free trial, then</div>
+            <h3 style={{ marginBottom: 0 }}>CallCairn</h3>
+            <div className="muted small">{TRIAL_DAYS}-day free pilot, then (USD)</div>
           </div>
           <div className="price">${PRICE_MONTHLY_USD}<span className="muted" style={{ fontSize: "1rem", fontFamily: "var(--font-sans)" }}>/mo</span></div>
         </div>
         <ul className="check-list" style={{ marginTop: 16 }}>
-          <li>Unlimited guests and follow-up texts</li>
-          <li>QR code, guest page &amp; printable pew cards</li>
-          <li>Thank-you, day-3 check-in &amp; day-7 invite</li>
-          <li>Replies and returns on your dashboard</li>
+          <li>Your own local CallCairn number</li>
+          <li>Missed-call &amp; after-hours answering, with text-back</li>
+          <li>Emergency triage with on-call alerts</li>
+          <li>Booking onto your calendar, plus reminders</li>
         </ul>
 
         {subscribed ? (
@@ -76,7 +76,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
             <a href={paypalAutopayUrl()} target="_blank" rel="noreferrer" className="btn btn-secondary btn-block">
               {plan.kind === "past_due" ? "Update payment method in PayPal" : "View payments in PayPal"}
             </a>
-            {configured && church.paypalSubscriptionId && (
+            {configured && c.paypalSubscriptionId && (
               <details>
                 <summary className="small muted" style={{ cursor: "pointer", textAlign: "center" }}>Cancel subscription</summary>
                 <form action={cancelPlan} className="center" style={{ marginTop: 12 }}>

@@ -13,6 +13,7 @@ import type { SmsProvider } from "./types";
  * │   TWILIO_FROM_NUMBER=+15555550123   (or TWILIO_MESSAGING_SERVICE_SID=MG...)  │
  * │ Then point your Twilio number's "A message comes in" webhook to:             │
  * │   https://YOUR-DOMAIN/api/sms/inbound   (HTTP POST)                          │
+ * │ (`Get my CallCairn number` in the dashboard sets this up automatically.)     │
  * └──────────────────────────────────────────────────────────────────────────────┘
  */
 const env = () => ({
@@ -25,14 +26,16 @@ const env = () => ({
 export const twilioProvider: SmsProvider = {
   name: "twilio",
 
-  async send(to, body) {
+  async send(to, body, fromNumber) {
     const { sid, token, from, messagingServiceSid } = env();
-    if (!sid || !token || (!from && !messagingServiceSid)) {
+    const sender = fromNumber || from;
+    if (!sid || !token || (!sender && !messagingServiceSid)) {
       return { ok: false, error: "Twilio is not configured (missing TWILIO_* env vars)." };
     }
     const form = new URLSearchParams({ To: to, Body: body });
+    // With a Messaging Service (A2P 10DLC), the contractor's number must belong to that service.
     if (messagingServiceSid) form.set("MessagingServiceSid", messagingServiceSid);
-    else form.set("From", from);
+    if (sender) form.set("From", sender);
 
     try {
       const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
@@ -52,21 +55,11 @@ export const twilioProvider: SmsProvider = {
   },
 
   async parseInbound(req) {
-    const { token } = env();
     const raw = await req.text();
     const params = new URLSearchParams(raw);
 
-    // Verify the X-Twilio-Signature header so nobody can spoof replies.
-    if (token) {
-      const signature = req.headers.get("x-twilio-signature") ?? "";
-      const url = publicUrl(req);
-      const keys = [...new Set(params.keys())].sort();
-      const data = url + keys.map((k) => k + (params.get(k) ?? "")).join("");
-      const expected = createHmac("sha1", token).update(data).digest("base64");
-      const a = Buffer.from(signature);
-      const b = Buffer.from(expected);
-      if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-    }
+    // Verify the X-Twilio-Signature header so nobody can spoof texts.
+    if (!verifyTwilioSignature(req, params)) return null;
 
     const from = params.get("From");
     const body = params.get("Body");
@@ -85,6 +78,23 @@ export const twilioProvider: SmsProvider = {
     });
   },
 };
+
+/**
+ * Check Twilio's X-Twilio-Signature on a form-encoded webhook (texts and voice).
+ * Without TWILIO_AUTH_TOKEN nothing can be verified, so requests are refused in production.
+ */
+export function verifyTwilioSignature(req: Request, params: URLSearchParams): boolean {
+  const token = process.env.TWILIO_AUTH_TOKEN ?? "";
+  if (!token) return process.env.NODE_ENV !== "production";
+  const signature = req.headers.get("x-twilio-signature") ?? "";
+  const url = publicUrl(req);
+  const keys = [...new Set(params.keys())].sort();
+  const data = url + keys.map((k) => k + (params.get(k) ?? "")).join("");
+  const expected = createHmac("sha1", token).update(data).digest("base64");
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 /** Reconstruct the public URL Twilio called (Vercel sits behind a proxy). */
 function publicUrl(req: Request) {

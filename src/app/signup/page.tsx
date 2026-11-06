@@ -2,14 +2,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { Brand } from "@/components/Brand";
-import { currentChurch } from "@/lib/session";
-import { PRICE_MONTHLY_USD, TRIAL_DAYS } from "@/lib/config";
+import { currentContractor } from "@/lib/session";
+import { PRICE_MONTHLY_USD } from "@/lib/config";
 import { SignupForm } from "./SignupForm";
 
-export const metadata: Metadata = { title: "Start your free trial" };
+export const metadata: Metadata = { title: "Start your free pilot" };
 
 export default async function SignupPage() {
-  if (await currentChurch()) redirect("/dashboard");
+  if (await currentContractor()) redirect("/dashboard");
   return (
     <>
       <header className="site-header">
@@ -20,8 +20,8 @@ export default async function SignupPage() {
       </header>
       <main className="container narrow" style={{ maxWidth: 620 }}>
         <div className="center" style={{ margin: "8px 0 24px" }}>
-          <h1>Set up your church</h1>
-          <p className="muted">Takes about 5 minutes. {TRIAL_DAYS} days free, then ${PRICE_MONTHLY_USD}/month. No card needed to start.</p>
+          <h1>Start your free pilot</h1>
+          <p className="muted">One week free, then ${PRICE_MONTHLY_USD}/month (USD) through PayPal. No payment details needed to start.</p>
         </div>
         <div className="card">
           <SignupForm />

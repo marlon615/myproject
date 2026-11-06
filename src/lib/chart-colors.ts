@@ -1,6 +1,6 @@
 /**
  * Owner-dashboard chart colors (plain module so server and client components can both import it).
- * Checked with the dataviz palette validator against the white card surface (#ffffff):
- * terracotta + blue → CVD ΔE 24.2, normal-vision ΔE 27.9, both ≥ 3:1 contrast. All checks pass.
+ * Orange / blue / green chosen to stay distinct for common color-vision deficiencies on white,
+ * each ≥ 3:1 contrast against #ffffff. Every chart also has a table view.
  */
-export const SERIES = { terracotta: "#b45c33", blue: "#2a78d6" } as const;
+export const SERIES = { orange: "#d9531e", blue: "#2a6fd6", green: "#1f8a5a" } as const;

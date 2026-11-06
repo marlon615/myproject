@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1793897764160,
+      "when": 1793933021172,
       "tag": "0000_init",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1793907582483,
-      "tag": "0001_remove_stripe",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1793907583754,
-      "tag": "0002_add_paypal",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1793920675677,
-      "tag": "0003_church_last_seen",
       "breakpoints": true
     }
   ]

@@ -13,7 +13,7 @@ export default async function AdminLoginPage() {
       <div className="center" style={{ marginBottom: 20 }}>
         <BrandMark size={40} />
         <h1 style={{ marginTop: 12, fontSize: "1.6rem" }}>Owner dashboard</h1>
-        <p className="muted small">Private area.</p>
+        <p className="muted small">Private. Only the CallCairn owner account can sign in.</p>
       </div>
       <div className="card"><AdminLoginForm /></div>
     </main>

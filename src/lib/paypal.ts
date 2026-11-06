@@ -1,6 +1,6 @@
 import "server-only";
 import { eq } from "drizzle-orm";
-import { db, churches, type Church } from "@/db";
+import { db, contractors, payments, type Contractor } from "@/db";
 
 /**
  * PayPal Subscriptions (REST API, no SDK).
@@ -80,21 +80,21 @@ export type PayPalSubscription = {
 };
 
 /**
- * Start a $39/month subscription and return PayPal's approval URL.
- * If the church still has trial days left, billing starts when the trial ends.
+ * Start the monthly subscription and return PayPal's approval URL.
+ * If the contractor still has pilot days left, billing starts when the pilot ends.
  */
-export async function createSubscription(church: Church, baseUrl: string): Promise<string> {
-  const trialEnd = new Date(church.trialEndsAt);
+export async function createSubscription(contractor: Contractor, baseUrl: string): Promise<string> {
+  const trialEnd = new Date(contractor.trialEndsAt);
   const deferStart = trialEnd.getTime() - Date.now() > 60 * 60 * 1000;
   const sub = await paypal<PayPalSubscription>("/v1/billing/subscriptions", {
     method: "POST",
     body: JSON.stringify({
       plan_id: process.env.PAYPAL_PLAN_ID,
-      custom_id: church.id,
+      custom_id: contractor.id,
       ...(deferStart && { start_time: trialEnd.toISOString() }),
-      subscriber: { email_address: church.email },
+      subscriber: { email_address: contractor.email },
       application_context: {
-        brand_name: "ChurchFollow",
+        brand_name: "CallCairn",
         user_action: "SUBSCRIBE_NOW",
         shipping_preference: "NO_SHIPPING",
         return_url: `${baseUrl}/dashboard/billing/paypal-return`,
@@ -123,7 +123,7 @@ export async function findSubscription(id: string): Promise<PayPalSubscription |
   }
 }
 
-export async function cancelSubscription(id: string, reason = "Canceled from ChurchFollow billing page") {
+export async function cancelSubscription(id: string, reason = "Canceled from CallCairn billing page") {
   if (!/^I-[A-Z0-9]+$/i.test(id)) throw new Error("Invalid PayPal subscription id");
   await paypal<void>(`/v1/billing/subscriptions/${id}/cancel`, {
     method: "POST",
@@ -143,48 +143,115 @@ function normalizeStatus(status: PayPalSubscription["status"]): string | null {
     case "EXPIRED":
       return "canceled";
     default:
-      return null; // APPROVAL_PENDING: the pastor hasn't finished checkout yet.
+      return null; // APPROVAL_PENDING: checkout not finished yet.
   }
 }
 
 /**
- * Save a PayPal subscription's state onto its church.
- * Matches by custom_id (our church id), falling back to the stored subscription id.
- * Pass `expectChurchId` to refuse a subscription that belongs to someone else.
+ * Save a PayPal subscription's state onto its contractor.
+ * Matches by custom_id (our contractor id), falling back to the stored subscription id.
+ * Pass `expectContractorId` to refuse a subscription that belongs to someone else.
  */
-export async function syncSubscription(sub: PayPalSubscription, expectChurchId?: string): Promise<boolean> {
+export async function syncSubscription(sub: PayPalSubscription, expectContractorId?: string): Promise<boolean> {
   const status = normalizeStatus(sub.status);
   if (!status) return false;
-  if (expectChurchId && sub.custom_id !== expectChurchId) return false;
-  // Subscriptions we didn't create (e.g. other things sold on the same PayPal account) don't carry
-  // one of our church ids. Ignore them unless we already know the subscription id.
-  const ours = !!sub.custom_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sub.custom_id);
+  if (expectContractorId && sub.custom_id !== expectContractorId) return false;
+  const contractor = await contractorForSubscription(sub.id, sub.custom_id);
+  if (!contractor) return false;
 
-  const [church] = ours
-    ? await db.select().from(churches).where(eq(churches.id, sub.custom_id!)).limit(1)
-    : await db.select().from(churches).where(eq(churches.paypalSubscriptionId, sub.id)).limit(1);
-  if (!church) return false;
-
-  // Once a church has a subscription, only a newly *active* one may replace it. This ignores
+  // Once a contractor has a subscription, only a newly *active* one may replace it. This ignores
   // late events about an old, abandoned or canceled subscription.
-  if (church.paypalSubscriptionId && church.paypalSubscriptionId !== sub.id && status !== "active") return false;
+  if (contractor.paypalSubscriptionId && contractor.paypalSubscriptionId !== sub.id && status !== "active") return false;
 
   const next = sub.billing_info?.next_billing_time ? new Date(sub.billing_info.next_billing_time) : null;
   await db
-    .update(churches)
+    .update(contractors)
     .set({
       subscriptionStatus: status,
       paypalSubscriptionId: sub.id,
       // Keep the last known paid-through date when PayPal stops reporting one after cancellation.
-      currentPeriodEnd: next ?? church.currentPeriodEnd,
+      currentPeriodEnd: next ?? contractor.currentPeriodEnd,
     })
-    .where(eq(churches.id, church.id));
+    .where(eq(contractors.id, contractor.id));
   return true;
 }
 
-/** Mark a church past-due right away when PayPal reports a failed payment. */
+const isUuid = (s: string | undefined) => !!s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+/**
+ * Subscriptions we didn't create (other things sold on the same PayPal account) don't carry one
+ * of our contractor ids, so they're ignored unless we already know the subscription id.
+ */
+async function contractorForSubscription(subscriptionId: string | undefined, customId?: string) {
+  if (isUuid(customId)) {
+    const [c] = await db.select().from(contractors).where(eq(contractors.id, customId!)).limit(1);
+    if (c) return c;
+  }
+  if (!subscriptionId) return null;
+  const [c] = await db.select().from(contractors).where(eq(contractors.paypalSubscriptionId, subscriptionId)).limit(1);
+  return c ?? null;
+}
+
+/** Mark a contractor past-due right away when PayPal reports a failed payment. */
 export async function markPaymentFailed(subscriptionId: string) {
-  await db.update(churches).set({ subscriptionStatus: "past_due" }).where(eq(churches.paypalSubscriptionId, subscriptionId));
+  await db.update(contractors).set({ subscriptionStatus: "past_due" }).where(eq(contractors.paypalSubscriptionId, subscriptionId));
+}
+
+type Money = { total?: string; value?: string; currency?: string; currency_code?: string };
+const cents = (m?: Money) => Math.round(Number(m?.total ?? m?.value ?? 0) * 100) || 0;
+const currency = (m?: Money) => (m?.currency ?? m?.currency_code ?? "USD").toUpperCase();
+
+/**
+ * Record a money movement from a verified webhook, for the owner dashboard.
+ * Idempotent: each PayPal id is stored once, so retried webhooks don't double-count.
+ */
+export async function recordPayment(event: {
+  id?: string;
+  event_type?: string;
+  create_time?: string;
+  resource?: Record<string, unknown>;
+}) {
+  const type = event.event_type ?? "";
+  const r = (event.resource ?? {}) as {
+    id?: string; sale_id?: string; billing_agreement_id?: string; custom?: string; custom_id?: string;
+    amount?: Money; create_time?: string; state?: string;
+    billing_info?: { last_failed_payment?: { amount?: Money; time?: string } };
+  };
+  let row: { paypalId: string; subscriptionId?: string; status: string; amountCents: number; currency: string; at?: string; customId?: string } | null = null;
+
+  if (type === "PAYMENT.SALE.COMPLETED" && r.id) {
+    row = { paypalId: r.id, subscriptionId: r.billing_agreement_id, status: "completed", amountCents: cents(r.amount), currency: currency(r.amount), at: r.create_time, customId: r.custom ?? r.custom_id };
+  } else if ((type === "PAYMENT.SALE.REFUNDED" || type === "PAYMENT.SALE.REVERSED") && r.id) {
+    // Refunds carry their own id and point at the sale; look the sale up to find the subscription.
+    const [sale] = r.sale_id ? await db.select().from(payments).where(eq(payments.paypalId, r.sale_id)).limit(1) : [];
+    row = {
+      paypalId: r.id,
+      subscriptionId: r.billing_agreement_id ?? sale?.subscriptionId ?? undefined,
+      status: type.endsWith("REFUNDED") ? "refunded" : "reversed",
+      amountCents: -Math.abs(cents(r.amount)),
+      currency: currency(r.amount),
+      at: r.create_time,
+    };
+  } else if (type === "BILLING.SUBSCRIPTION.PAYMENT.FAILED" && event.id) {
+    const failed = r.billing_info?.last_failed_payment;
+    row = { paypalId: event.id, subscriptionId: r.id, status: "failed", amountCents: cents(failed?.amount), currency: currency(failed?.amount), at: failed?.time ?? event.create_time, customId: r.custom_id };
+  }
+  if (!row) return;
+
+  const contractor = await contractorForSubscription(row.subscriptionId, row.customId);
+  await db
+    .insert(payments)
+    .values({
+      contractorId: contractor?.id ?? null,
+      paypalId: row.paypalId,
+      subscriptionId: row.subscriptionId ?? null,
+      eventType: type,
+      status: row.status,
+      amountCents: row.amountCents,
+      currency: row.currency,
+      occurredAt: row.at ? new Date(row.at) : new Date(),
+    })
+    .onConflictDoNothing();
 }
 
 /**

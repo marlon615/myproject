@@ -1,1 +1,0 @@
-ALTER TABLE "churches" ADD COLUMN "paypal_subscription_id" text;
