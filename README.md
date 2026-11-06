@@ -20,7 +20,7 @@ Gas, carbon monoxide or smoke? The caller is told to get out and call 911 / the 
 
 | Path | Who | What |
 | --- | --- | --- |
-| `/` | Public | Landing page: tagline, one-week free pilot, $149/month (USD), US phone number, PayPal |
+| `/` | Public | Landing page: tagline, one-week free pilot, $99/month (USD), US phone number, PayPal |
 | `/signup`, `/login` | Contractors | Sign up (starts the 7-day pilot) / log in |
 | `/dashboard` | Contractor | This month's calls, text-backs, bookings, emergencies; upcoming jobs; latest callers |
 | `/dashboard/bookings` | Contractor | Upcoming and past jobs, cancel |
@@ -93,7 +93,7 @@ PAYPAL_ENV=sandbox PAYPAL_CLIENT_ID=... PAYPAL_CLIENT_SECRET=... \
 APP_URL=https://your-domain.com npm run paypal:setup
 ```
 
-Creates the "CallCairn" product, a **$149/month USD** plan, and a webhook to `/api/paypal/webhook` (subscription events plus `PAYMENT.SALE.COMPLETED/REFUNDED/REVERSED`). Copy the printed `PAYPAL_PLAN_ID` and `PAYPAL_WEBHOOK_ID` into Vercel. Repeat with live keys and `PAYPAL_ENV=live` to take real money.
+Creates the "CallCairn" product, a **$99/month USD** plan, and a webhook to `/api/paypal/webhook` (subscription events plus `PAYMENT.SALE.COMPLETED/REFUNDED/REVERSED`). Copy the printed `PAYPAL_PLAN_ID` and `PAYPAL_WEBHOOK_ID` into Vercel. Repeat with live keys and `PAYPAL_ENV=live` to take real money.
 
 - The pilot is 7 days with nothing to enter. Subscribing mid-pilot schedules the first charge for the day the pilot ends.
 - Every webhook is verified with PayPal and the subscription is re-fetched, so out-of-order events can't set the wrong state.

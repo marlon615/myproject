@@ -1,4 +1,4 @@
-// One-time PayPal setup: creates the CallCairn product, the $149/month plan (US dollars), and the webhook.
+// One-time PayPal setup: creates the CallCairn product, the $99/month plan (US dollars), and the webhook.
 //
 //   PAYPAL_ENV=sandbox PAYPAL_CLIENT_ID=... PAYPAL_CLIENT_SECRET=... \
 //   APP_URL=https://your-domain.com npm run paypal:setup
@@ -13,7 +13,7 @@ const env = process.env.PAYPAL_ENV === "live" ? "live" : "sandbox";
 const base = env === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
 const { PAYPAL_CLIENT_ID: id, PAYPAL_CLIENT_SECRET: secret } = process.env;
 const appUrl = (process.env.APP_URL ?? "").replace(/\/$/, "");
-const PRICE = process.env.PRICE_MONTHLY_USD ?? "149";
+const PRICE = process.env.PRICE_MONTHLY_USD ?? "99";
 
 if (!id || !secret) {
   console.error("Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET first (developer.paypal.com → Apps & Credentials).");

@@ -5,7 +5,7 @@ export const PRODUCT_NAME = "CallCairn";
 export const TAGLINE = "Never miss an HVAC call again";
 
 /** Monthly price shown in the UI (US dollars). The real charge comes from your PayPal plan (PAYPAL_PLAN_ID, see `npm run paypal:setup`). */
-export const PRICE_MONTHLY_USD = 149;
+export const PRICE_MONTHLY_USD = 99;
 /** The free pilot: one week, no payment details needed to start. */
 export const TRIAL_DAYS = 7;
 
