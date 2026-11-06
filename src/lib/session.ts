@@ -3,11 +3,10 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
-import { db, contractors, type Contractor } from "@/db";
-import { OWNER_EMAIL } from "@/lib/config";
+import { db, churches, type Church } from "@/db";
 
-const USER_COOKIE = "cc_session";
-const ADMIN_COOKIE = "cc_owner";
+const PASTOR_COOKIE = "cf_session";
+const ADMIN_COOKIE = "cf_admin";
 
 function secret() {
   const s = process.env.SESSION_SECRET;
@@ -43,37 +42,34 @@ const cookieOpts = (maxAgeDays: number) => ({
   maxAge: maxAgeDays * 86400,
 });
 
-// ---------- Contractor sessions ----------
+// ---------- Pastor sessions ----------
 
-export async function startUserSession(contractorId: string) {
+export async function startPastorSession(churchId: string) {
   const jar = await cookies();
-  jar.set(USER_COOKIE, await sign({ sub: contractorId, role: "contractor" }, 30), cookieOpts(30));
+  jar.set(PASTOR_COOKIE, await sign({ sub: churchId, role: "pastor" }, 30), cookieOpts(30));
 }
 
-export async function endUserSession() {
-  (await cookies()).delete(USER_COOKIE);
+export async function endPastorSession() {
+  (await cookies()).delete(PASTOR_COOKIE);
 }
 
-export async function currentContractor(): Promise<Contractor | null> {
-  const payload = await verify((await cookies()).get(USER_COOKIE)?.value);
-  if (!payload || payload.role !== "contractor" || typeof payload.sub !== "string") return null;
-  const [c] = await db.select().from(contractors).where(eq(contractors.id, payload.sub)).limit(1);
-  return c ?? null;
+export async function currentChurch(): Promise<Church | null> {
+  const payload = await verify((await cookies()).get(PASTOR_COOKIE)?.value);
+  if (!payload || payload.role !== "pastor" || typeof payload.sub !== "string") return null;
+  const [church] = await db.select().from(churches).where(eq(churches.id, payload.sub)).limit(1);
+  return church ?? null;
 }
 
-export async function requireContractor(): Promise<Contractor> {
-  const c = await currentContractor();
-  if (!c) redirect("/login");
-  return c;
+export async function requireChurch(): Promise<Church> {
+  const church = await currentChurch();
+  if (!church) redirect("/login");
+  return church;
 }
 
 // ---------- Owner (admin) sessions ----------
-// Only OWNER_EMAIL can hold an owner session; the email is inside the signed token and
-// re-checked on every request, so changing OWNER_EMAIL instantly locks out old sessions.
 
-export async function startAdminSession(email: string) {
-  if (email !== OWNER_EMAIL) throw new Error("Not the owner");
-  (await cookies()).set(ADMIN_COOKIE, await sign({ role: "owner", email }, 7), {
+export async function startAdminSession() {
+  (await cookies()).set(ADMIN_COOKIE, await sign({ role: "owner" }, 7), {
     ...cookieOpts(7),
     sameSite: "strict",
   });
@@ -85,16 +81,16 @@ export async function endAdminSession() {
 
 export async function isAdmin(): Promise<boolean> {
   const payload = await verify((await cookies()).get(ADMIN_COOKIE)?.value);
-  return payload?.role === "owner" && payload.email === OWNER_EMAIL;
+  return payload?.role === "owner";
 }
 
 export async function requireAdmin() {
   if (!(await isAdmin())) redirect("/admin/login");
 }
 
-/** Record that the contractor was here, at most once an hour (powers "last activity" in /admin). */
-export async function touchLastSeen(c: Contractor) {
-  const last = c.lastSeenAt ? new Date(c.lastSeenAt).getTime() : 0;
+/** Record that the pastor was here, at most once an hour (powers "last activity" in /admin). */
+export async function touchLastSeen(church: Church) {
+  const last = church.lastSeenAt ? new Date(church.lastSeenAt).getTime() : 0;
   if (Date.now() - last < 60 * 60 * 1000) return;
-  await db.update(contractors).set({ lastSeenAt: new Date() }).where(eq(contractors.id, c.id));
+  await db.update(churches).set({ lastSeenAt: new Date() }).where(eq(churches.id, church.id));
 }

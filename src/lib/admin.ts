@@ -1,34 +1,35 @@
 import "server-only";
-import { and, count, desc, eq, gte, ilike, max, or, sql, sum, type SQL } from "drizzle-orm";
-import { db, contractors, calls, texts, bookings, payments, conversations, type Contractor } from "@/db";
+import { and, count, desc, eq, gte, ilike, max, or, sql } from "drizzle-orm";
+import { db, churches, visitors, messages, type Church } from "@/db";
 import { planState, type PlanState } from "@/lib/billing";
 import { PRICE_MONTHLY_USD } from "@/lib/config";
+
 import { APP_TZ } from "@/lib/utils";
 
-/** Time zone used for "per day" / "per week" buckets in the owner dashboard. */
+/** Time zone used for "per day" / "per week" buckets in the owner dashboard (same as the rest of the app). */
 export const OWNER_TZ = APP_TZ;
-export const PAGE_SIZE = 50;
 
-// ───────────── Status grouping ─────────────
+// ───────────── Status grouping (for the filter + badges) ─────────────
 
 export type StatusGroup = "trial" | "paying" | "past_due" | "canceling" | "canceled" | "expired";
 
 export const STATUS_FILTERS = [
   { key: "all", label: "All" },
-  { key: "trial", label: "Pilot" },
+  { key: "trial", label: "Trial" },
   { key: "paying", label: "Paying" },
   { key: "canceled", label: "Canceled" },
-  { key: "expired", label: "Pilot ended" },
+  { key: "expired", label: "Trial ended" },
 ] as const;
 export type StatusFilter = (typeof STATUS_FILTERS)[number]["key"];
 
-export function statusGroup(c: Pick<Contractor, "subscriptionStatus" | "trialEndsAt" | "currentPeriodEnd">, plan: PlanState = planState(c)): StatusGroup {
+export function statusGroup(c: Pick<Church, "subscriptionStatus" | "trialEndsAt" | "currentPeriodEnd">, plan: PlanState = planState(c)): StatusGroup {
   if (plan.kind === "trial") return "trial";
   if (plan.kind === "past_due") return "past_due";
   if (plan.kind === "active") return plan.cancelsAt ? "canceling" : "paying";
   return c.subscriptionStatus === "canceled" ? "canceled" : "expired";
 }
 
+/** Which filter chip a status group belongs to. Past-due counts as paying; canceling as canceled. */
 export function matchesFilter(group: StatusGroup, filter: StatusFilter): boolean {
   if (filter === "all") return true;
   if (filter === "paying") return group === "paying" || group === "past_due";
@@ -37,24 +38,27 @@ export function matchesFilter(group: StatusGroup, filter: StatusFilter): boolean
 }
 
 export const STATUS_BADGE: Record<StatusGroup, { label: string; cls: string }> = {
-  trial: { label: "Pilot", cls: "badge-scheduled" },
+  trial: { label: "Trial", cls: "badge-scheduled" },
   paying: { label: "Paying", cls: "badge-sent" },
   past_due: { label: "Past due", cls: "badge-failed" },
   canceling: { label: "Canceling", cls: "badge-skipped" },
   canceled: { label: "Canceled", cls: "badge-skipped" },
-  expired: { label: "Pilot ended", cls: "badge-skipped" },
+  expired: { label: "Trial ended", cls: "badge-skipped" },
 };
 
-// ───────────── Date helpers ─────────────
+// ───────────── Date helpers (owner time zone) ─────────────
 
 const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: OWNER_TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+/** YYYY-MM-DD of an instant, in the owner's time zone. */
 export const localDay = (d: Date) => dayFmt.format(d);
 
+/** The last `n` local days, oldest first, as YYYY-MM-DD. */
 function lastDays(n: number): string[] {
   const today = new Date(`${localDay(new Date())}T00:00:00Z`);
   return Array.from({ length: n }, (_, i) => new Date(today.getTime() - (n - 1 - i) * 86400000).toISOString().slice(0, 10));
 }
 
+/** Mondays of the last `n` local weeks, oldest first, as YYYY-MM-DD. */
 function lastWeeks(n: number): string[] {
   const today = new Date(`${localDay(new Date())}T00:00:00Z`);
   const monday = new Date(today.getTime() - ((today.getUTCDay() + 6) % 7) * 86400000);
@@ -62,11 +66,6 @@ function lastWeeks(n: number): string[] {
 }
 
 const localDayExpr = (col: unknown) => sql<string>`to_char((${col} at time zone ${OWNER_TZ})::date, 'YYYY-MM-DD')`;
-const centsSum = (where?: SQL) =>
-  db.select({ n: sql<number>`coalesce(${sum(payments.amountCents)}, 0)`.mapWith(Number) }).from(payments).where(where);
-
-export const usd = (cents: number) =>
-  (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: cents % 100 ? 2 : 0 });
 
 // ───────────── Overview ─────────────
 
@@ -75,143 +74,174 @@ export async function overviewData() {
   const days = lastDays(30);
   const weeks = lastWeeks(12);
   const since = new Date(now.getTime() - 32 * 86400000);
-  const d30 = new Date(now.getTime() - 30 * 86400000);
   const weeksSince = new Date(now.getTime() - (12 * 7 + 7) * 86400000);
-  const collected = or(eq(payments.status, "completed"), eq(payments.status, "refunded"), eq(payments.status, "reversed"));
 
-  const [
-    all, callDays, textDays, bookingDays, weekly,
-    [calls30], [texts30], [bookings30], [emerg30], [allTime], [last30], recentPayments, recentSignups,
-  ] = await Promise.all([
-    db.select().from(contractors),
-    db.select({ day: localDayExpr(calls.startedAt), n: count() }).from(calls).where(gte(calls.startedAt, since)).groupBy(sql`1`),
-    db.select({ day: localDayExpr(texts.createdAt), n: count() }).from(texts).where(gte(texts.createdAt, since)).groupBy(sql`1`),
-    db.select({ day: localDayExpr(bookings.createdAt), n: count() }).from(bookings).where(gte(bookings.createdAt, since)).groupBy(sql`1`),
-    db.select({ week: sql<string>`to_char(date_trunc('week', ${contractors.createdAt} at time zone ${OWNER_TZ}), 'YYYY-MM-DD')`, n: count() })
-      .from(contractors).where(gte(contractors.createdAt, weeksSince)).groupBy(sql`1`),
-    db.select({ n: count() }).from(calls).where(gte(calls.startedAt, d30)),
-    db.select({ n: count() }).from(texts).where(gte(texts.createdAt, d30)),
-    db.select({ n: count() }).from(bookings).where(gte(bookings.createdAt, d30)),
-    db.select({ n: count() }).from(bookings).where(and(gte(bookings.createdAt, d30), eq(bookings.urgency, "emergency"))),
-    centsSum(collected),
-    centsSum(and(collected, gte(payments.occurredAt, d30))),
-    paymentList(1).then((r) => r.rows.slice(0, 5)),
-    db.select().from(contractors).orderBy(desc(contractors.createdAt)).limit(5),
+  const [allChurches, visitorDays, textDays, weekly, failed, [{ failed30 }], visitorTotals] = await Promise.all([
+    db.select().from(churches),
+    db.select({ day: localDayExpr(visitors.createdAt), n: count() }).from(visitors)
+      .where(gte(visitors.createdAt, since)).groupBy(sql`1`),
+    db.select({ day: localDayExpr(messages.sentAt), n: count() }).from(messages)
+      .where(and(eq(messages.direction, "outbound"), eq(messages.status, "sent"), gte(messages.sentAt, since))).groupBy(sql`1`),
+    db.select({
+      week: sql<string>`to_char(date_trunc('week', ${churches.createdAt} at time zone ${OWNER_TZ}), 'YYYY-MM-DD')`,
+      n: count(),
+    }).from(churches).where(gte(churches.createdAt, weeksSince)).groupBy(sql`1`),
+    failedTexts(5),
+    db.select({ failed30: count() }).from(messages)
+      .where(and(eq(messages.status, "failed"), gte(messages.scheduledFor, new Date(now.getTime() - 30 * 86400000)))),
+    db.select({ churchId: visitors.churchId, n: count() }).from(visitors).groupBy(visitors.churchId),
   ]);
 
-  const groups = all.map((c) => statusGroup(c, planState(c, now)));
-  const paying = groups.filter((g) => g === "paying").length;
+  const vByChurch = new Map(visitorTotals.map((v) => [v.churchId, v.n]));
+  const withPlan = allChurches.map((c) => {
+    const plan = planState(c, now);
+    return { c, plan, group: statusGroup(c, plan) };
+  });
+  const paying = withPlan.filter((x) => x.group === "paying").length;
+  const pastDue = withPlan.filter((x) => x.group === "past_due").length;
+  const canceling = withPlan.filter((x) => x.group === "canceling").length;
+  const trials = withPlan.filter((x) => x.group === "trial").length;
   const soon = now.getTime() + 3 * 86400000;
-  const pilotsEnding = all
-    .filter((c) => { const p = planState(c, now); return p.kind === "trial" && p.endsAt.getTime() <= soon; })
-    .sort((a, b) => new Date(a.trialEndsAt).getTime() - new Date(b.trialEndsAt).getTime());
+  const trialsEnding = withPlan
+    .filter((x) => x.plan.kind === "trial" && x.plan.endsAt.getTime() <= soon)
+    .map((x) => ({ church: x.c, endsAt: (x.plan as Extract<PlanState, { kind: "trial" }>).endsAt, visitors: vByChurch.get(x.c.id) ?? 0 }))
+    .sort((a, b) => a.endsAt.getTime() - b.endsAt.getTime());
 
-  const map = (rows: { day: string; n: number }[]) => new Map(rows.map((r) => [r.day, r.n]));
-  const cMap = map(callDays), tMap = map(textDays), bMap = map(bookingDays);
+  const vMap = new Map(visitorDays.map((r) => [r.day, r.n]));
+  const tMap = new Map(textDays.map((r) => [r.day, r.n]));
   const wMap = new Map(weekly.map((r) => [r.week, r.n]));
 
   return {
     revenue: {
       mrr: paying * PRICE_MONTHLY_USD,
       paying,
-      pastDue: groups.filter((g) => g === "past_due").length,
-      canceling: groups.filter((g) => g === "canceling").length,
-      trials: groups.filter((g) => g === "trial").length,
-      totalSignups: all.length,
-      collectedAllTime: allTime.n,
-      collected30: last30.n,
+      pastDue,
+      canceling,
+      trials,
+      totalChurches: allChurches.length,
     },
-    totals30: { calls: calls30.n, texts: texts30.n, bookings: bookings30.n, emergencies: emerg30.n },
-    pilotsEnding,
-    daily: days.map((day) => ({ day, calls: cMap.get(day) ?? 0, texts: tMap.get(day) ?? 0, bookings: bMap.get(day) ?? 0 })),
-    weekly: weeks.map((week) => ({ week, signups: wMap.get(week) ?? 0 })),
-    recentPayments,
-    recentSignups,
+    trialsEnding,
+    daily: days.map((day) => ({ day, visitors: vMap.get(day) ?? 0, texts: tMap.get(day) ?? 0 })),
+    weekly: weeks.map((week) => ({ week, churches: wMap.get(week) ?? 0 })),
+    failed,
+    failed30,
   };
 }
 
-// ───────────── Lists (every signup, call, text, booking, payment) ─────────────
+// ───────────── Failed texts ─────────────
 
-const pageOf = (page: number) => ({ limit: PAGE_SIZE, offset: (Math.max(1, page) - 1) * PAGE_SIZE });
-const likeTerm = (q: string) => `%${q.trim().slice(0, 100).replace(/[\\%_]/g, (m) => "\\" + m)}%`;
-const biz = { contractorId: contractors.id, businessName: contractors.businessName };
+export function failedTexts(limit: number) {
+  return db
+    .select({
+      id: messages.id, kind: messages.kind, error: messages.error, at: messages.scheduledFor,
+      churchId: churches.id, churchName: churches.name, guest: visitors.firstName, phone: visitors.phone,
+    })
+    .from(messages)
+    .innerJoin(churches, eq(churches.id, messages.churchId))
+    .innerJoin(visitors, eq(visitors.id, messages.visitorId))
+    .where(eq(messages.status, "failed"))
+    .orderBy(desc(messages.scheduledFor))
+    .limit(limit);
+}
 
-export async function signupList(q: string, filter: StatusFilter) {
-  const where = q.trim()
-    ? or(ilike(contractors.businessName, likeTerm(q)), ilike(contractors.ownerName, likeTerm(q)), ilike(contractors.email, likeTerm(q)), ilike(contractors.serviceArea, likeTerm(q)), ilike(contractors.businessPhone, likeTerm(q)))
+/** Failed texts grouped by reason, most common first: shows at a glance whether it's one systemic problem. */
+export function failureReasons(sinceDays = 30) {
+  return db
+    .select({ reason: sql<string>`coalesce(${messages.error}, 'No reason given')`, n: count() })
+    .from(messages)
+    .where(and(eq(messages.status, "failed"), gte(messages.scheduledFor, new Date(Date.now() - sinceDays * 86400000))))
+    .groupBy(sql`1`)
+    .orderBy(desc(count()));
+}
+
+// ───────────── Churches list ─────────────
+
+export async function churchList(q: string, filter: StatusFilter) {
+  const term = q.trim().slice(0, 100);
+  const like = `%${term.replace(/[\\%_]/g, (m) => "\\" + m)}%`;
+  const where = term
+    ? or(ilike(churches.name, like), ilike(churches.pastorName, like), ilike(churches.email, like), ilike(churches.city, like), ilike(churches.slug, like))
     : undefined;
-  const [rows, callStats, bookingStats] = await Promise.all([
-    db.select().from(contractors).where(where).orderBy(desc(contractors.createdAt)),
-    db.select({ id: calls.contractorId, n: count(), last: max(calls.startedAt) }).from(calls).groupBy(calls.contractorId),
-    db.select({ id: bookings.contractorId, n: count() }).from(bookings).groupBy(bookings.contractorId),
+
+  const [rows, vStats, tStats, rStats] = await Promise.all([
+    db.select().from(churches).where(where).orderBy(desc(churches.createdAt)),
+    db.select({ churchId: visitors.churchId, n: count(), last: max(visitors.createdAt) }).from(visitors).groupBy(visitors.churchId),
+    db.select({ churchId: messages.churchId, n: count(), last: max(messages.sentAt) }).from(messages)
+      .where(and(eq(messages.direction, "outbound"), eq(messages.status, "sent"))).groupBy(messages.churchId),
+    db.select({ churchId: messages.churchId, last: max(messages.createdAt) }).from(messages)
+      .where(eq(messages.direction, "inbound")).groupBy(messages.churchId),
   ]);
-  const cMap = new Map(callStats.map((r) => [r.id, r]));
-  const bMap = new Map(bookingStats.map((r) => [r.id, r.n]));
+  const rMap = new Map(rStats.map((r) => [r.churchId, r.last]));
+  const vMap = new Map(vStats.map((v) => [v.churchId, v]));
+  const tMap = new Map(tStats.map((t) => [t.churchId, t]));
+
   const all = rows.map((c) => {
     const plan = planState(c);
-    return { c, plan, group: statusGroup(c, plan), calls: cMap.get(c.id)?.n ?? 0, lastCall: cMap.get(c.id)?.last ?? null, bookings: bMap.get(c.id) ?? 0 };
+    const v = vMap.get(c.id);
+    return {
+      church: c,
+      plan,
+      group: statusGroup(c, plan),
+      visitors: v?.n ?? 0,
+      texts: tMap.get(c.id)?.n ?? 0,
+      lastActivity: latest(c.lastSeenAt, v?.last ?? null, tMap.get(c.id)?.last ?? null, rMap.get(c.id) ?? null, c.createdAt),
+    };
   });
   const counts = Object.fromEntries(STATUS_FILTERS.map((f) => [f.key, all.filter((r) => matchesFilter(r.group, f.key)).length])) as Record<StatusFilter, number>;
   return { rows: all.filter((r) => matchesFilter(r.group, filter)), counts };
 }
 
-export async function callList(page: number, contractorId?: string) {
-  const where = contractorId ? eq(calls.contractorId, contractorId) : undefined;
-  const [rows, [{ n }]] = await Promise.all([
-    db.select({ call: calls, ...biz, urgency: conversations.urgency, issue: conversations.issue, customerName: conversations.customerName })
-      .from(calls).innerJoin(contractors, eq(contractors.id, calls.contractorId))
-      .leftJoin(conversations, eq(conversations.id, calls.conversationId))
-      .where(where).orderBy(desc(calls.startedAt)).limit(pageOf(page).limit).offset(pageOf(page).offset),
-    db.select({ n: count() }).from(calls).where(where),
+// ───────────── Church detail ─────────────
+
+export async function churchDetail(id: string) {
+  const [church] = await db.select().from(churches).where(eq(churches.id, id)).limit(1);
+  if (!church) return null;
+  const monthStart = new Date(Date.now() - 30 * 86400000);
+
+  const [[v], [vMonth], msgStats, [lastMsg], recentGuests, failed] = await Promise.all([
+    db.select({ n: count(), returned: sql<number>`count(${visitors.returnedAt})`.mapWith(Number), optedOut: sql<number>`count(*) filter (where ${visitors.optedOut})`.mapWith(Number), last: max(visitors.createdAt) })
+      .from(visitors).where(eq(visitors.churchId, id)),
+    db.select({ n: count() }).from(visitors).where(and(eq(visitors.churchId, id), gte(visitors.createdAt, monthStart))),
+    db.select({ status: messages.status, kind: messages.kind, n: count() }).from(messages).where(eq(messages.churchId, id)).groupBy(messages.status, messages.kind),
+    db.select({ at: max(sql`case when ${messages.direction} = 'inbound' then ${messages.createdAt} else ${messages.sentAt} end`) }).from(messages)
+      .where(and(eq(messages.churchId, id), or(eq(messages.status, "sent"), eq(messages.status, "received")))),
+    db.select().from(visitors).where(eq(visitors.churchId, id)).orderBy(desc(visitors.createdAt)).limit(8),
+    db.select({ id: messages.id, kind: messages.kind, error: messages.error, at: messages.scheduledFor, guest: visitors.firstName })
+      .from(messages).innerJoin(visitors, eq(visitors.id, messages.visitorId))
+      .where(and(eq(messages.churchId, id), eq(messages.status, "failed"))).orderBy(desc(messages.scheduledFor)).limit(10),
   ]);
-  return { rows, total: n };
+
+  const sum = (pred: (r: (typeof msgStats)[number]) => boolean) => msgStats.filter(pred).reduce((a, r) => a + r.n, 0);
+  const plan = planState(church);
+  const lastText = lastMsg?.at ? new Date(lastMsg.at as string) : null;
+
+  return {
+    church,
+    plan,
+    group: statusGroup(church, plan),
+    stats: {
+      visitors: v?.n ?? 0,
+      visitors30: vMonth?.n ?? 0,
+      returned: v?.returned ?? 0,
+      optedOut: v?.optedOut ?? 0,
+      textsSent: sum((r) => r.status === "sent"),
+      replies: sum((r) => r.kind === "reply"),
+      failed: sum((r) => r.status === "failed"),
+      scheduled: sum((r) => r.status === "scheduled"),
+    },
+    activity: {
+      pastorSeen: church.lastSeenAt,
+      lastGuest: v?.last ?? null,
+      lastText,
+      last: latest(church.lastSeenAt, v?.last ?? null, lastText, church.createdAt),
+    },
+    recentGuests,
+    failed,
+  };
 }
 
-export async function textList(page: number, contractorId?: string) {
-  const where = contractorId ? eq(texts.contractorId, contractorId) : undefined;
-  const [rows, [{ n }]] = await Promise.all([
-    db.select({ text: texts, ...biz }).from(texts).innerJoin(contractors, eq(contractors.id, texts.contractorId))
-      .where(where).orderBy(desc(texts.createdAt)).limit(pageOf(page).limit).offset(pageOf(page).offset),
-    db.select({ n: count() }).from(texts).where(where),
-  ]);
-  return { rows, total: n };
-}
-
-export async function bookingList(page: number, contractorId?: string) {
-  const where = contractorId ? eq(bookings.contractorId, contractorId) : undefined;
-  const [rows, [{ n }]] = await Promise.all([
-    db.select({ booking: bookings, ...biz, timezone: contractors.timezone }).from(bookings).innerJoin(contractors, eq(contractors.id, bookings.contractorId))
-      .where(where).orderBy(desc(bookings.createdAt)).limit(pageOf(page).limit).offset(pageOf(page).offset),
-    db.select({ n: count() }).from(bookings).where(where),
-  ]);
-  return { rows, total: n };
-}
-
-export async function paymentList(page: number, contractorId?: string) {
-  const where = contractorId ? eq(payments.contractorId, contractorId) : undefined;
-  const [rows, [{ n }]] = await Promise.all([
-    db.select({ payment: payments, businessName: contractors.businessName, contractorId: contractors.id })
-      .from(payments).leftJoin(contractors, eq(contractors.id, payments.contractorId))
-      .where(where).orderBy(desc(payments.occurredAt)).limit(pageOf(page).limit).offset(pageOf(page).offset),
-    db.select({ n: count() }).from(payments).where(where),
-  ]);
-  return { rows, total: n };
-}
-
-export async function signupDetail(id: string) {
-  const [c] = await db.select().from(contractors).where(eq(contractors.id, id)).limit(1);
-  if (!c) return null;
-  const [[callN], [textN], [bookN], [paid], recentCalls, recentBookings, recentPayments] = await Promise.all([
-    db.select({ n: count() }).from(calls).where(eq(calls.contractorId, id)),
-    db.select({ n: count() }).from(texts).where(eq(texts.contractorId, id)),
-    db.select({ n: count() }).from(bookings).where(eq(bookings.contractorId, id)),
-    centsSum(and(eq(payments.contractorId, id), or(eq(payments.status, "completed"), eq(payments.status, "refunded"), eq(payments.status, "reversed")))),
-    callList(1, id).then((r) => r.rows.slice(0, 8)),
-    bookingList(1, id).then((r) => r.rows.slice(0, 8)),
-    paymentList(1, id).then((r) => r.rows.slice(0, 8)),
-  ]);
-  const plan = planState(c);
-  return { c, plan, group: statusGroup(c, plan), stats: { calls: callN.n, texts: textN.n, bookings: bookN.n, paidCents: paid.n }, recentCalls, recentBookings, recentPayments };
+function latest(...dates: (Date | string | null | undefined)[]): Date {
+  return new Date(Math.min(Date.now(), Math.max(...dates.filter(Boolean).map((d) => new Date(d as Date).getTime()))));
 }
 
 export function timeAgo(d: Date | string | null | undefined): string {
@@ -224,5 +254,3 @@ export function timeAgo(d: Date | string | null | undefined): string {
   if (days < 45) return `${days} day${days === 1 ? "" : "s"} ago`;
   return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: APP_TZ });
 }
-
-export { OUTCOME_LABEL } from "@/lib/outcomes";
