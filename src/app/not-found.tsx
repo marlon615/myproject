@@ -6,7 +6,7 @@ export default function NotFound() {
     <main className="container narrow center" style={{ paddingTop: 80 }}>
       <BrandMark size={44} />
       <h1 style={{ marginTop: 16 }}>Page not found</h1>
-      <p className="muted">That page doesn&apos;t exist.</p>
+      <p className="muted">If you scanned a pew card, please ask an usher — we&apos;d love to help.</p>
       <Link href="/" className="btn btn-secondary">Go home</Link>
     </main>
   );

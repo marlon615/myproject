@@ -1,12 +1,11 @@
-import { verifyWebhook, findSubscription, syncSubscription, markPaymentFailed, recordPayment } from "@/lib/paypal";
+import { verifyWebhook, findSubscription, syncSubscription, markPaymentFailed } from "@/lib/paypal";
 
-type WebhookEvent = { id?: string; event_type?: string; create_time?: string; resource?: { id?: string; billing_agreement_id?: string } };
+type WebhookEvent = { event_type?: string; resource?: { id?: string; billing_agreement_id?: string } };
 
 /**
  * PayPal webhook: https://YOUR-DOMAIN/api/paypal/webhook
  * Every event is verified with PayPal, then the subscription is re-fetched from PayPal so we
- * always store its current state (events can arrive late or out of order). Payments, refunds and
- * failed payments are also logged to the payments table for the owner dashboard.
+ * always store its current state (events can arrive late or out of order).
  */
 export async function POST(req: Request) {
   if (!process.env.PAYPAL_CLIENT_ID || !process.env.PAYPAL_WEBHOOK_ID) {
@@ -27,15 +26,14 @@ export async function POST(req: Request) {
     : type.startsWith("PAYMENT.SALE.")
       ? event.resource?.billing_agreement_id
       : undefined;
+  if (!subId) return Response.json({ ignored: type });
 
   try {
-    // Sync the subscription first, so a first payment can be matched to its contractor.
-    if (subId && type === "BILLING.SUBSCRIPTION.PAYMENT.FAILED") await markPaymentFailed(subId);
-    else if (subId) {
+    if (type === "BILLING.SUBSCRIPTION.PAYMENT.FAILED") await markPaymentFailed(subId);
+    else {
       const sub = await findSubscription(subId);
       if (sub) await syncSubscription(sub);
     }
-    await recordPayment(event as Parameters<typeof recordPayment>[0]);
   } catch (err) {
     console.error("[paypal] webhook handling failed", type, err);
     return new Response("Temporary error", { status: 500 }); // PayPal retries.

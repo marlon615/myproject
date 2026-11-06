@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
  * Series colors live in src/lib/chart-colors.ts.
  */
 
-const INK = { muted: "#5b6b7d", grid: "#e8edf3", axis: "#cdd6e0" };
+const INK = { muted: "#74655a", grid: "#efe8de", axis: "#d8cdbf" };
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const shortDate = (iso: string) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Number(iso.slice(8, 10))}`;
 
@@ -209,7 +209,7 @@ export function WeeklyColumnChart({ data, label, color, height = 200 }: { data: 
                   <g key={d.week}>
                     <path d={bar(bx, d.value)} fill={color} opacity={active === null || active === i ? 1 : 0.55} />
                     {i === last && d.value > 0 && (
-                      <text x={bx + barW / 2} y={y(d.value) - 6} textAnchor="middle" fontSize={11} fontWeight={600} fill="#142233">{d.value}</text>
+                      <text x={bx + barW / 2} y={y(d.value) - 6} textAnchor="middle" fontSize={11} fontWeight={600} fill="#2b2118">{d.value}</text>
                     )}
                     {(last - i) % labelEvery === 0 && (
                       <text x={bx + barW / 2} y={h + 18} textAnchor={i === last ? "end" : "middle"} fontSize={11} fill={INK.muted}>
