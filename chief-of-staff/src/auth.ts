@@ -55,3 +55,18 @@ export async function recordFailedLogin(env: Env, ip: string) {
 export async function clearLogins(env: Env, ip: string) {
   await env.DB.prepare("delete from login_attempts where ip = ?").bind(ip).run();
 }
+
+// ── 6-digit passcode (used to unlock instead of the long password) ──
+
+export async function hasPin(env: Env): Promise<boolean> {
+  return Boolean(await env.DB.prepare("select 1 from settings where key = 'auth:pin'").first());
+}
+export async function setPin(env: Env, pin: string) {
+  await env.DB.prepare("insert into settings (key, value) values ('auth:pin', ?) on conflict(key) do update set value = excluded.value")
+    .bind(await hashPassword(pin)).run();
+}
+export async function checkPin(env: Env, pin: string): Promise<boolean> {
+  if (!/^\d{6}$/.test(pin)) return false;
+  const row = await env.DB.prepare("select value from settings where key = 'auth:pin'").first<{ value: string }>();
+  return row ? verifyPassword(pin, row.value) : false;
+}

@@ -60,6 +60,9 @@ export function migrate(storage: DurableObjectStorage, schema: string) {
     "alter table todos add column due_at text",
     "alter table todos add column notified_at text",
     "alter table todos add column spoken_at text",
+    "alter table inbox add column body_text text not null default ''",
+    "alter table inbox add column unsub text not null default ''",
+    "alter table inbox add column unsub_post integer not null default 0",
   ]) {
     try { storage.sql.exec(alter); } catch {}
   }

@@ -6,6 +6,7 @@ export interface WorkerEnv {
   MAIL_TEST_HOST?: string;
   MAIL_TEST_IMAP_PORT?: string;
   MAIL_TEST_SMTP_PORT?: string;
+  VOICE_TEST_SECRET?: string;
   OWNER_PASSWORD: string;
   SESSION_SECRET: string;
   APP_TIMEZONE?: string;
@@ -17,6 +18,7 @@ export interface Env {
   MAIL_TEST_HOST?: string;
   MAIL_TEST_IMAP_PORT?: string;
   MAIL_TEST_SMTP_PORT?: string;
+  VOICE_TEST_SECRET?: string;
   OWNER_PASSWORD: string;
   SESSION_SECRET: string;
   APP_TIMEZONE?: string;

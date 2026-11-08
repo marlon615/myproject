@@ -111,6 +111,30 @@ export class Imap {
     return res.filter((r) => /^\* \d+ FETCH/i.test(r.text) && r.literals[0]).map((r) => r.literals[0]);
   }
 
+  /** Opens a mailbox for changes (marking read, moving). */
+  async select(mailbox: string) {
+    await this.cmd(`SELECT ${q(mailbox)}`);
+  }
+
+  async markRead(uids: number[]) {
+    if (uids.length) await this.cmd(`UID STORE ${uids.join(",")} +FLAGS.SILENT (\\Seen)`);
+  }
+
+  /** Moves messages to another mailbox (Gmail supports MOVE). */
+  async move(uids: number[], mailbox: string) {
+    if (uids.length) await this.cmd(`UID MOVE ${uids.join(",")} ${q(mailbox)}`);
+  }
+
+  /** Finds a mailbox by its special-use flag, like \\Junk (Spam) or \\Trash. */
+  async specialMailbox(flag: "\\Junk" | "\\Trash" | "\\Sent"): Promise<string | null> {
+    const res = await this.cmd('LIST "" "*"');
+    for (const r of res) {
+      const m = r.text.match(/^\* LIST \(([^)]*)\) "[^"]*" (?:"((?:[^"\\]|\\.)*)"|(\S+))$/i);
+      if (m && m[1].toLowerCase().includes(flag.toLowerCase())) return (m[2] ?? m[3]).replace(/\\(.)/g, "$1");
+    }
+    return null;
+  }
+
   async logout() {
     try { await this.cmd("LOGOUT"); } catch {}
     await this.c.close();

@@ -64,7 +64,7 @@ export function productLink(s: Settings, p: Product) {
 }
 
 // ── Keys the owner pastes in Settings, stored encrypted, never shown again ──
-export type SecretName = "anthropic" | "resend" | "gmail" | "calendar";
+export type SecretName = "anthropic" | "resend" | "gmail" | "calendar" | "twilio";
 
 export async function getSecret(env: Env, name: SecretName): Promise<string | null> {
   const row = await env.DB.prepare("select value from settings where key = ?").bind(`secret:${name}`).first<{ value: string }>();

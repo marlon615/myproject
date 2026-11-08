@@ -144,3 +144,17 @@ create table if not exists approvals (
   expires_at text not null,
   used_at text
 )
+;
+
+-- One row per live phone call with Chief: where the conversation is.
+create table if not exists calls (
+  call_sid text primary key,
+  state text not null default '{}',
+  updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- Senders you told Chief to block: their mail goes to Spam on every check.
+create table if not exists blocked (
+  email text primary key,
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+)

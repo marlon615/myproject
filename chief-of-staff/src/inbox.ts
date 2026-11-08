@@ -13,6 +13,7 @@ export interface InboxRow {
   id: number; message_id: string; uid: number | null; from_name: string; from_email: string; subject: string;
   received_at: string | null; summary: string; priority: string; needs_reply: number; refs: string;
   status: "new" | "heard" | "replied" | "dismissed"; source: string; created_at: string;
+  body_text: string; unsub: string; unsub_post: number;
 }
 export interface ReplyRow {
   id: number; inbox_id: number; to_email: string; to_name: string; subject: string; body: string;
@@ -74,6 +75,10 @@ function firstName(n: string) {
   return w[0];
 }
 
+function header(headers: { key: string; value: string }[], k: string) {
+  return headers.find((x) => x.key.toLowerCase() === k)?.value ?? "";
+}
+
 function isAutomated(fromEmail: string, headers: { key: string; value: string }[]) {
   const h = (k: string) => headers.find((x) => x.key.toLowerCase() === k)?.value ?? "";
   return /no-?reply|do-?not-?reply|notifications?@|mailer-daemon|bounce|news(letter)?@|marketing@|updates?@|info@|billing@|invoices?@|payments?@|receipts?@|alerts?@|security@|accounts?@|statements?@/i.test(fromEmail)
@@ -89,7 +94,7 @@ function plainSummary(subject: string, text: string) {
   return first ? first : subject;
 }
 
-async function understand(env: Env, s: Settings, e: { fromName: string; fromEmail: string; subject: string; text: string; automated: boolean }): Promise<Understood> {
+async function understand(env: Env, s: Settings, e: { fromName: string; fromEmail: string; subject: string; text: string; automated: boolean; marketing?: boolean }): Promise<Understood> {
   const key = await getSecret(env, "anthropic");
   if (key) {
     try {
@@ -121,7 +126,8 @@ async function understand(env: Env, s: Settings, e: { fromName: string; fromEmai
   const me = firstName(s.senderName);
   return {
     summary: plainSummary(e.subject, e.text),
-    priority: URGENT.test(`${e.subject} ${e.text.slice(0, 600)}`) ? "high" : e.automated ? "low" : "normal",
+    // Urgent words count, except in marketing (anything with an unsubscribe link): "final notice, 40% off" isn't urgent.
+    priority: URGENT.test(`${e.subject} ${e.text.slice(0, 600)}`) && !e.marketing ? "high" : e.automated ? "low" : "normal",
     needsReply,
     replyBody: needsReply ? `${hi}\n\nThanks for your email. I got it, and I'll get back to you shortly.\n\n${me}`.trim() : "",
     source: "template",
@@ -160,10 +166,13 @@ export async function syncInbox(env: Env, max = 6): Promise<{ added: number; mor
     const newReplies: NewReply[] = [];
     const prospectReplies: string[] = [];
     const important: Important[] = [];
+    const blocked = new Set((await env.DB.prepare("select email from blocked").all<{ email: string }>()).results.map((r) => r.email));
+    const toSpam: number[] = [];
     for (const { uid, raw } of fetched) {
       const mail = await PostalMime.parse(raw);
       const fromEmail = (mail.from?.address ?? "").toLowerCase();
       if (!fromEmail || fromEmail === creds.user.toLowerCase()) continue;
+      if (blocked.has(fromEmail)) { toSpam.push(uid); continue; } // you blocked this sender
       const messageId = mail.messageId || `<uid-${uid}@gmail>`;
       const exists = await env.DB.prepare("select id from inbox where message_id = ?").bind(messageId).first();
       if (exists) {
@@ -187,13 +196,15 @@ export async function syncInbox(env: Env, max = 6): Promise<{ added: number; mor
         ]);
         prospectReplies.push(wrote.name || mail.from?.name || fromEmail);
       }
-      const u = await understand(env, s, { fromName: mail.from?.name ?? "", fromEmail, subject: mail.subject ?? "", text, automated });
+      const u = await understand(env, s, { fromName: mail.from?.name ?? "", fromEmail, subject: mail.subject ?? "", text, automated, marketing: Boolean(header(mail.headers ?? [], "list-unsubscribe")) });
       const refs = [mail.references, mail.messageId].filter(Boolean).join(" ").trim();
       const ins = await env.DB.prepare(
-        `insert into inbox (message_id, uid, from_name, from_email, subject, received_at, summary, priority, needs_reply, refs, source)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(message_id) do nothing returning id`,
+        `insert into inbox (message_id, uid, from_name, from_email, subject, received_at, summary, priority, needs_reply, refs, source, body_text, unsub, unsub_post)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(message_id) do nothing returning id`,
       ).bind(messageId, uid, mail.from?.name ?? "", fromEmail, (mail.subject ?? "").slice(0, 300), mail.date ?? null, u.summary.slice(0, 1000),
-        u.priority, u.needsReply ? 1 : 0, refs.slice(0, 2000), u.source).first<{ id: number }>();
+        u.priority, u.needsReply ? 1 : 0, refs.slice(0, 2000), u.source, text.replace(/\s+\n/g, "\n").slice(0, 3000),
+        header(mail.headers ?? [], "list-unsubscribe").slice(0, 1000), /one-click/i.test(header(mail.headers ?? [], "list-unsubscribe-post")) ? 1 : 0)
+        .first<{ id: number }>();
       if (ins && u.needsReply && u.replyBody) {
         const subj = /^re:/i.test(mail.subject ?? "") ? (mail.subject ?? "") : `Re: ${mail.subject ?? ""}`.trim();
         const rep = await env.DB.prepare("insert into replies (inbox_id, to_email, to_name, subject, body) values (?, ?, ?, ?, ?) returning id")
@@ -204,6 +215,19 @@ export async function syncInbox(env: Env, max = 6): Promise<{ added: number; mor
         important.push({ inboxId: ins.id, fromName: mail.from?.name ?? "", fromEmail, subject: mail.subject ?? "", summary: u.summary });
       }
       if (ins) added++;
+    }
+    if (toSpam.length) {
+      // Blocked senders: move their new mail to Spam.
+      const im2 = await Imap.login(mailHosts(env).imap, creds.user, creds.pass);
+      try {
+        const spam = (await im2.specialMailbox("\\Junk")) ?? "[Gmail]/Spam";
+        await im2.select("INBOX");
+        await im2.move(toSpam, spam);
+      } catch (e) {
+        console.error("moving blocked mail failed:", (e as Error).message);
+      } finally {
+        await im2.logout();
+      }
     }
     return { added, more: fresh.length > batch.length, newReplies, prospectReplies, important };
   } catch (e) {
