@@ -473,7 +473,10 @@ export class ChiefOfStaff extends DurableObject<WorkerEnv> {
       }
       note += ` inbox: ${r.error ?? `${r.added} new, ${r.newReplies.length} replies drafted`}`;
     }
-    return note.trim() || "nothing to do";
+    const result = note.trim() || "nothing to do";
+    await this.app.DB.prepare("insert into settings (key, value) values ('agent:last_tick', ?) on conflict(key) do update set value = excluded.value")
+      .bind(JSON.stringify({ at: new Date().toISOString(), note: result })).run();
+    return result;
   }
 }
 

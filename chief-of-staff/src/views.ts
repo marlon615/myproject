@@ -158,6 +158,7 @@ export interface DashData {
   tz: string;
   inbox?: { newCount: number; repliesPending: number; repliesSentToday: number } | null;
   todosOpen?: number;
+  lastTick?: { at: string; note: string } | null;
 }
 
 export function dashboardPage(d: DashData) {
@@ -181,6 +182,7 @@ ${d.inbox ? `<div class="tile"><span>New emails</span><b>${d.inbox.newCount}</b>
 <div class="card"><h2>By product</h2><table><tr><th>Product</th><th>Sent</th><th>Skipped</th><th>Replied</th></tr>
 ${d.byProduct.map((r) => `<tr><td><span class="badge b-${r.product}">${PRODUCT_NAME[r.product as "clientpulse"]}</span></td><td>${r.sent}</td><td>${r.rejected}</td><td>${r.replied}</td></tr>`).join("")}</table></div>
 <div class="card"><h2>Prospects · ${total}</h2><table>${Object.entries(STATUS_LABEL).map(([k, l]) => `<tr><td>${l}</td><td style="text-align:right">${d.prospects[k] ?? 0}</td></tr>`).join("")}</table></div>
+<div class="card"><h2>Autopilot</h2><p class="small" style="margin:0">${d.lastTick ? `Last check ${esc(fmt(d.lastTick.at))}: ${esc(d.lastTick.note)}` : "No automatic check has run yet."}</p><p class="muted small" style="margin:6px 0 0">Chief checks Gmail every 5 minutes on Cloudflare, phone open or not.</p></div>
 <div class="card"><h2>Recent drafting runs</h2>${d.runs.length ? `<table>${d.runs.map((r) => `<tr><td class="small">${fmt(r.at)}</td><td class="small">${r.trigger === "cron" ? "Morning" : "Manual"}</td><td class="small">${esc(r.note ?? "")}</td></tr>`).join("")}</table>` : `<p class="muted">None yet. The first one runs tomorrow morning.</p>`}</div>`, { tab: "dashboard" });
 }
 
