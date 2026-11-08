@@ -46,10 +46,16 @@ function listOut(items: string[]) {
 
 // ── Outreach drafts ──
 
-export function draftSpeech(d: Draft, p: Pick<Prospect, "name" | "email" | "organization">, i?: number, of?: number) {
+/** An outreach draft: short intro to speak, the full draft to show and read, then the question. */
+export function draftItem(d: Draft, p: Pick<Prospect, "name" | "email" | "organization">, i?: number, of?: number): QueueItem {
   const who = p.name || p.email.replace(/@.*/, "");
   const head = of && of > 1 ? `Outreach ${i} of ${of}. ` : "";
-  return `${head}${PRODUCT_NAME[d.product]} email to ${who}${p.organization ? ` at ${p.organization}` : ""}. Subject: ${d.subject}. ${spoken(d.body)} Should I send it?`;
+  return {
+    say: `${head}${PRODUCT_NAME[d.product]} email to ${who}${p.organization ? ` at ${p.organization}` : ""}.`,
+    show: { heading: `${PRODUCT_NAME[d.product]} outreach`, to: `${who}${p.organization ? `, ${p.organization}` : ""} <${p.email}>`, subject: d.subject, body: d.body },
+    ask: "Should I send it?",
+    decideUrl: `/drafts/${d.id}/decide`,
+  };
 }
 
 async function outreachQueue(env: Env): Promise<QueueItem[]> {
@@ -57,24 +63,29 @@ async function outreachQueue(env: Env): Promise<QueueItem[]> {
     `select d.*, p.name, p.email, p.organization from drafts d join prospects p on p.id = d.prospect_id
      where d.status = 'pending' order by d.created_at, d.id limit 25`,
   ).all<Draft & { name: string; email: string; organization: string }>();
-  return results.map((d, i) => ({ say: draftSpeech(d, d, i + 1, results.length), decideUrl: `/drafts/${d.id}/decide` }));
+  return results.map((d, i) => draftItem(d, d, i + 1, results.length));
 }
 
 // ── Inbox ──
 
 async function inboxQueue(env: Env): Promise<QueueItem[]> {
   const { results } = await env.DB.prepare(
-    `select i.*, r.id as reply_id, r.body as reply_body from inbox i
+    `select i.*, r.id as reply_id, r.body as reply_body, r.subject as reply_subject from inbox i
      left join replies r on r.inbox_id = i.id and r.status = 'pending'
      where i.status = 'new'
      order by case i.priority when 'high' then 0 when 'normal' then 1 else 2 end, coalesce(i.received_at, i.created_at) desc
      limit 20`,
-  ).all<InboxRow & { reply_id: number | null; reply_body: string | null }>();
+  ).all<InboxRow & { reply_id: number | null; reply_body: string | null; reply_subject: string | null }>();
   return results.map((m, i) => {
     const who = m.from_name || m.from_email;
     const head = `${results.length > 1 ? `Email ${i + 1} of ${results.length}. ` : ""}From ${who}${m.priority === "high" ? ", marked important" : ""}. ${m.subject ? `Subject: ${m.subject}. ` : ""}${m.summary}`;
     if (m.reply_id && m.reply_body) {
-      return { say: `${head} Here's a reply: ${spoken(m.reply_body)} Should I send it?`, decideUrl: `/replies/${m.reply_id}/decide` };
+      return {
+        say: `${head} Here's my reply.`,
+        show: { heading: `Reply to ${who}`, to: `${who} <${m.from_email}>`, subject: m.reply_subject ?? `Re: ${m.subject}`, context: m.summary, body: m.reply_body },
+        ask: "Should I send it?",
+        decideUrl: `/replies/${m.reply_id}/decide`,
+      };
     }
     return { say: `${head} No reply needed.`, ackUrl: `/inbox/${m.id}/heard` };
   });
@@ -182,7 +193,7 @@ async function writeFor(env: Env, target: string, product: Product | null): Prom
     d = await env.DB.prepare("select * from drafts where prospect_id = ? and status = 'pending' order by id desc limit 1").bind(p.id).first<Draft>();
   }
   if (!d) return { say: "Something went wrong writing that one. Try again." };
-  return { say: "Here it is.", queue: [{ say: draftSpeech(d, p), decideUrl: `/drafts/${d.id}/decide` }] };
+  return { say: "Here it is.", queue: [draftItem(d, p)] };
 }
 
 async function mark(env: Env, target: string, status: ProspectStatus): Promise<VoiceReply> {

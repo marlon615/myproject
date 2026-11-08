@@ -9,7 +9,12 @@ import { PRODUCT_NAME, type Env, type Product } from "./types";
 import { parseWhen } from "./when";
 
 /** Something to read aloud. decideUrl: wait for yes/no and post it. openUrl: open it (after a yes if confirm). */
-export interface QueueItem { say: string; decideUrl?: string; ackUrl?: string; openUrl?: string; confirm?: boolean }
+/** The draft shown on screen (and read aloud in full) before the question. */
+export interface DraftShow { heading: string; to?: string; subject?: string; body?: string; context?: string }
+export interface QueueItem {
+  say: string; decideUrl?: string; ackUrl?: string; openUrl?: string; confirm?: boolean;
+  show?: DraftShow; ask?: string; yesLabel?: string;
+}
 export interface VoiceReply { say: string; queue?: QueueItem[]; end?: boolean }
 
 export const isIOS = (ua: string) => /iPhone|iPad|iPod/i.test(ua);
@@ -84,7 +89,7 @@ export async function call(env: Env, target: string, ua: string): Promise<VoiceR
   if (!p) return { say: `I don't know ${target} yet. Say: save ${target}'s number as, and the number.` };
   if (!p.phone) return { say: `I don't have a number for ${p.name}. Say: save ${first(p.name) || p.name}'s number as, and the number.` };
   void ua;
-  return { say: "", queue: [{ say: `Call ${p.name} at ${sayNumber(p.phone)}?`, openUrl: `tel:${p.phone}`, confirm: true }] };
+  return { say: "", queue: [{ say: "", ask: `Call ${p.name} at ${sayNumber(p.phone)}?`, show: { heading: `Call ${p.name}`, body: p.phone }, yesLabel: "Yes, call", openUrl: `tel:${p.phone}`, confirm: true }] };
 }
 
 export async function text(env: Env, target: string, message: string, ua: string): Promise<VoiceReply> {
@@ -94,7 +99,7 @@ export async function text(env: Env, target: string, message: string, ua: string
   if (!p.phone) return { say: `I don't have a number for ${p.name}. Say: save ${first(p.name) || p.name}'s number as, and the number.` };
   const body = cap(message.trim());
   const sep = isIOS(ua) ? "&" : "?";
-  return { say: "", queue: [{ say: `Text to ${p.name}: ${body}. Should I send it?`, openUrl: `sms:${p.phone}${sep}body=${encodeURIComponent(body)}`, confirm: true }] };
+  return { say: "", queue: [{ say: `Text to ${p.name}.`, show: { heading: "Text message", to: `${p.name} (${p.phone})`, body }, ask: "Should I send it?", openUrl: `sms:${p.phone}${sep}body=${encodeURIComponent(body)}`, confirm: true }] };
 }
 
 export async function saveNumber(env: Env, who: string, raw: string): Promise<VoiceReply> {
@@ -158,7 +163,8 @@ export async function emailPerson(env: Env, target: string, message: string): Pr
   const row = await env.DB.prepare("insert into outbox (to_email, to_name, subject, body) values (?, ?, ?, ?) returning id")
     .bind(p.email, p.name, subject.slice(0, 200), body.slice(0, 5000)).first<{ id: number }>();
   const spoken = body.split(/\n+/).map((l) => l.trim()).filter(Boolean).map((l) => (/[.!?,:;]$/.test(l) ? l : l + ".")).join(" ");
-  return { say: "", queue: [{ say: `Email to ${p.name}. Subject: ${subject}. ${spoken} Should I send it?`, decideUrl: `/outbox/${row!.id}/decide` }] };
+  void spoken;
+  return { say: "", queue: [{ say: `Email to ${p.name}.`, show: { heading: "Email", to: `${p.name} <${p.email}>`, subject, body }, ask: "Should I send it?", decideUrl: `/outbox/${row!.id}/decide` }] };
 }
 
 // ── Calendar ──
@@ -178,7 +184,7 @@ export async function addToCalendar(env: Env, what: string): Promise<VoiceReply>
   const w = parseWhen(what, tz);
   if (!w) return { say: "When should I put it? Say it again with a day or time, like: lunch with Dave tomorrow at noon." };
   const title = cap(w.rest.replace(/^(an? |the )?(event|meeting|appointment)( for| called)? /, "").replace(/\s+(on|to) (my )?calendar$/, "")) || "Event";
-  return { say: "", queue: [{ say: `Add ${title}, ${w.label}, to your calendar?`, openUrl: addEventUrl(title, w.at, 60, !w.hasTime), confirm: true }] };
+  return { say: "", queue: [{ say: "", ask: `Add ${title}, ${w.label}, to your calendar?`, show: { heading: "Calendar event", body: `${title}\n${w.label.charAt(0).toUpperCase() + w.label.slice(1)}` }, yesLabel: "Yes, add it", openUrl: addEventUrl(title, w.at, 60, !w.hasTime), confirm: true }] };
 }
 
 // ── Reminders ──

@@ -262,6 +262,10 @@ const VOICE_CSS = `
 .vheard b,.vsaid b{display:block;font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px}
 .vhints{font-size:.85rem;color:var(--muted);max-width:520px}.vtype{display:flex;gap:8px;width:100%;max-width:560px}.vtype input{flex:1}
 .vwarn{color:var(--no);font-weight:600;max-width:520px}
+.vdraft{width:100%;max-width:560px;text-align:left;background:var(--card);border:2px solid var(--accent);border-radius:16px;padding:14px 16px}
+.vdraft-head{font-weight:800;font-size:1.05rem}.vdraft-meta{font-size:.85rem;color:var(--muted);margin-top:2px}
+.vdraft-ctx{font-size:.88rem;background:var(--bg);border-radius:10px;padding:8px 10px;margin-top:8px}
+.vdraft-body{white-space:pre-wrap;margin-top:10px;line-height:1.5;max-height:45vh;overflow:auto}
 @media (prefers-reduced-motion:reduce){.vorb{animation:none!important}}
 `;
 
@@ -278,6 +282,13 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
     <p id="notifText" class="small" style="margin:6px 0 10px">Chief works in the cloud even when your phone is closed, and asks for your yes with a notification.</p>
     <button id="notifBtn" class="btn btn-primary block" type="button">Turn on notifications</button>
   </div>
+  <div id="draft" class="vdraft" hidden>
+    <div id="draftHead" class="vdraft-head"></div>
+    <div id="draftMeta" class="vdraft-meta"></div>
+    <div id="draftContext" class="vdraft-ctx" hidden></div>
+    <div id="draftBody" class="vdraft-body"></div>
+    <div class="row"><button id="draftNo" class="btn btn-no" type="button">No</button><button id="draftYes" class="btn btn-yes" type="button">Yes, send</button></div>
+  </div>
   <div class="vheard"><b>You said</b><span id="heard">—</span></div>
   <div class="vsaid"><b>Chief</b><span id="said">Say “Hey Chief” and then what you need.</span></div>
   <p class="vhints">Try: “Hey Chief, brief me.” “…check my inbox.” “…email Dave saying I'll call tomorrow.” “…call Dave.” “…text Dave saying running late.” “…what's on my calendar today?” “…remind me to call Dave at 3.” “…directions to Grace Church.” When I ask “Should I send it?”, just say “yes” or “no”.</p>
@@ -293,6 +304,9 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
   var YES = /^(yes|yeah|yep|yup|ya|sure|send( it)?|do it|go ahead|please( do)?|correct|affirmative|ok send|okay send|yes please)\\b/i;
   var NO = /^(no|nope|nah|don'?t|do not|skip|cancel|not now|no thanks|pass)\\b/i;
   var REPEAT = /\\b(repeat|again|say that again|read it again|what\\??)$/i;
+  // Questions about the waiting draft: answer by reading it, never as a yes or no.
+  var QUESTION = /\\?|^(where|what|what'?s|who|whom|which|how|why|when|is it|is there|did you|can you|could you|would you|will you|read|show|tell me|let me (see|hear)|say (it|that)|repeat|again|i (didn'?t|did not|can'?t|cannot) (hear|see|catch)|hold on|wait)\\b/i;
+  var ABOUT_DRAFT = /\\b(reply|draft|email|message|text|it|that|subject|body|what (does|did) it say|read)\\b/i;
   var STOP = /^(stop|that'?s all|quit|enough|later|never ?mind)\\b/i;
   var LABEL = {off:"Tap once to start listening", wake:"Listening for “Hey Chief”", command:"I'm listening…", working:"Working on it…", speaking:"Speaking…", confirm:"Say yes to send, or no to skip"};
 
@@ -319,30 +333,87 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
   }
   function pauseListening(){ if(S.rec){ try{ S.rec.abort(); }catch(e){} } }
 
+  function chunks(text){
+    // Short pieces read reliably on every phone (long ones get cut off on some).
+    var out=[];
+    (text.match(/[^.!?]+[.!?]*\\s*/g) || [text]).forEach(function(sent){
+      sent = sent.trim(); if(!sent) return;
+      while(sent.length > 180){ var cut = sent.lastIndexOf(",", 180); if(cut < 60) cut = sent.lastIndexOf(" ", 180); if(cut < 1) cut = 180; out.push(sent.slice(0, cut+1)); sent = sent.slice(cut+1).trim(); }
+      if(sent) out.push(sent);
+    });
+    return out;
+  }
   function speak(text, then){
     if(!text){ if(then) then(); return; }
     $("said").textContent = text;
+    S.lastSaid = text.toLowerCase();
     if(!("speechSynthesis" in window)){ if(then) then(); return; }
     S.speaking = true; pauseListening(); setMode("speaking");
-    speechSynthesis.cancel();
-    var done=false, token = (S.speakToken = (S.speakToken||0)+1);
-    function finish(){ if(done || token!==S.speakToken) return; done=true; S.speaking=false; if(then) then(); listen(); }
-    var parts = text.match(/[^.!?]+[.!?]*/g) || [text];
-    parts.forEach(function(p, i){
-      var u = new SpeechSynthesisUtterance(p.trim()); u.rate = 1.02;
-      if(i===parts.length-1){ u.onend = u.onerror = finish; }
-      speechSynthesis.speak(u);
-    });
-    // Some phones never report the end of speech; move on after the expected time anyway.
-    setTimeout(finish, 2500 + text.split(/\s+/).length * 420);
+    var done=false, token = (S.speakToken = (S.speakToken||0)+1), started = Date.now();
+    var parts = chunks(text), lastEnded = false;
+    function finish(){
+      if(done || token!==S.speakToken) return; done=true;
+      // Short pause so the microphone doesn't catch the tail of Chief's own voice.
+      setTimeout(function(){ if(token!==S.speakToken) return; S.speaking=false; S.quietUntil = Date.now() + 700; if(then) then(); listen(); }, 350);
+    }
+    function start(){
+      parts.forEach(function(p, i){
+        var u = new SpeechSynthesisUtterance(p); u.rate = 1.0;
+        if(i===parts.length-1){ u.onend = function(){ lastEnded = true; finish(); }; u.onerror = function(){ lastEnded = true; finish(); }; }
+        speechSynthesis.speak(u);
+      });
+      // Backup for phones that never report the end: wait until the voice has actually gone quiet.
+      var words = text.split(/\\s+/).length, cap = 8000 + words * 900;
+      (function poll(){
+        if(done || token!==S.speakToken) return;
+        var quiet = !speechSynthesis.speaking && !speechSynthesis.pending;
+        if((quiet && Date.now() - started > 1500) || Date.now() - started > cap) return finish();
+        setTimeout(poll, 400);
+      })();
+    }
+    if(speechSynthesis.speaking || speechSynthesis.pending){ speechSynthesis.cancel(); setTimeout(start, 150); } else { start(); }
   }
-  function interrupt(){ S.speakToken=(S.speakToken||0)+1; speechSynthesis.cancel(); S.speaking=false; S.queue=[]; S.cur=null; setMode("wake"); listen(); }
+  function interrupt(){ S.speakToken=(S.speakToken||0)+1; speechSynthesis.cancel(); S.speaking=false; S.queue=[]; S.cur=null; hideDraft(); setMode("wake"); listen(); }
+
+  // ── The draft on screen, and reading it in full ──
+  function showDraft(item){
+    var d = item.show; if(!d){ hideDraft(); return; }
+    $("draftHead").textContent = d.heading || "Draft";
+    $("draftMeta").textContent = [d.to ? "To: " + d.to : "", d.subject ? "Subject: " + d.subject : ""].filter(Boolean).join("  ·  ");
+    $("draftContext").hidden = !d.context; $("draftContext").textContent = d.context ? "They wrote: " + d.context : "";
+    $("draftBody").textContent = d.body || "";
+    $("draftYes").textContent = item.yesLabel || "Yes, send";
+    $("draft").hidden = false;
+    try{ $("draft").scrollIntoView({behavior:"smooth", block:"center"}); }catch(e){}
+  }
+  function hideDraft(){ $("draft").hidden = true; }
+  function spokenBody(body){
+    return (body||"").split(/\\n+/).map(function(l){ return l.trim(); }).filter(Boolean).map(function(l){ return /[.!?,:;]$/.test(l) ? l : l + "."; }).join(" ");
+  }
+  /** Reads the whole item: intro, then the full draft, and only then the question. */
+  function present(item, then){
+    showDraft(item);
+    var d = item.show, full = item.say || "";
+    if(d){ full = [full, d.subject ? "Subject: " + d.subject + "." : "", d.body ? spokenBody(d.body) : ""].filter(Boolean).join(" "); }
+    speak(full, function(){ if(item.ask) speak(item.ask, then); else if(then) then(); });
+  }
+  function askAgain(){ present(S.cur, function(){ waitFor("confirm", 45000, timeoutConfirm); }); }
+  function timeoutConfirm(){ S.queue=[]; S.cur=null; hideDraft(); speak("I'll keep it for later.", function(){ setMode("wake"); }); }
+  $("draftYes").addEventListener("click", function(){ if(S.cur){ clearTimer(); S.speakToken++; speechSynthesis.cancel(); S.speaking=false; decide("yes"); } });
+  $("draftNo").addEventListener("click", function(){ if(S.cur){ clearTimer(); S.speakToken++; speechSynthesis.cancel(); S.speaking=false; decide("no"); } });
 
   function clearTimer(){ if(S.timer){ clearTimeout(S.timer); S.timer=null; } }
   function waitFor(mode, ms, onTimeout){ setMode(mode); clearTimer(); S.timer = setTimeout(function(){ if(S.mode===mode){ onTimeout(); } }, ms); }
 
+  function isEcho(t){
+    // Chief hearing itself: what was heard is part of what Chief just said.
+    var h = t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\\s+/g, " ").trim();
+    var said = (S.lastSaid||"").replace(/[^a-z0-9 ]/g, " ").replace(/\\s+/g, " ");
+    return h.split(" ").length >= 3 && said.indexOf(h) >= 0;
+  }
   function heard(t){
-    if(!t || S.speaking) return;
+    if(!t || S.speaking || Date.now() < (S.quietUntil||0)) return;
+    if(isEcho(t)) return;
     $("heard").textContent = t;
     if(S.mode==="wake"){
       var m = t.match(WAKE); if(!m) return;
@@ -355,7 +426,7 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
       clearTimer();
       var w = t.match(WAKE), after = w ? t.slice(w.index + w[0].length).trim() : "";
       // "Hey Chief, <something else>" while an email waits: drop the email (it stays saved) and do the new command.
-      if(w && after.length > 2 && !YES.test(after) && !NO.test(after)){ S.queue=[]; S.cur=null; return command(after); }
+      if(w && after.length > 2 && !YES.test(after) && !NO.test(after) && !ABOUT_DRAFT.test(after)){ S.queue=[]; S.cur=null; hideDraft(); return command(after); }
       return answer((after || t).trim());
     }
   }
@@ -384,6 +455,7 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
     if(/^(tel|sms|mailto):/i.test(url)){ location.href = url; } else { var w = window.open(url, "_blank"); if(!w) location.href = url; }
   }
   function next(){
+    hideDraft();
     if(!S.queue.length){ S.cur=null; return speak("That's everything for now.", function(){ setMode("wake"); }); }
     S.cur = S.queue.shift();
     if(S.cur.openUrl && !S.cur.confirm){ var u = S.cur.openUrl; return speak(S.cur.say, function(){ openIt(u); next(); }); }
@@ -392,18 +464,23 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
       var ack = S.cur.ackUrl;
       return speak(S.cur.say, function(){ if(ack){ var fd=new FormData(); post(ack, fd).catch(function(){}); } next(); });
     }
-    speak(S.cur.say, function(){ waitFor("confirm", 30000, function(){ S.queue=[]; S.cur=null; speak("I'll keep it for later.", function(){ setMode("wake"); }); }); });
+    present(S.cur, function(){ waitFor("confirm", 45000, timeoutConfirm); });
   }
 
   async function answer(t){
-    if(YES.test(t)) return decide("yes");
-    if(NO.test(t)) return decide("no");
-    if(STOP.test(t)){ S.queue=[]; S.cur=null; return speak("Okay. I'll keep the rest for later.", function(){ setMode("wake"); }); }
-    if(REPEAT.test(t)) return speak(S.cur.say, function(){ waitFor("confirm", 30000, function(){ setMode("wake"); }); });
-    speak("Should I send it? Say yes or no.", function(){ waitFor("confirm", 30000, function(){ setMode("wake"); }); });
+    var a = t.trim();
+    // A question is never a yes: read the draft (on screen and aloud), then ask again.
+    if(QUESTION.test(a) || REPEAT.test(a)) return speak("Here it is.", askAgain);
+    if(STOP.test(a)){ S.queue=[]; S.cur=null; hideDraft(); return speak("Okay. I'll keep the rest for later.", function(){ setMode("wake"); }); }
+    var yes = YES.test(a) && !/\\b(or no|not|don'?t|no)\\b/i.test(a.replace(/^(yes|yeah|yep|yup)\\b/i, ""));
+    if(yes) return decide("yes");
+    if(NO.test(a)) return decide("no");
+    speak("I didn't catch a yes or no. " + (S.cur.ask || "Should I send it?"), function(){ waitFor("confirm", 45000, timeoutConfirm); });
   }
 
   async function decide(d){
+    if(!S.cur) return;
+    hideDraft();
     if(S.cur.openUrl){
       if(d==="no") return speak("Okay, I won't.", next);
       var u = S.cur.openUrl;
