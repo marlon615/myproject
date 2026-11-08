@@ -57,7 +57,8 @@ async function extras(env: Env, tz: string) {
   const todo = await env.DB.prepare("select count(*) as n from todos where status = 'open'").first<{ n: number }>();
   const lastRow = await env.DB.prepare("select value from settings where key = 'agent:last_tick'").first<{ value: string }>();
   const lastTick = lastRow ? (JSON.parse(lastRow.value) as { at: string; note: string }) : null;
-  if (!gmail) return { inbox: null, todosOpen: todo?.n ?? 0, lastTick };
+  const paused = (await env.DB.prepare("select value from settings where key = 'agent:paused'").first<{ value: string }>())?.value === "1";
+  if (!gmail) return { inbox: null, todosOpen: todo?.n ?? 0, lastTick, paused };
   const [n, rp, sent] = await Promise.all([
     env.DB.prepare("select count(*) as n from inbox where status = 'new'").first<{ n: number }>(),
     env.DB.prepare("select count(*) as n from replies where status = 'pending'").first<{ n: number }>(),
@@ -68,5 +69,6 @@ async function extras(env: Env, tz: string) {
     inbox: { newCount: n?.n ?? 0, repliesPending: rp?.n ?? 0, repliesSentToday: sent.results.filter((r) => localDay(new Date(r.sent_at), tz) === today).length },
     todosOpen: todo?.n ?? 0,
     lastTick,
+    paused,
   };
 }

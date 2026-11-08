@@ -63,4 +63,17 @@ export function migrate(storage: DurableObjectStorage, schema: string) {
   ]) {
     try { storage.sql.exec(alter); } catch {}
   }
+  // Approvals used to allow only two kinds; rebuild the table without that limit (keeps every row).
+  const def = storage.sql.exec("select sql from sqlite_master where type = 'table' and name = 'approvals'").toArray()[0] as { sql?: string } | undefined;
+  if (def?.sql?.includes("check (kind in")) {
+    storage.transactionSync(() => {
+      storage.sql.exec(`create table approvals_new (
+        id integer primary key autoincrement, token_hash text not null unique, kind text not null, ref text not null,
+        title text not null default '', created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        expires_at text not null, used_at text)`);
+      storage.sql.exec("insert into approvals_new select id, token_hash, kind, ref, title, created_at, expires_at, used_at from approvals");
+      storage.sql.exec("drop table approvals");
+      storage.sql.exec("alter table approvals_new rename to approvals");
+    });
+  }
 }

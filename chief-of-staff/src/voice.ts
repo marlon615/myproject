@@ -10,6 +10,7 @@ import { addToCalendar, call, directions, emailPerson, makeProspect, readCalenda
 import { allowed, isPerm, type Perm } from "./permissions";
 import { agendaSpeech } from "./calendar";
 import { findPerson } from "./contacts";
+import { isPaused, resumeAgent } from "./agent";
 export type { QueueItem, VoiceReply };
 
 const HELP =
@@ -369,6 +370,15 @@ async function splitNameMessage(env: Env, rest: string): Promise<{ target: strin
 }
 
 export async function runCommand(env: Env, text: string, ua = ""): Promise<VoiceReply> {
+  // After the kill phrase, only "resume" works.
+  if (await isPaused(env)) {
+    if (/^(chief,? )?(resume|start again|unpause|un-pause|back to work|turn (it|autopilot) back on|you can start again)\b/i.test(text.trim())) {
+      await resumeAgent(env);
+      return { say: "I'm back. I'll keep watching your email and ask before anything is sent." };
+    }
+    return { say: "I'm stopped. Nothing will be sent until you say resume." };
+  }
+  if (/^(chief,? )?(resume|unpause|un-pause|back to work)\b/i.test(text.trim())) return { say: "I'm already on, and watching your email." };
   let it = parseRules(text);
   if (it.intent === "unknown") it = await parseWithAI(env, text);
 

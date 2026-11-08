@@ -15,6 +15,7 @@ export interface Settings {
   link_clientpulse: string;
   link_churchfollow: string;
   gmailAddress: string;
+  killPhrase: string;
 }
 
 export const DEFAULTS: Settings = {
@@ -33,6 +34,7 @@ export const DEFAULTS: Settings = {
   link_clientpulse: "",
   link_churchfollow: "",
   gmailAddress: "",
+  killPhrase: "Chief, stand down",
 };
 
 const NUM = new Set<string>(["dailyLimit", "followUpDays", "maxTouches"]);

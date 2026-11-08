@@ -137,7 +137,7 @@ create table if not exists push_subs (
 create table if not exists approvals (
   id integer primary key autoincrement,
   token_hash text not null unique,
-  kind text not null check (kind in ('reply', 'outreach_batch')),
+  kind text not null, -- reply | outreach_batch | fyi | brief
   ref text not null,
   title text not null default '',
   created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

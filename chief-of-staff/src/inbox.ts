@@ -76,9 +76,12 @@ function firstName(n: string) {
 
 function isAutomated(fromEmail: string, headers: { key: string; value: string }[]) {
   const h = (k: string) => headers.find((x) => x.key.toLowerCase() === k)?.value ?? "";
-  return /no-?reply|do-?not-?reply|notifications?@|mailer-daemon|bounce|news(letter)?@|marketing@|updates?@|info@/i.test(fromEmail)
+  return /no-?reply|do-?not-?reply|notifications?@|mailer-daemon|bounce|news(letter)?@|marketing@|updates?@|info@|billing@|invoices?@|payments?@|receipts?@|alerts?@|security@|accounts?@|statements?@/i.test(fromEmail)
     || Boolean(h("list-unsubscribe")) || /bulk|list|junk/i.test(h("precedence")) || Boolean(h("auto-submitted") && !/^no$/i.test(h("auto-submitted")));
 }
+
+/** Words that make an email matter today, even an automated one (a failed payment, a deadline). */
+const URGENT = /\b(urgent|asap|immediately|action required|past due|overdue|payment (failed|declined)|card (declined|expired)|deadline|final notice|suspended|security alert|sign-?in attempt|expires? (today|tomorrow))\b/i;
 
 function plainSummary(subject: string, text: string) {
   const body = text.replace(/\s+/g, " ").replace(/^(hi|hello|hey|dear)\b[^,.!]*[,.!]\s*/i, "").trim();
@@ -118,7 +121,7 @@ async function understand(env: Env, s: Settings, e: { fromName: string; fromEmai
   const me = firstName(s.senderName);
   return {
     summary: plainSummary(e.subject, e.text),
-    priority: e.automated ? "low" : "normal",
+    priority: URGENT.test(`${e.subject} ${e.text.slice(0, 600)}`) ? "high" : e.automated ? "low" : "normal",
     needsReply,
     replyBody: needsReply ? `${hi}\n\nThanks for your email. I got it, and I'll get back to you shortly.\n\n${me}`.trim() : "",
     source: "template",
@@ -133,9 +136,11 @@ async function understand(env: Env, s: Settings, e: { fromName: string; fromEmai
  */
 export interface NewReply { replyId: number; fromName: string; fromEmail: string; summary: string; body: string }
 
-export async function syncInbox(env: Env, max = 6): Promise<{ added: number; more: boolean; error?: string; newReplies: NewReply[]; prospectReplies: string[] }> {
+export interface Important { inboxId: number; fromName: string; fromEmail: string; subject: string; summary: string }
+
+export async function syncInbox(env: Env, max = 6): Promise<{ added: number; more: boolean; error?: string; newReplies: NewReply[]; prospectReplies: string[]; important: Important[] }> {
   const creds = await gmailCreds(env);
-  if (!creds) return { added: 0, more: false, error: "Gmail isn't connected yet.", newReplies: [], prospectReplies: [] };
+  if (!creds) return { added: 0, more: false, error: "Gmail isn't connected yet.", newReplies: [], prospectReplies: [], important: [] };
   const s = await getSettings(env);
   let im: Imap | null = null;
   try {
@@ -154,6 +159,7 @@ export async function syncInbox(env: Env, max = 6): Promise<{ added: number; mor
     let added = 0;
     const newReplies: NewReply[] = [];
     const prospectReplies: string[] = [];
+    const important: Important[] = [];
     for (const { uid, raw } of fetched) {
       const mail = await PostalMime.parse(raw);
       const fromEmail = (mail.from?.address ?? "").toLowerCase();
@@ -194,13 +200,16 @@ export async function syncInbox(env: Env, max = 6): Promise<{ added: number; mor
           .bind(ins.id, fromEmail, mail.from?.name ?? "", subj.slice(0, 300), u.replyBody.slice(0, 5000)).first<{ id: number }>();
         if (rep) newReplies.push({ replyId: rep.id, fromName: mail.from?.name ?? "", fromEmail, summary: u.summary, body: u.replyBody });
       }
+      if (ins && u.priority === "high" && !(u.needsReply && u.replyBody)) {
+        important.push({ inboxId: ins.id, fromName: mail.from?.name ?? "", fromEmail, subject: mail.subject ?? "", summary: u.summary });
+      }
       if (ins) added++;
     }
-    return { added, more: fresh.length > batch.length, newReplies, prospectReplies };
+    return { added, more: fresh.length > batch.length, newReplies, prospectReplies, important };
   } catch (e) {
     if (im) await im.logout().catch(() => {});
     console.error("inbox sync failed:", (e as Error).message);
-    return { added: 0, more: false, error: (e as Error).message, newReplies: [], prospectReplies: [] };
+    return { added: 0, more: false, error: (e as Error).message, newReplies: [], prospectReplies: [], important: [] };
   }
 }
 

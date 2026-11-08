@@ -159,6 +159,7 @@ export interface DashData {
   inbox?: { newCount: number; repliesPending: number; repliesSentToday: number } | null;
   todosOpen?: number;
   lastTick?: { at: string; note: string } | null;
+  paused?: boolean;
 }
 
 export function dashboardPage(d: DashData) {
@@ -182,11 +183,11 @@ ${d.inbox ? `<div class="tile"><span>New emails</span><b>${d.inbox.newCount}</b>
 <div class="card"><h2>By product</h2><table><tr><th>Product</th><th>Sent</th><th>Skipped</th><th>Replied</th></tr>
 ${d.byProduct.map((r) => `<tr><td><span class="badge b-${r.product}">${PRODUCT_NAME[r.product as "clientpulse"]}</span></td><td>${r.sent}</td><td>${r.rejected}</td><td>${r.replied}</td></tr>`).join("")}</table></div>
 <div class="card"><h2>Prospects · ${total}</h2><table>${Object.entries(STATUS_LABEL).map(([k, l]) => `<tr><td>${l}</td><td style="text-align:right">${d.prospects[k] ?? 0}</td></tr>`).join("")}</table></div>
-<div class="card"><h2>Autopilot</h2><p class="small" style="margin:0">${d.lastTick ? `Last check ${esc(fmt(d.lastTick.at))}: ${esc(d.lastTick.note)}` : "No automatic check has run yet."}</p><p class="muted small" style="margin:6px 0 0">Chief checks Gmail every 5 minutes on Cloudflare, phone open or not.</p></div>
+<div class="card"><h2>Autopilot${d.paused ? " · stopped" : ""}</h2><p class="small" style="margin:0">${d.paused ? "<b>Stopped by your kill phrase.</b> Say “Chief, resume” or use Settings to start again. " : ""}${d.lastTick ? `Last check ${esc(fmt(d.lastTick.at))}: ${esc(d.lastTick.note)}` : "No automatic check has run yet."}</p><p class="muted small" style="margin:6px 0 0">Chief checks Gmail every 5 minutes on Cloudflare, phone open or not.</p></div>
 <div class="card"><h2>Recent drafting runs</h2>${d.runs.length ? `<table>${d.runs.map((r) => `<tr><td class="small">${fmt(r.at)}</td><td class="small">${r.trigger === "cron" ? "Morning" : "Manual"}</td><td class="small">${esc(r.note ?? "")}</td></tr>`).join("")}</table>` : `<p class="muted">None yet. The first one runs tomorrow morning.</p>`}</div>`, { tab: "dashboard" });
 }
 
-export function settingsPage(s: Settings, keys: { anthropic: boolean; resend: boolean; gmail: boolean; calendar: boolean; phones?: number }, flash?: string) {
+export function settingsPage(s: Settings, keys: { anthropic: boolean; resend: boolean; gmail: boolean; calendar: boolean; phones?: number; paused?: boolean }, flash?: string) {
   const f = (name: keyof Settings, label: string, ph = "", type = "text") =>
     `<label>${label}</label><input name="${name}" type="${type}" value="${esc(s[name])}" placeholder="${esc(ph)}" maxlength="300">`;
   const check = (ok: boolean, label: string, how: string) => `<li style="margin:6px 0">${ok ? "✅" : "⬜️"} <b>${label}</b>${ok ? "" : ` · <span class="small">${how}</span>`}</li>`;
@@ -195,7 +196,8 @@ export function settingsPage(s: Settings, keys: { anthropic: boolean; resend: bo
 ${check(keys.gmail, "Gmail connected", "paste your app password below")}
 ${check(keys.anthropic, "Anthropic key added", "paste it under Connections, so replies are written in full sentences")}
 ${check((keys.phones ?? 0) > 0, "Notifications on", "open Chief from your Home Screen and tap Turn on notifications")}
-</ul><p class="muted small" style="margin:8px 0 0">With all three, Chief checks Gmail every 5 minutes on its own, writes replies, and notifies you for one yes.</p></div>
+</ul><p class="muted small" style="margin:8px 0 0">With all three, Chief checks Gmail every 5 minutes on its own, writes replies, and notifies you for one yes.</p>
+<form method="post" action="${keys.paused ? "/settings/resume" : "/settings/pause"}" style="margin-top:10px"><button class="btn ${keys.paused ? "btn-primary" : "btn-no"} block">${keys.paused ? "Chief is stopped. Resume" : "Stop everything (same as the kill phrase)"}</button></form></div>
 <form method="post" action="/settings/gmail" class="card"><h2>Gmail ${keys.gmail ? "✅ connected" : ""}</h2>
 <p class="small">Lets Chief read your Primary inbox aloud (without marking anything read) and send the replies and outreach you approve from your own Gmail.</p>
 <label>Gmail address</label><input name="gmailAddress" type="email" value="${esc(s.gmailAddress)}" placeholder="you@gmail.com" autocomplete="email">
@@ -208,6 +210,7 @@ ${check((keys.phones ?? 0) > 0, "Notifications on", "open Chief from your Home S
 ${f("senderName", "Your name (signs the emails)", "Marlon Rivera")}
 ${f("senderEmail", "Sending address for Resend (skip if you use Gmail)", "marlon@yourdomain.com", "email")}
 ${f("replyTo", "Replies go to (optional)", "you@gmail.com", "email")}
+<label>Kill phrase (say it any time to stop everything)</label><input name="killPhrase" value="${esc(s.killPhrase)}" maxlength="60" placeholder="Chief, stand down">
 <label>Mailing address (US law requires one in outreach emails)</label><input name="mailingAddress" value="${esc(s.mailingAddress)}" maxlength="300" placeholder="123 Main St, Dallas, TX 75201">
 </div>
 <div class="card"><h2>Products</h2>
@@ -353,7 +356,8 @@ const VOICE_CSS = `
 @media (prefers-reduced-motion:reduce){.vorb{animation:none!important}}
 `;
 
-export function voicePage(sending: "gmail" | "resend" | "mailto") {
+export function voicePage(sending: "gmail" | "resend" | "mailto", opts: { killPhrase?: string; paused?: boolean } = {}) {
+  const kill = (opts.killPhrase || "Chief, stand down").trim();
   const sendNote = sending !== "mailto" ? "" : `<p class="vhints">Until Gmail is connected in Settings, “yes” opens your Mail app and you tap Send there, and I can't read your inbox.</p>`;
   return page("Voice", `<style>${VOICE_CSS}</style>
 <div class="voice">
@@ -361,6 +365,8 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
   <button id="orb" class="vorb" type="button">Tap to start</button>
   <div id="status" class="vstatus">Tap once to start listening</div>
   <div id="warn" class="vwarn" hidden></div>
+  <div id="paused" class="card small" style="width:100%;max-width:560px;text-align:left;border-color:var(--no)" ${opts.paused ? "" : "hidden"}><b>Chief is stopped.</b> Nothing will be sent and no notifications go out. Say “Chief, resume” to start again.</div>
+  <div id="goCard" class="card small" style="width:100%;max-width:560px;text-align:center" hidden><b>Chief has something for you.</b> Tap the button to hear it.</div>
   <div id="voiceTip" class="card small" style="width:100%;max-width:560px;text-align:left" hidden><b>Install a male voice for Chief</b><p style="margin:6px 0 0">Your phone doesn't have a male voice installed yet, so Chief is using a deeper setting on the default voice. ${VOICE_TIP} Then reopen Chief.</p></div>
   <div id="notif" class="card" style="width:100%;max-width:560px;text-align:left" hidden>
     <b>Get a notification when a reply is ready</b>
@@ -376,7 +382,7 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
   </div>
   <div class="vheard"><b>You said</b><span id="heard">—</span></div>
   <div class="vsaid"><b>Chief</b><span id="said">Say “Hey Chief” and then what you need.</span></div>
-  <p class="vhints">Try: “Hey Chief, brief me.” “…check my inbox.” “…email Dave saying I'll call tomorrow.” “…call Dave.” “…text Dave saying running late.” “…what's on my calendar today?” “…remind me to call Dave at 3.” “…directions to Grace Church.” When I ask “Should I send it?”, just say “yes” or “no”.</p>
+  <p class="vhints">Try: “Hey Chief, brief me.” “…check my inbox.” “…email Dave saying I'll call tomorrow.” “…call Dave.” “…text Dave saying running late.” “…what's on my calendar today?” “…remind me to call Dave at 3.” “…directions to Grace Church.” When I ask “Should I send it?”, just say “yes” or “no”. To stop everything at once, say “${esc(kill)}”.</p>
   ${sendNote}
   <form id="typed" class="vtype"><input id="typedText" placeholder="Or type a command" autocomplete="off" enterkeyhint="send"><button class="btn">Go</button></form>
 </div>
@@ -386,6 +392,11 @@ ${VOICE_PICK_JS}
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var $ = function(id){return document.getElementById(id)};
   var S = {on:false, mode:"off", queue:[], cur:null, speaking:false, rec:null, lock:null, timer:null, listening:false};
+  var params = new URLSearchParams(location.search), GO = params.get("go"), SAY = params.get("say");
+  if (GO || SAY) { history.replaceState(null, "", "/"); $("goCard").hidden = false; $("orb").textContent = "Tap to hear it"; }
+  // The kill phrase, spoken any time Chief is listening: stop everything.
+  var KILL_WORDS = ${JSON.stringify(kill).replace(/</g, "\\u003c")}.toLowerCase().replace(/[^a-z0-9 ]/g, " ").trim().split(" ").filter(Boolean);
+  function isKill(t){ return (" " + t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/ +/g, " ") + " ").indexOf(" " + KILL_WORDS.join(" ") + " ") >= 0; }
   var WAKE = /\\b(?:hey|hi|hay|ok|okay|a|yo)[\\s,]+(?:chief|chiefs|cheif|cheef|cheap|chef|sheaf|chiev|keef)\\b[\\s,.!?]*/i;
   var YES = /^(yes|yeah|yep|yup|ya|sure|send( it)?|do it|go ahead|please( do)?|correct|affirmative|ok send|okay send|yes please)\\b/i;
   var NO = /^(no|nope|nah|don'?t|do not|skip|cancel|not now|no thanks|pass)\\b/i;
@@ -396,7 +407,7 @@ ${VOICE_PICK_JS}
   var STOP = /^(stop|that'?s all|quit|enough|later|never ?mind)\\b/i;
   var LABEL = {off:"Tap once to start listening", wake:"Listening for “Hey Chief”", command:"I'm listening…", working:"Working on it…", speaking:"Speaking…", confirm:"Say yes to send, or no to skip"};
 
-  function setMode(m){ S.mode=m; $("status").textContent=LABEL[m]||""; var o=$("orb"); o.className="vorb "+m; o.textContent = m==="off" ? "Tap to start" : (m==="speaking" ? "Tap to interrupt" : ""); }
+  function setMode(m){ S.mode=m; $("status").textContent=LABEL[m]||""; var o=$("orb"); o.className="vorb "+m; o.textContent = m==="off" ? ((GO||SAY) ? "Tap to hear it" : "Tap to start") : (m==="speaking" ? "Tap to interrupt" : ""); }
   function warn(t){ var w=$("warn"); w.hidden=!t; w.textContent=t||""; }
 
   async function lockScreen(){ try{ if(navigator.wakeLock && S.on){ S.lock = await navigator.wakeLock.request("screen"); } }catch(e){} }
@@ -430,8 +441,9 @@ ${VOICE_PICK_JS}
   function chunks(text){
     // Short pieces read reliably on every phone (long ones get cut off on some).
     var out=[];
-    (text.match(/[^.!?]+[.!?]*\\s*/g) || [text]).forEach(function(sent){
-      sent = sent.trim(); if(!sent) return;
+    var safe = text.replace(/(\\d)\\.(\\d)/g, "$1\u2024$2"); // protect decimals like $5.00
+    (safe.match(/[^.!?]+[.!?]*\\s*/g) || [safe]).forEach(function(sent){
+      sent = sent.replace(/\u2024/g, ".").trim(); if(!sent) return;
       while(sent.length > 180){ var cut = sent.lastIndexOf(",", 180); if(cut < 60) cut = sent.lastIndexOf(" ", 180); if(cut < 1) cut = 180; out.push(sent.slice(0, cut+1)); sent = sent.slice(cut+1).trim(); }
       if(sent) out.push(sent);
     });
@@ -509,8 +521,15 @@ ${VOICE_PICK_JS}
     var said = (S.lastSaid||"").replace(/[^a-z0-9 ]/g, " ").replace(/\\s+/g, " ");
     return h.split(" ").length >= 3 && said.indexOf(h) >= 0;
   }
+  async function killAll(){
+    clearTimer(); S.queue=[]; S.cur=null; hideDraft(); S.speakToken++; try{ speechSynthesis.cancel(); }catch(e){} S.speaking=false;
+    $("paused").hidden = false;
+    try{ var j = await post("/api/kill", new FormData()); speak(j.say || "Stopped.", function(){ setMode("wake"); }); }
+    catch(e){ speak("I couldn't reach the server to stop. Try again.", function(){ setMode("wake"); }); }
+  }
   function heard(t){
     if(!t || S.speaking || Date.now() < (S.quietUntil||0)) return;
+    if(isKill(t)){ $("heard").textContent = t; return killAll(); }
     if(isEcho(t)) return;
     $("heard").textContent = t;
     if(S.mode==="wake"){
@@ -535,12 +554,24 @@ ${VOICE_PICK_JS}
     return res.json();
   }
 
+  /** Opened from a notification: read that item in full, with Chief's recommendation, then wait for yes or no. */
+  async function openItem(token){
+    setMode("working");
+    try{
+      var res = await fetch("/api/item/" + encodeURIComponent(token), { credentials: "same-origin", headers: { "Accept": "application/json" } });
+      if(res.status===401){ location.href="/login"; return; }
+      var r = await res.json();
+      speak(r.say || "", function(){ if(r.queue && r.queue.length){ S.queue = r.queue; next(); } else { setMode("wake"); } });
+    }catch(e){ speak("I couldn't load that. Check your connection.", function(){ setMode("wake"); }); }
+  }
+
   async function command(text){
     if(!text) return;
     setMode("working");
     var fd = new FormData(); fd.set("text", text);
     try{
       var r = await post("/api/command", fd);
+      if (/^I'm back/.test(r.say || "")) $("paused").hidden = true;
       speak(r.say || "", function(){
         if(r.queue && r.queue.length){ S.queue = r.queue; next(); } else { setMode("wake"); }
       });
@@ -589,10 +620,11 @@ ${VOICE_PICK_JS}
     try{
       var j = await post(S.cur.decideUrl, fd);
       if(!j.ok) return speak(j.error || "That didn't work.", next);
+      if(j.queue && j.queue.length) S.queue = j.queue.concat(S.queue); // a follow-up step, like a reply to approve
       if(j.say) return speak(j.say, next);
       if(d==="no") return speak("Skipped.", next);
       if(j.href){ var href=j.href; return speak("Opening Mail. Tap send there.", function(){ location.href = href; setTimeout(next, 1500); }); }
-      speak("Sent.", next);
+      speak(j.label ? String(j.label).replace(/\\s*✓/, "").trim() + "." : "Sent.", next);
     }catch(e){ speak("I couldn't reach the server.", function(){ setMode("wake"); }); }
   }
 
@@ -603,6 +635,8 @@ ${VOICE_PICK_JS}
     S.on = true; warn(""); lockScreen();
     fetch("/api/state",{credentials:"same-origin"}).then(function(r){return r.json()}).then(function(st){
       if(!st.setupDone) return command("set up");
+      if(GO){ $("goCard").hidden = true; var g = GO; GO = null; return openItem(g); }
+      if(SAY === "brief"){ $("goCard").hidden = true; SAY = null; return command("brief me"); }
       speak("Chief is listening. Say hey chief, and tell me what you need.", function(){ setMode("wake"); });
     }).catch(function(){ speak("Chief is listening.", function(){ setMode("wake"); }); });
     // Speak reminders when they come due, while the app is open.

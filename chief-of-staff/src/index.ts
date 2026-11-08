@@ -13,7 +13,7 @@ import { allowed, isPerm, setupDone } from "./permissions";
 import { answerPermission } from "./phone";
 import { testIcs } from "./calendar";
 import { harvestSent } from "./contacts";
-import { findApproval, morningRun, notify, notifyNewReplies, rememberOrigin, runApproval } from "./agent";
+import { findApproval, isPaused, itemFor, morningRun, notify, notifyImportant, notifyNewReplies, pauseAgent, rememberOrigin, resumeAgent, runApproval } from "./agent";
 import { pushCount, sendPush, vapidKeys } from "./push";
 import { b64url } from "./crypto";
 import { icon, MANIFEST, SERVICE_WORKER } from "./pwa";
@@ -45,6 +45,11 @@ const withMsg = (path: string, msg: string) => `${path}${path.includes("?") ? "&
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const isProduct = (v: string): v is Product => (PRODUCTS as string[]).includes(v);
 const EMAIL = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]{2,}$/;
+
+/** Only same-site paths after sign-in (never another website). */
+function safeNext(n: string | null) {
+  return n && /^\/(?!\/)[\w\-/?=&%.]*$/.test(n) ? n : "/";
+}
 
 /** Blocks form posts from other websites. */
 function sameOrigin(req: Request) {
@@ -110,10 +115,30 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/icon-192.png") return icon(192);
   if (path === "/icon-512.png") return icon(512);
 
-  // One-tap approvals from a notification or email. The secret token in the link is the permission
-  // for that single item; opening the link (GET) never sends anything, only the Yes button (POST) does.
+  if (method === "POST" && !sameOrigin(req)) return html("Forbidden", 403);
+
+  if (path === "/login") {
+    if (method === "POST") {
+      if (!(await loginAllowed(env, ip))) return html(loginPage("Too many tries. Wait 15 minutes."), 429);
+      const pw = str((await req.formData()).get("password"), 200);
+      if (!(await checkPassword(env, pw))) {
+        await recordFailedLogin(env, ip);
+        return html(loginPage("Wrong password."), 401);
+      }
+      await clearLogins(env, ip);
+      return redirect(safeNext(url.searchParams.get("next")), { "Set-Cookie": await sessionCookie(env) });
+    }
+    return (await isSignedIn(req, env)) ? redirect(safeNext(url.searchParams.get("next"))) : html(loginPage());
+  }
+
+  if (!(await isSignedIn(req, env))) return method === "GET" ? redirect(path === "/" && !url.search ? "/login" : `/login?next=${encodeURIComponent(path + url.search)}`) : html("Sign in first.", 401);
+  // Approvals from a notification or email. You must be signed in (your passcode), the link's secret token
+  // picks the single item, and opening the link (GET) never sends anything: only a Yes (POST) does.
   const apMatch = path.match(/^\/approve\/([A-Za-z0-9_-]{20,64})$/);
   if (apMatch) {
+    if (!(await isSignedIn(req, env))) {
+      return method === "GET" ? redirect(`/login?next=${encodeURIComponent(path)}`) : json({ ok: false, error: "Open Chief and sign in first." }, 401);
+    }
     const a = await findApproval(env, apMatch[1]);
     if (method === "GET") {
       if (!a) return html(approvalDonePage("This link has expired or was already used.", false), 410);
@@ -128,23 +153,21 @@ async function handle(req: Request, env: Env): Promise<Response> {
       return wantsJson ? json(r, r.ok ? 200 : 400) : html(approvalDonePage(r.ok ? (r.label ?? "Done") : (r.error ?? "That didn't work."), r.ok));
     }
   }
-  if (method === "POST" && !sameOrigin(req)) return html("Forbidden", 403);
 
-  if (path === "/login") {
-    if (method === "POST") {
-      if (!(await loginAllowed(env, ip))) return html(loginPage("Too many tries. Wait 15 minutes."), 429);
-      const pw = str((await req.formData()).get("password"), 200);
-      if (!(await checkPassword(env, pw))) {
-        await recordFailedLogin(env, ip);
-        return html(loginPage("Wrong password."), 401);
-      }
-      await clearLogins(env, ip);
-      return redirect("/", { "Set-Cookie": await sessionCookie(env) });
-    }
-    return (await isSignedIn(req, env)) ? redirect("/") : html(loginPage());
+  const itemMatch = path.match(/^\/api\/item\/([A-Za-z0-9_-]{20,64})$/);
+  if (itemMatch && method === "GET") {
+    if (await isPaused(env)) return json({ say: "I'm stopped right now. Say resume to start again." });
+    const a = await findApproval(env, itemMatch[1]);
+    return json(a ? await itemFor(env, a, itemMatch[1]) : { say: "That one has expired or was already handled." });
   }
-
-  if (!(await isSignedIn(req, env))) return method === "GET" ? redirect("/login") : html("Sign in first.", 401);
+  if (path === "/api/kill" && method === "POST") {
+    await pauseAgent(env);
+    return json({ ok: true, say: "Stopped. Nothing will be sent, and I won't notify you, until you say resume." });
+  }
+  if (path === "/api/resume" && method === "POST") {
+    await resumeAgent(env);
+    return json({ ok: true, say: "I'm back. I'll keep watching your email and ask before anything is sent." });
+  }
   if (method === "GET" && path === "/") await rememberOrigin(env, url.origin);
 
   if (path === "/api/push-key" && method === "GET") {
@@ -167,7 +190,7 @@ async function handle(req: Request, env: Env): Promise<Response> {
 
   if (path === "/" && method === "GET") {
     const [s, resend, gmail] = await Promise.all([getSettings(env), hasSecret(env, "resend"), gmailCreds(env)]);
-    return html(voicePage(gmail ? "gmail" : resend && s.senderEmail ? "resend" : "mailto"));
+    return html(voicePage(gmail ? "gmail" : resend && s.senderEmail ? "resend" : "mailto", { killPhrase: s.killPhrase, paused: await isPaused(env) }));
   }
 
   if (path === "/api/command" && method === "POST") {
@@ -343,8 +366,16 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/dashboard" && method === "GET") return html(dashboardPage(await dashboard(env)));
 
   if (path === "/settings" && method === "GET") {
-    const [s, anthropic, resend, gmail, calendar, phones] = await Promise.all([getSettings(env), hasSecret(env, "anthropic"), hasSecret(env, "resend"), hasSecret(env, "gmail"), hasSecret(env, "calendar"), pushCount(env)]);
-    return html(settingsPage(s, { anthropic, resend, gmail, calendar, phones }, msg));
+    const [s, anthropic, resend, gmail, calendar, phones, paused] = await Promise.all([getSettings(env), hasSecret(env, "anthropic"), hasSecret(env, "resend"), hasSecret(env, "gmail"), hasSecret(env, "calendar"), pushCount(env), isPaused(env)]);
+    return html(settingsPage(s, { anthropic, resend, gmail, calendar, phones, paused }, msg));
+  }
+  if (path === "/settings/pause" && method === "POST") {
+    await pauseAgent(env);
+    return redirect(withMsg("/settings", "Stopped. Nothing will be sent and no notifications go out until you resume."));
+  }
+  if (path === "/settings/resume" && method === "POST") {
+    await resumeAgent(env);
+    return redirect(withMsg("/settings", "Chief is back on."));
   }
 
   if (path === "/settings/calendar" && method === "POST") {
@@ -449,6 +480,7 @@ export class ChiefOfStaff extends DurableObject<WorkerEnv> {
   }
   /** Morning: draft outreach, ask for one yes, report yesterday; refresh contacts. */
   async morning(): Promise<string> {
+    if (await isPaused(this.app)) return "paused";
     const note = await morningRun(this.app);
     const g = await gmailCreds(this.app);
     if (g && (await allowed(this.app, "contacts"))) await harvestSent(this.app, g.user, g.pass).catch(() => 0);
@@ -456,10 +488,15 @@ export class ChiefOfStaff extends DurableObject<WorkerEnv> {
   }
   /** Every 5 minutes, phone open or not: check Gmail, write replies, notify; send due reminders. */
   async tick(): Promise<string> {
+    if (await isPaused(this.app)) {
+      await this.app.DB.prepare("insert into settings (key, value) values ('agent:last_tick', ?) on conflict(key) do update set value = excluded.value")
+        .bind(JSON.stringify({ at: new Date().toISOString(), note: "stopped by your kill phrase" })).run();
+      return "paused";
+    }
     let note = "";
     if (await allowed(this.app, "reminders")) {
       for (const t of await dueToNotify(this.app)) {
-        const via = await notify(this.app, { title: "Reminder", body: t.text, url: "/", tag: `todo${t.id}` });
+        const via = await notify(this.app, { title: "Chief", body: `Reminder: ${t.text}`, url: "/", tag: `todo${t.id}` });
         if (via === "none" && (await pushCount(this.app)) === 0 && !(await gmailCreds(this.app))) continue; // nowhere to send yet; try later
         await markNotified(this.app, t.id);
         note += ` reminded: ${t.text};`;
@@ -468,8 +505,9 @@ export class ChiefOfStaff extends DurableObject<WorkerEnv> {
     if (await gmailCreds(this.app)) {
       const r = await syncInbox(this.app);
       if (r.newReplies.length) await notifyNewReplies(this.app, r.newReplies);
+      if (r.important.length) await notifyImportant(this.app, r.important);
       for (const who of r.prospectReplies) {
-        await notify(this.app, { title: `${who} replied`, body: "I stopped their follow-ups. Their email is in your inbox.", url: "/", tag: `prospect-${who}`.slice(0, 30) });
+        await notify(this.app, { title: "Chief", body: `${who} replied to your outreach. I stopped their follow-ups.`, url: "/?say=brief", tag: `prospect-${who}`.slice(0, 30) });
       }
       note += ` inbox: ${r.error ?? `${r.added} new, ${r.newReplies.length} replies drafted`}`;
     }

@@ -4,13 +4,32 @@
  */
 import { b64url, sha256 } from "./crypto";
 import { buildDailyDrafts } from "./draft";
-import { decideReply, gmailCreds, gmailSend } from "./inbox";
+import { decideReply, gmailCreds, gmailSend, type InboxRow, type ReplyRow } from "./inbox";
+import type { QueueItem, VoiceReply } from "./phone";
+import { addTodo } from "./todos";
+import { draftItem } from "./voice";
 import { pushCount, sendPush, type PushMessage } from "./push";
 import { sendEmail } from "./send";
 import { getSettings } from "./settings";
 import { PRODUCT_NAME, type Draft, type Env } from "./types";
 
-export interface Approval { id: number; token_hash: string; kind: "reply" | "outreach_batch"; ref: string; title: string; expires_at: string; used_at: string | null }
+export interface Approval { id: number; token_hash: string; kind: "reply" | "outreach_batch" | "fyi"; ref: string; title: string; expires_at: string; used_at: string | null }
+
+// ── The kill phrase: everything stops until you say resume ──
+
+export async function isPaused(env: Env) {
+  return (await env.DB.prepare("select value from settings where key = 'agent:paused'").first<{ value: string }>())?.value === "1";
+}
+/** Stops the autopilot and cancels every notification approval that hasn't been used. Drafts stay saved. */
+export async function pauseAgent(env: Env) {
+  await env.DB.batch([
+    env.DB.prepare("insert into settings (key, value) values ('agent:paused', '1') on conflict(key) do update set value = '1'"),
+    env.DB.prepare("update approvals set used_at = ? where used_at is null").bind(new Date().toISOString()),
+  ]);
+}
+export async function resumeAgent(env: Env) {
+  await env.DB.prepare("insert into settings (key, value) values ('agent:paused', '0') on conflict(key) do update set value = '0'").run();
+}
 
 // ── One-tap approval tokens ──
 
@@ -41,6 +60,7 @@ export async function rememberOrigin(env: Env, origin: string) {
 // ── Notifications: phone first, email to yourself as the backup ──
 
 export async function notify(env: Env, msg: PushMessage & { emailBody?: string }): Promise<"push" | "email" | "none"> {
+  if (await isPaused(env)) return "none";
   if ((await pushCount(env)) > 0 && (await sendPush(env, msg)) > 0) return "push";
   const g = await gmailCreds(env);
   if (!g) return "none";
@@ -48,7 +68,7 @@ export async function notify(env: Env, msg: PushMessage & { emailBody?: string }
   const link = new URL(msg.url, origin).toString();
   const r = await gmailSend(env, {
     to: g.user,
-    subject: `Chief: ${msg.title}`,
+    subject: msg.title === "Chief" ? `Chief: ${msg.body.slice(0, 80)}` : `Chief: ${msg.title}`,
     text: `${msg.emailBody ?? msg.body}\n\n${msg.approve ? "Approve with one tap" : "Open"}: ${link}\n\n— Chief of Staff`,
   });
   return r.ok ? "email" : "none";
@@ -62,17 +82,81 @@ export async function notifyNewReplies(env: Env, replies: { replyId: number; fro
     const who = r.fromName || r.fromEmail;
     const token = await createApproval(env, "reply", String(r.replyId), `Reply to ${who}`);
     await notify(env, {
-      title: `Reply to ${who} is ready`,
-      body: `${r.summary}`.slice(0, 180),
-      url: `/approve/${token}`,
+      title: "Chief",
+      body: short(`Reply ready for ${who}: ${r.summary}`),
+      url: `/?go=${token}`,
       approve: token,
       tag: `reply${r.replyId}`,
       emailBody: `${who} wrote: ${r.summary}\n\nChief's reply:\n\n${r.body}`,
     });
   }
   if (replies.length > top.length) {
-    await notify(env, { title: `${replies.length - top.length} more replies ready`, body: "Open Chief to review them.", url: "/review", tag: "more-replies" });
+    await notify(env, { title: "Chief", body: `${replies.length - top.length} more replies are ready for your yes.`, url: "/?say=brief", tag: "more-replies" });
   }
+}
+
+/** Something that matters but needs no reply (a failed payment, a deadline): tell the owner. */
+export async function notifyImportant(env: Env, items: { inboxId: number; fromName: string; fromEmail: string; subject: string; summary: string }[]) {
+  for (const m of items.slice(0, 3)) {
+    const who = m.fromName || m.fromEmail;
+    const token = await createApproval(env, "fyi", String(m.inboxId), `Important: ${who}`);
+    await notify(env, {
+      title: "Chief",
+      body: short(`Important from ${who}: ${m.summary || m.subject}`),
+      url: `/?go=${token}`,
+      tag: `fyi${m.inboxId}`,
+      emailBody: `Important email from ${who}\nSubject: ${m.subject}\n\n${m.summary}`,
+    });
+  }
+}
+
+/** Lock-screen sized: one short line. */
+function short(s: string, n = 120) {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > n ? t.slice(0, n - 1).replace(/\s+\S*$/, "") + "…" : t;
+}
+
+const AUTOMATED_SENDER = /no-?reply|do-?not-?reply|notifications?@|mailer-daemon|billing@|alerts?@|receipts?@|support@|security@|updates?@|info@/i;
+
+// ── What the voice screen reads when you tap a notification ──
+
+export async function itemFor(env: Env, a: Approval, token: string): Promise<VoiceReply> {
+  if (a.used_at) return { say: "That one was already handled." };
+  if (a.kind === "reply") {
+    const r = await env.DB.prepare("select * from replies where id = ?").bind(Number(a.ref)).first<ReplyRow>();
+    const m = r ? await env.DB.prepare("select * from inbox where id = ?").bind(r.inbox_id).first<InboxRow>() : null;
+    if (!r || !m || r.status !== "pending") return { say: "That reply was already handled." };
+    const who = m.from_name || m.from_email;
+    return { say: "", queue: [{
+      say: `${who} wrote${m.subject ? ` about ${m.subject}` : ""}. ${m.summary} Here's the reply I drafted.`,
+      show: { heading: `Reply to ${who}`, to: `${who} <${m.from_email}>`, subject: r.subject, context: m.summary, body: r.body },
+      ask: "I recommend sending it. Should I send it?",
+      decideUrl: `/approve/${token}`,
+    }] };
+  }
+  if (a.kind === "fyi") {
+    const m = await env.DB.prepare("select * from inbox where id = ?").bind(Number(a.ref)).first<InboxRow>();
+    if (!m) return { say: "I can't find that email anymore." };
+    const who = m.from_name || m.from_email;
+    const automated = AUTOMATED_SENDER.test(m.from_email);
+    return { say: "", queue: [{
+      say: `Important email from ${who}.`,
+      show: { heading: `Important: ${who}`, to: m.from_email, subject: m.subject, body: m.summary },
+      ask: automated
+        ? "It's an automated notice, so there's nothing to reply to. My recommendation: handle it today. Should I add it to your list?"
+        : "My recommendation: answer it today. Should I draft a reply?",
+      yesLabel: automated ? "Yes, add to my list" : "Yes, draft a reply",
+      decideUrl: `/approve/${token}`,
+    }] };
+  }
+  // A batch of outreach: read each one fully, yes or no on each.
+  const ids = (JSON.parse(a.ref) as number[]).filter(Number.isInteger);
+  const { results } = ids.length ? await env.DB.prepare(
+    `select d.*, p.name, p.email, p.organization from drafts d join prospects p on p.id = d.prospect_id where d.id in (${ids.map(() => "?").join(",")}) and d.status = 'pending' order by d.id`,
+  ).bind(...ids).all<Draft & { name: string; email: string; organization: string }>() : { results: [] };
+  if (!results.length) return { say: "Those outreach emails were already handled." };
+  const queue: QueueItem[] = results.map((d, i) => draftItem(d, d, i + 1, results.length));
+  return { say: `You have ${results.length} outreach email${results.length === 1 ? "" : "s"} ready. I recommend sending ${results.length === 1 ? "it" : "them"}. I'll read each one, and you say yes or no.`, queue };
 }
 
 
@@ -92,14 +176,14 @@ export async function morningRun(env: Env): Promise<string> {
     const ids = results.map((x) => x.id);
     const token = await createApproval(env, "outreach_batch", JSON.stringify(ids), `${ids.length} outreach emails`, 2);
     await notify(env, {
-      title: `${ids.length} outreach email${ids.length === 1 ? "" : "s"} ready`,
-      body: `${yesterday} Tap to read them, then one yes sends them all.`,
-      url: `/approve/${token}`,
+      title: "Chief",
+      body: short(`${ids.length} outreach email${ids.length === 1 ? "" : "s"} ready for your yes. ${yesterday}`),
+      url: `/?go=${token}`,
       approve: token,
       tag: "outreach",
     });
   } else {
-    await notify(env, { title: "Good morning", body: `${yesterday} ${r.note}`, url: "/", tag: "morning" });
+    await notify(env, { title: "Chief", body: short(`Good morning. ${yesterday}`), url: "/?say=brief", tag: "morning" });
   }
   return `${r.note} ${yesterday}`;
 }
@@ -133,7 +217,8 @@ export async function sendOutreachBatch(env: Env, ids: number[]): Promise<{ sent
   return { sent, failed, skipped };
 }
 
-export async function runApproval(env: Env, a: Approval, decision: "yes" | "no"): Promise<{ ok: boolean; label?: string; error?: string }> {
+export async function runApproval(env: Env, a: Approval, decision: "yes" | "no"): Promise<{ ok: boolean; label?: string; error?: string; say?: string; queue?: QueueItem[] }> {
+  if (await isPaused(env)) return { ok: false, error: "Chief is stopped. Say resume to start again." };
   const claim = await env.DB.prepare("update approvals set used_at = ? where id = ? and used_at is null").bind(new Date().toISOString(), a.id).run();
   if (!claim.meta.changes) return { ok: false, error: "This was already handled." };
   if (a.kind === "reply") {
@@ -141,13 +226,34 @@ export async function runApproval(env: Env, a: Approval, decision: "yes" | "no")
     if (!r.ok) await env.DB.prepare("update approvals set used_at = null where id = ?").bind(a.id).run();
     return r.ok ? { ok: true, label: decision === "yes" ? "Sent ✓" : "Skipped" } : { ok: false, error: r.error };
   }
+  if (a.kind === "fyi") {
+    if (decision === "no") return { ok: true, label: "Okay." };
+    const m = await env.DB.prepare("select * from inbox where id = ?").bind(Number(a.ref)).first<InboxRow>();
+    if (!m) return { ok: false, error: "I can't find that email anymore." };
+    await env.DB.prepare("update inbox set status = 'heard' where id = ? and status = 'new'").bind(m.id).run();
+    if (AUTOMATED_SENDER.test(m.from_email)) {
+      const t = await addTodo(env, `Handle: ${m.subject || m.summary}`.slice(0, 200));
+      return { ok: true, say: `Added to your list: ${t?.text ?? m.subject}.` };
+    }
+    const s = await getSettings(env);
+    const first = (m.from_name || "").replace(/"/g, "").trim().split(/\s+/)[0] || "there";
+    const body = `Hi ${first},\n\nThanks for letting me know. I'm on it, and I'll get back to you today.\n\n${(s.senderName || "").split(/\s+/)[0]}`.trim();
+    const subj = /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`;
+    const rep = await env.DB.prepare("insert into replies (inbox_id, to_email, to_name, subject, body) values (?, ?, ?, ?, ?) returning id")
+      .bind(m.id, m.from_email, m.from_name, subj.slice(0, 300), body).first<{ id: number }>();
+    const who = m.from_name || m.from_email;
+    return { ok: true, say: "Here's a reply.", queue: [{
+      say: `Reply to ${who}.`, show: { heading: `Reply to ${who}`, to: `${who} <${m.from_email}>`, subject: subj, context: m.summary, body },
+      ask: "Should I send it?", decideUrl: `/replies/${rep!.id}/decide`,
+    }] };
+  }
   const ids = (JSON.parse(a.ref) as number[]).filter(Number.isInteger);
   if (decision === "no") return { ok: true, label: "Okay, nothing sent. They're still in Review if you change your mind." };
   const r = await sendOutreachBatch(env, ids);
   const label = `Sent ${r.sent} of ${ids.length - r.skipped}.${r.failed.length ? ` ${r.failed.length} failed.` : ""}`;
   await notify(env, {
-    title: "Outreach results",
-    body: `${label}${r.failed.length ? ` ${r.failed[0]}` : ""} I'll tell you when someone replies.`,
+    title: "Chief",
+    body: short(`Outreach results: ${label}${r.failed.length ? ` ${r.failed[0]}` : ""} I'll tell you when someone replies.`),
     url: "/dashboard",
     tag: "outreach-results",
   });
