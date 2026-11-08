@@ -29,7 +29,7 @@ textarea{resize:vertical;min-height:120px;line-height:1.45}
 .bars{display:grid;grid-template-columns:repeat(14,1fr);gap:4px;height:130px;align-items:end}.bar{display:flex;flex-direction:column-reverse;height:100%;gap:2px}.bar i{display:block;border-radius:3px 3px 0 0}.i-sent{background:var(--yes)}.i-no{background:var(--no)}
 .x{display:grid;grid-template-columns:repeat(14,1fr);gap:4px;font-size:.68rem;color:var(--muted);text-align:center;margin-top:4px}
 table{width:100%;border-collapse:collapse;font-size:.9rem}td,th{padding:8px 4px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}th{color:var(--muted);font-size:.8rem}
-.tabs{position:fixed;bottom:0;left:0;right:0;display:grid;grid-template-columns:repeat(4,1fr);background:var(--card);border-top:1px solid var(--border);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
+.tabs{position:fixed;bottom:0;left:0;right:0;display:grid;grid-template-columns:repeat(5,1fr);background:var(--card);border-top:1px solid var(--border);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
 .tabs a{display:flex;flex-direction:column;align-items:center;font-size:.75rem;font-weight:700;color:var(--muted);text-decoration:none;padding:6px 0}.tabs a.on{color:var(--accent)}.tabs a b{font-size:1.2rem}
 .empty{text-align:center;padding:30px 10px}.done{opacity:.5;pointer-events:none}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.75rem;font-weight:700;border:1px solid var(--border)}
@@ -38,7 +38,8 @@ form.inline{display:inline}.legend{display:flex;gap:12px;font-size:.8rem;color:v
 
 export function page(title: string, body: string, opts: { tab?: string; flash?: string; bare?: boolean } = {}) {
   const tabs = [
-    ["approve", "/", "✓", "Approve"],
+    ["voice", "/", "🎙", "Voice"],
+    ["approve", "/review", "✓", "Review"],
     ["prospects", "/prospects", "👥", "Prospects"],
     ["dashboard", "/dashboard", "▦", "Dashboard"],
     ["settings", "/settings", "⚙", "Settings"],
@@ -73,7 +74,7 @@ export function approvePage(rows: PendingRow[], s: Settings, mode: "resend" | "m
   <div class="foot">${esc(footer(s))}</div>
   <div class="row"><button class="btn btn-no" name="decision" value="no">No</button><button class="btn btn-yes" name="decision" value="yes">Yes, send</button></div>
 </form>`).join("");
-  return page("Approve", `<h1>Today's emails</h1>
+  return page("Review", `<h1>Review emails</h1>
 <p class="muted small">${how} Nothing is ever sent without your yes.</p>
 ${rows.length ? cards : `<div class="card empty"><p><b>All caught up.</b></p><p class="muted">New drafts arrive every morning. Add prospects, or draft now.</p></div>`}
 <form method="post" action="/draft-now"><button class="btn block">Draft today's emails now</button></form>
@@ -197,4 +198,172 @@ ${keys.anthropic || keys.resend ? `<div class="row">${keys.anthropic ? `<button 
 <label>New password (12+ characters)</label><input name="next" type="password" autocomplete="new-password" minlength="12" required>
 <button class="btn block" style="margin-top:12px">Change password</button></form>
 <form method="post" action="/logout"><button class="btn block">Sign out</button></form>`, { tab: "settings", flash });
+}
+
+const VOICE_CSS = `
+.voice{min-height:calc(100dvh - 40px);display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;padding-top:10px}
+.vtop{width:100%;display:flex;justify-content:space-between;align-items:center}.vtop a{font-weight:700;text-decoration:none}
+.vorb{width:190px;height:190px;border-radius:50%;margin-top:4vh;border:0;color:#fff;font:inherit;font-weight:800;font-size:1.05rem;
+ background:radial-gradient(circle at 35% 30%,#9db7ff,#2f5bd3 60%,#1b2f7a);box-shadow:0 0 0 0 rgba(47,91,211,.5);transition:transform .2s}
+.vorb.wake{animation:breathe 3.2s ease-in-out infinite}
+.vorb.command,.vorb.confirm{background:radial-gradient(circle at 35% 30%,#a8f0c6,#178a4c 60%,#0c4d2a);animation:pulse 1.2s infinite}
+.vorb.working{animation:spin 1s linear infinite;opacity:.85}
+.vorb.speaking{background:radial-gradient(circle at 35% 30%,#ffd3a8,#c2410c 60%,#6b2306);animation:talk .8s ease-in-out infinite}
+@keyframes breathe{50%{transform:scale(1.04)}}@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(23,138,76,.55)}100%{box-shadow:0 0 0 34px rgba(23,138,76,0)}}
+@keyframes talk{50%{transform:scale(1.06)}}@keyframes spin{50%{filter:brightness(1.25)}}
+.vstatus{font-weight:800;font-size:1.15rem}.vheard,.vsaid{max-width:560px;width:100%;text-align:left;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px 14px;min-height:48px}
+.vheard b,.vsaid b{display:block;font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px}
+.vhints{font-size:.85rem;color:var(--muted);max-width:520px}.vtype{display:flex;gap:8px;width:100%;max-width:560px}.vtype input{flex:1}
+.vwarn{color:var(--no);font-weight:600;max-width:520px}
+@media (prefers-reduced-motion:reduce){.vorb{animation:none!important}}
+`;
+
+export function voicePage(sending: "resend" | "mailto") {
+  const sendNote = sending === "resend" ? "" : `<p class="vhints">Until an email service is added in Settings, “yes” opens your Mail app and you tap Send there.</p>`;
+  return page("Voice", `<style>${VOICE_CSS}</style>
+<div class="voice">
+  <div class="vtop"><span class="brand">Chief of Staff</span><a href="/review">Manage ›</a></div>
+  <button id="orb" class="vorb" type="button">Tap to start</button>
+  <div id="status" class="vstatus">Tap once to start listening</div>
+  <div id="warn" class="vwarn" hidden></div>
+  <div class="vheard"><b>You said</b><span id="heard">—</span></div>
+  <div class="vsaid"><b>Chief</b><span id="said">Say “Hey Chief” and then what you need.</span></div>
+  <p class="vhints">Try: “Hey Chief, read my emails.” “Hey Chief, write an email to Grace Church.” “Hey Chief, give me my dashboard.” “Hey Chief, draft today's emails.” After an email is read, just say “yes” or “no”.</p>
+  ${sendNote}
+  <form id="typed" class="vtype"><input id="typedText" placeholder="Or type a command" autocomplete="off" enterkeyhint="send"><button class="btn">Go</button></form>
+</div>
+<script>
+(function(){
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var $ = function(id){return document.getElementById(id)};
+  var S = {on:false, mode:"off", queue:[], cur:null, speaking:false, rec:null, lock:null, timer:null, listening:false};
+  var WAKE = /\\b(?:hey|hi|hay|ok|okay|a|yo)[\\s,]+(?:chief|chiefs|cheif|cheef|cheap|chef|sheaf|chiev|keef)\\b[\\s,.!?]*/i;
+  var YES = /^(yes|yeah|yep|yup|ya|sure|send( it)?|do it|go ahead|please( do)?|correct|affirmative|ok send|okay send|yes please)\\b/i;
+  var NO = /^(no|nope|nah|don'?t|do not|skip|cancel|not now|no thanks|pass)\\b/i;
+  var REPEAT = /\\b(repeat|again|say that again|read it again|what\\??)$/i;
+  var STOP = /^(stop|that'?s all|quit|enough|later|never ?mind)\\b/i;
+  var LABEL = {off:"Tap once to start listening", wake:"Listening for “Hey Chief”", command:"I'm listening…", working:"Working on it…", speaking:"Speaking…", confirm:"Say yes to send, or no to skip"};
+
+  function setMode(m){ S.mode=m; $("status").textContent=LABEL[m]||""; var o=$("orb"); o.className="vorb "+m; o.textContent = m==="off" ? "Tap to start" : (m==="speaking" ? "Tap to interrupt" : ""); }
+  function warn(t){ var w=$("warn"); w.hidden=!t; w.textContent=t||""; }
+
+  async function lockScreen(){ try{ if(navigator.wakeLock && S.on){ S.lock = await navigator.wakeLock.request("screen"); } }catch(e){} }
+  document.addEventListener("visibilitychange", function(){ if(document.visibilityState==="visible" && S.on){ lockScreen(); listen(); } });
+
+  function listen(){
+    if(!SR || !S.on || S.speaking || S.listening) return;
+    var r = new SR(); S.rec=r; r.lang = navigator.language || "en-US"; r.continuous = true; r.interimResults = true;
+    r.onresult = function(e){
+      var interim="";
+      for(var i=e.resultIndex;i<e.results.length;i++){
+        var t = e.results[i][0].transcript;
+        if(e.results[i].isFinal){ heard(t.trim()); } else { interim += t; }
+      }
+      if(interim && !S.speaking) $("heard").textContent = interim;
+    };
+    r.onerror = function(e){ if(e.error==="not-allowed"||e.error==="service-not-allowed"){ S.on=false; setMode("off"); warn("The microphone is blocked. Allow it for this site in your phone's settings, then tap the button."); } };
+    r.onend = function(){ S.listening=false; S.rec=null; if(S.on && !S.speaking) setTimeout(listen, 250); };
+    try{ r.start(); S.listening=true; }catch(e){ S.listening=false; }
+  }
+  function pauseListening(){ if(S.rec){ try{ S.rec.abort(); }catch(e){} } }
+
+  function speak(text, then){
+    $("said").textContent = text;
+    if(!("speechSynthesis" in window)){ if(then) then(); return; }
+    S.speaking = true; pauseListening(); setMode("speaking");
+    speechSynthesis.cancel();
+    var done=false, token = (S.speakToken = (S.speakToken||0)+1);
+    function finish(){ if(done || token!==S.speakToken) return; done=true; S.speaking=false; if(then) then(); listen(); }
+    var parts = text.match(/[^.!?]+[.!?]*/g) || [text];
+    parts.forEach(function(p, i){
+      var u = new SpeechSynthesisUtterance(p.trim()); u.rate = 1.02;
+      if(i===parts.length-1){ u.onend = u.onerror = finish; }
+      speechSynthesis.speak(u);
+    });
+    // Some phones never report the end of speech; move on after the expected time anyway.
+    setTimeout(finish, 2500 + text.split(/\s+/).length * 420);
+  }
+  function interrupt(){ S.speakToken=(S.speakToken||0)+1; speechSynthesis.cancel(); S.speaking=false; S.queue=[]; S.cur=null; setMode("wake"); listen(); }
+
+  function clearTimer(){ if(S.timer){ clearTimeout(S.timer); S.timer=null; } }
+  function waitFor(mode, ms, onTimeout){ setMode(mode); clearTimer(); S.timer = setTimeout(function(){ if(S.mode===mode){ onTimeout(); } }, ms); }
+
+  function heard(t){
+    if(!t || S.speaking) return;
+    $("heard").textContent = t;
+    if(S.mode==="wake"){
+      var m = t.match(WAKE); if(!m) return;
+      var rest = t.slice(m.index + m[0].length).trim();
+      if(rest.length > 2) return command(rest);
+      return speak("Yes?", function(){ waitFor("command", 9000, function(){ setMode("wake"); }); });
+    }
+    if(S.mode==="command"){ clearTimer(); return command(t.replace(WAKE,"").trim()); }
+    if(S.mode==="confirm"){
+      clearTimer();
+      var w = t.match(WAKE), after = w ? t.slice(w.index + w[0].length).trim() : "";
+      // "Hey Chief, <something else>" while an email waits: drop the email (it stays saved) and do the new command.
+      if(w && after.length > 2 && !YES.test(after) && !NO.test(after)){ S.queue=[]; S.cur=null; return command(after); }
+      return answer((after || t).trim());
+    }
+  }
+
+  async function post(url, body){
+    var res = await fetch(url, {method:"POST", body: body, headers:{"Accept":"application/json"}, credentials:"same-origin"});
+    if(res.status===401){ location.href="/login"; throw new Error("signed out"); }
+    return res.json();
+  }
+
+  async function command(text){
+    if(!text) return;
+    setMode("working");
+    var fd = new FormData(); fd.set("text", text);
+    try{
+      var r = await post("/api/command", fd);
+      speak(r.say, function(){
+        if(r.queue && r.queue.length){ S.queue = r.queue; next(); } else { setMode("wake"); }
+      });
+    }catch(e){ speak("I couldn't reach the server. Check your connection.", function(){ setMode("wake"); }); }
+  }
+
+  function next(){
+    if(!S.queue.length){ S.cur=null; return speak("That's all for now.", function(){ setMode("wake"); }); }
+    S.cur = S.queue.shift();
+    speak(S.cur.say, function(){ waitFor("confirm", 30000, function(){ S.queue=[]; S.cur=null; speak("I'll keep it for later.", function(){ setMode("wake"); }); }); });
+  }
+
+  async function answer(t){
+    if(YES.test(t)) return decide("yes");
+    if(NO.test(t)) return decide("no");
+    if(STOP.test(t)){ S.queue=[]; S.cur=null; return speak("Okay. I'll keep the rest for later.", function(){ setMode("wake"); }); }
+    if(REPEAT.test(t)) return speak(S.cur.say, function(){ waitFor("confirm", 30000, function(){ setMode("wake"); }); });
+    speak("Should I send it? Say yes or no.", function(){ waitFor("confirm", 30000, function(){ setMode("wake"); }); });
+  }
+
+  async function decide(d){
+    setMode("working");
+    var fd = new FormData(); fd.set("decision", d);
+    try{
+      var j = await post("/drafts/"+S.cur.id+"/decide", fd);
+      if(!j.ok) return speak(j.error || "That didn't work.", next);
+      if(d==="no") return speak("Skipped.", next);
+      if(j.href){ var href=j.href; return speak("Opening Mail. Tap send there.", function(){ location.href = href; setTimeout(next, 1500); }); }
+      speak("Sent.", next);
+    }catch(e){ speak("I couldn't reach the server.", function(){ setMode("wake"); }); }
+  }
+
+  $("orb").addEventListener("click", function(){
+    if(S.mode==="speaking") return interrupt();
+    if(S.on) return;
+    if(!SR){ warn("This browser can't listen. Use Safari on iPhone or Chrome on Android, or type a command below."); }
+    S.on = true; warn(""); lockScreen();
+    speak("Chief is listening. Say hey chief, and tell me what you need.", function(){ setMode("wake"); });
+  });
+  $("typed").addEventListener("submit", function(e){
+    e.preventDefault(); var t=$("typedText").value.trim(); if(!t) return; $("typedText").value="";
+    if(!S.on){ S.on=true; lockScreen(); }
+    $("heard").textContent = t;
+    if(S.mode==="confirm"){ clearTimer(); answer(t); } else { command(t.replace(WAKE,"")); }
+  });
+})();
+</script>`, { bare: true });
 }

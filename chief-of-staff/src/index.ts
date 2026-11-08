@@ -6,7 +6,9 @@ import { DurableObject } from "cloudflare:workers";
 import { migrate, sqliteDB, type Stmt } from "./db";
 import SCHEMA from "../schema.sql";
 import { PRODUCTS, type Draft, type Env, type Product, type Prospect, type WorkerEnv } from "./types";
-import { approvePage, dashboardPage, loginPage, prospectsPage, settingsPage, type DashData } from "./views";
+import { approvePage, dashboardPage, loginPage, prospectsPage, settingsPage, voicePage } from "./views";
+import { runCommand } from "./voice";
+import { dashboard } from "./stats";
 
 const SECURITY_HEADERS: Record<string, string> = {
   "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self' mailto:; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
@@ -40,58 +42,9 @@ function sameOrigin(req: Request) {
   return origin === new URL(req.url).origin;
 }
 
-function localDay(d: Date, tz: string) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-}
-
-async function dashboard(env: Env): Promise<DashData> {
-  const tz = env.APP_TIMEZONE || "America/Chicago";
-  const since = new Date(Date.now() - 16 * 86400_000).toISOString();
-  const [pending, sentTotal, recent, prospectRows, byProductRows, repliedRows, runs, last30] = await Promise.all([
-    env.DB.prepare("select count(*) as n from drafts where status = 'pending'").first<{ n: number }>(),
-    env.DB.prepare("select count(*) as n from drafts where status = 'sent'").first<{ n: number }>(),
-    env.DB.prepare("select status, decided_at from drafts where decided_at >= ? and status in ('sent', 'rejected')").bind(since).all<{ status: string; decided_at: string }>(),
-    env.DB.prepare("select status, count(*) as n from prospects group by status").all<{ status: string; n: number }>(),
-    env.DB.prepare("select product, status, count(*) as n from drafts where status in ('sent', 'rejected') group by product, status").all<{ product: string; status: string; n: number }>(),
-    env.DB.prepare("select product, count(*) as n from prospects where status = 'replied' group by product").all<{ product: string; n: number }>(),
-    env.DB.prepare("select at, trigger, created, note from runs order by id desc limit 8").all<{ at: string; trigger: string; created: number; note: string | null }>(),
-    env.DB.prepare("select status, count(*) as n from drafts where decided_at >= ? and status in ('sent', 'rejected') group by status").bind(new Date(Date.now() - 30 * 86400_000).toISOString()).all<{ status: string; n: number }>(),
-  ]);
-
-  const today = localDay(new Date(), tz);
-  const todayDate = new Date(`${today}T12:00:00Z`);
-  const days = Array.from({ length: 14 }, (_, i) => new Date(todayDate.getTime() - (13 - i) * 86400_000).toISOString().slice(0, 10)).map((day) => ({ day, sent: 0, rejected: 0 }));
-  const byDay = new Map(days.map((d) => [d.day, d]));
-  for (const r of recent.results) {
-    const b = byDay.get(localDay(new Date(r.decided_at), tz));
-    if (b) r.status === "sent" ? b.sent++ : b.rejected++;
-  }
-  const t = byDay.get(today)!;
-  const yes30 = last30.results.find((r) => r.status === "sent")?.n ?? 0;
-  const no30 = last30.results.find((r) => r.status === "rejected")?.n ?? 0;
-
-  return {
-    pending: pending?.n ?? 0,
-    sentToday: t.sent,
-    noToday: t.rejected,
-    sentTotal: sentTotal?.n ?? 0,
-    approval30: yes30 + no30 ? Math.round((yes30 / (yes30 + no30)) * 100) : null,
-    prospects: Object.fromEntries(prospectRows.results.map((r) => [r.status, r.n])),
-    byProduct: PRODUCTS.map((p) => ({
-      product: p,
-      sent: byProductRows.results.find((r) => r.product === p && r.status === "sent")?.n ?? 0,
-      rejected: byProductRows.results.find((r) => r.product === p && r.status === "rejected")?.n ?? 0,
-      replied: repliedRows.results.find((r) => r.product === p)?.n ?? 0,
-    })),
-    days,
-    runs: runs.results,
-    tz,
-  };
-}
-
 async function decide(req: Request, env: Env, id: number) {
   const wantsJson = (req.headers.get("accept") ?? "").includes("application/json");
-  const reply = (ok: boolean, data: Record<string, unknown>) => (wantsJson ? json({ ok, ...data }, ok ? 200 : 400) : redirect(withMsg("/", String(data.error ?? data.label ?? "Done"))));
+  const reply = (ok: boolean, data: Record<string, unknown>) => (wantsJson ? json({ ok, ...data }, ok ? 200 : 400) : redirect(withMsg("/review", String(data.error ?? data.label ?? "Done"))));
 
   const form = await req.formData();
   const decision = str(form.get("decision"), 5);
@@ -163,6 +116,17 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/logout" && method === "POST") return redirect("/login", { "Set-Cookie": clearCookie });
 
   if (path === "/" && method === "GET") {
+    const [s, resend] = await Promise.all([getSettings(env), hasSecret(env, "resend")]);
+    return html(voicePage(resend && s.senderEmail ? "resend" : "mailto"));
+  }
+
+  if (path === "/api/command" && method === "POST") {
+    const text = str((await req.formData()).get("text"), 500);
+    if (!text) return json({ say: "I didn't hear a command." });
+    return json(await runCommand(env, text));
+  }
+
+  if (path === "/review" && method === "GET") {
     const [{ results }, s, resend] = await Promise.all([
       env.DB.prepare(`select d.*, p.name, p.email, p.organization from drafts d join prospects p on p.id = d.prospect_id
                       where d.status = 'pending' order by d.created_at, d.id limit 50`).all<Draft & { name: string; email: string; organization: string }>(),
@@ -177,7 +141,7 @@ async function handle(req: Request, env: Env): Promise<Response> {
 
   if (path === "/draft-now" && method === "POST") {
     const r = await buildDailyDrafts(env, "manual");
-    return redirect(withMsg("/", r.note));
+    return redirect(withMsg("/review", r.note));
   }
 
   if (path === "/prospects" && method === "GET") {
