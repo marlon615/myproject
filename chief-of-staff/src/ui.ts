@@ -26,52 +26,196 @@ export function shell(title: string, body: string) {
 <title>${esc(title)}</title><style>${CSS}</style></head><body><div class="wrap">${body}</div></body></html>`;
 }
 
-// ── The one screen ──
+// ── The one screen: a voice conversation, like a voice assistant ──
 
 const HOME_CSS = `
-.home{min-height:calc(100dvh - 60px);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
-.orb{width:168px;height:168px;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 35% 28%,#fff5dc,var(--gold) 42%,#6e4c13 100%);
-  box-shadow:0 0 0 1px rgba(233,184,100,.22),0 18px 80px rgba(233,184,100,.30);animation:breathe 4s ease-in-out infinite;color:#1a1205}
-.orb svg{width:54px;height:54px}
-@keyframes breathe{50%{transform:scale(1.035);box-shadow:0 0 0 1px rgba(233,184,100,.22),0 18px 100px rgba(233,184,100,.42)}}
-.title{font-size:1.9rem;font-weight:800;letter-spacing:-.02em;margin:30px 0 4px}
-.num{font-size:1.15rem;color:var(--muted);font-variant-numeric:tabular-nums;letter-spacing:.02em}
-.status{margin-top:34px;display:inline-flex;align-items:center;gap:9px;padding:9px 15px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-size:.9rem}
-.status i{width:8px;height:8px;border-radius:50%;background:var(--yes);box-shadow:0 0 10px var(--yes)}.status.wait i{background:var(--gold);box-shadow:0 0 10px var(--gold)}
-.hint{margin-top:18px;color:var(--muted);font-size:.9rem;max-width:340px}
-.quiet{margin-top:28px;font-size:.85rem}.quiet a{color:var(--muted)}
-@media (prefers-reduced-motion:reduce){.orb{animation:none}}
+.home{min-height:calc(100dvh - 60px);display:flex;flex-direction:column;align-items:center;text-align:center}
+.top{width:100%;display:flex;justify-content:center;min-height:36px}
+.pill{display:inline-flex;align-items:center;gap:9px;padding:8px 14px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-size:.86rem;color:var(--muted)}
+.pill i{width:7px;height:7px;border-radius:50%;background:var(--yes);box-shadow:0 0 10px var(--yes)}.pill.wait i{background:var(--gold);box-shadow:0 0 10px var(--gold)}
+.stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;padding:20px 0}
+.orb{width:190px;height:190px;border-radius:50%;border:0;cursor:pointer;position:relative;-webkit-tap-highlight-color:transparent;
+  background:radial-gradient(circle at 35% 28%,#fff5dc,var(--gold) 42%,#6e4c13 100%);box-shadow:0 0 0 1px rgba(233,184,100,.22),0 18px 80px rgba(233,184,100,.28);transition:transform .25s}
+.orb.idle{animation:breathe 4.5s ease-in-out infinite}
+.orb.listening{animation:listen 1.6s ease-out infinite;background:radial-gradient(circle at 35% 28%,#fffaf0,#f3cf86 45%,#8a6219 100%)}
+.orb.thinking{animation:think 1.2s ease-in-out infinite}
+.orb.speaking{animation:speak .9s ease-in-out infinite}
+@keyframes breathe{50%{transform:scale(1.03)}}
+@keyframes listen{0%{box-shadow:0 0 0 0 rgba(233,184,100,.45),0 18px 80px rgba(233,184,100,.3)}100%{box-shadow:0 0 0 42px rgba(233,184,100,0),0 18px 80px rgba(233,184,100,.3)}}
+@keyframes think{50%{filter:brightness(1.18);transform:scale(.98)}}
+@keyframes speak{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+.state{margin-top:30px;font-size:1.05rem;font-weight:700;letter-spacing:.01em;min-height:1.5em}
+.said{margin-top:14px;max-width:460px;font-size:1.12rem;line-height:1.5;color:var(--text);min-height:3em;transition:opacity .3s}
+.you{margin-top:10px;max-width:460px;color:var(--muted);font-size:.95rem;min-height:1.4em;font-style:italic}
+.draft{width:100%;text-align:left;background:var(--surface);border:1px solid rgba(233,184,100,.4);border-radius:20px;padding:16px 18px;margin-top:22px;animation:rise .3s ease}
+.draft .meta{font-size:.82rem;color:var(--muted)}.draft .body{white-space:pre-wrap;margin-top:10px;line-height:1.55}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.foot{font-size:.82rem;color:var(--muted);margin-top:18px;max-width:380px}.foot a{color:var(--muted)}
+.type{display:flex;gap:8px;width:100%;margin-top:16px}.type input{flex:1}
+@media (prefers-reduced-motion:reduce){.orb{animation:none!important}}
 `;
 
-const PHONE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z"/></svg>';
-
-export function homePage(o: { number: string | null; pretty: string; waiting: number; ready: boolean; canNotify: boolean }) {
-  const status = !o.ready ? `<div class="status wait"><i></i>Chief's phone line is being set up</div>`
-    : o.waiting ? `<div class="status wait"><i></i>${o.waiting} important email${o.waiting === 1 ? "" : "s"} waiting</div>`
-    : `<div class="status"><i></i>All caught up</div>`;
+export function homePage(o: { waiting: number; canNotify: boolean; voiceJs: string }) {
+  const pill = o.waiting ? `<div class="pill wait" id="pill"><i></i><span>${o.waiting} important email${o.waiting === 1 ? "" : "s"} waiting</span></div>`
+    : `<div class="pill" id="pill"><i></i><span>All caught up</span></div>`;
   return shell("Chief", `<style>${HOME_CSS}</style>
 <main class="home">
-  ${o.number ? `<a class="orb" href="tel:${esc(o.number)}" aria-label="Call Chief">${PHONE_ICON}</a>` : `<div class="orb" aria-hidden="true">${PHONE_ICON}</div>`}
-  <div class="title">Call Chief</div>
-  <div class="num">${o.number ? esc(o.pretty) : "&nbsp;"}</div>
-  ${status}
-  <div class="hint">${o.number ? "Or just say “Hey Siri, call Chief.” Keep talking while you use any other app." : "As soon as the line is ready, you'll call Chief here."}</div>
-  ${o.number ? `<div class="quiet"><a href="/chief.vcf">Save Chief to your contacts</a>${o.canNotify ? ` · <a href="#" id="notify">Notify me</a>` : ""}</div>` : ""}
+  <div class="top">${pill}</div>
+  <section class="stage">
+    <button class="orb idle" id="orb" aria-label="Talk to Chief"></button>
+    <div class="state" id="state">Tap to talk</div>
+    <div class="said" id="said">Chief reads your important emails and does what you say.</div>
+    <div class="you" id="you"></div>
+    <div class="draft" id="draft" hidden><div class="meta" id="dmeta"></div><div class="body" id="dbody"></div></div>
+    <form class="type" id="type" hidden><input id="typed" placeholder="Type to Chief" autocomplete="off" enterkeyhint="send"><button class="btn">Send</button></form>
+  </section>
+  <div class="foot" id="foot">Keep Chief open on screen while you talk. If you switch apps, Chief pauses and picks up where you left off when you come back.${o.canNotify ? ` <a href="#" id="notify">Notify me about important email</a>` : ""}</div>
 </main>
-${o.canNotify ? `<script>
+<script>
+${o.voiceJs}
 (function(){
-  var a = document.getElementById("notify"); if (!a) return;
-  var standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-  if (!("serviceWorker" in navigator) || !("PushManager" in window) || (/iPhone|iPad/.test(navigator.userAgent) && !standalone) || Notification.permission === "denied") { a.previousSibling && a.previousSibling.remove(); a.remove(); return; }
-  navigator.serviceWorker.register("/sw.js").catch(function(){});
-  function b64(s){ s=s.replace(/-/g,"+").replace(/_/g,"/"); while(s.length%4) s+="="; var b=atob(s), u=new Uint8Array(b.length); for(var i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u; }
-  async function sub(){ var reg = await navigator.serviceWorker.ready; var s = await reg.pushManager.getSubscription();
-    if(!s){ var k = await (await fetch("/api/push-key")).json(); s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(k.key) }); }
-    await fetch("/api/push-subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s) }); a.textContent = "Notifications on"; }
-  if (Notification.permission === "granted") { sub(); }
-  a.addEventListener("click", function(e){ e.preventDefault(); Notification.requestPermission().then(function(p){ if(p==="granted") sub(); }); });
+  var $ = function(id){ return document.getElementById(id); };
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var S = { on:false, mode:"idle", rec:null, id:null, token:0, lastSaid:"", quietUntil:0, paused:false, lock:null, voice:null, male:false };
+
+  function setMode(m, label){
+    S.mode = m; $("orb").className = "orb " + m;
+    $("state").textContent = label || ({ idle:"Tap to talk", listening:"Listening", thinking:"Thinking", speaking:"Chief", paused:"Tap to continue" })[m] || "";
+  }
+  function newId(){ var a = new Uint8Array(18); crypto.getRandomValues(a); return btoa(String.fromCharCode.apply(null, a)).replace(/[+/=]/g, function(c){ return c === "+" ? "-" : c === "/" ? "_" : ""; }); }
+  async function lockScreen(){ try { if (navigator.wakeLock) S.lock = await navigator.wakeLock.request("screen"); } catch(e){} }
+
+  // ── Voice: the best deep male voice on this phone ──
+  function loadVoice(){ var v = chiefPickVoice(); S.voice = v.voice; S.male = v.male; }
+  if ("speechSynthesis" in window) { loadVoice(); try { speechSynthesis.addEventListener("voiceschanged", loadVoice); } catch(e){} }
+
+  function pieces(text){
+    var out = [], safe = text.replace(/(\\d)\\.(\\d)/g, "$1\\u2024$2");
+    (safe.match(/[^.!?]+[.!?]*\\s*/g) || [safe]).forEach(function(p){
+      p = p.replace(/\\u2024/g, ".").trim(); if (!p) return;
+      while (p.length > 180) { var c = p.lastIndexOf(",", 180); if (c < 60) c = p.lastIndexOf(" ", 180); if (c < 1) c = 180; out.push(p.slice(0, c + 1)); p = p.slice(c + 1).trim(); }
+      if (p) out.push(p);
+    });
+    return out;
+  }
+  function speak(text, then){
+    $("said").textContent = text; S.lastSaid = text.toLowerCase();
+    if (!("speechSynthesis" in window) || !text) { if (then) then(); return; }
+    stopListening(); setMode("speaking");
+    var token = ++S.token, done = false, started = Date.now(), parts = pieces(text);
+    function finish(){ if (done || token !== S.token) return; done = true; setTimeout(function(){ if (token !== S.token) return; S.quietUntil = Date.now() + 600; if (then) then(); }, 300); }
+    function go(){
+      if (!S.voice) loadVoice();
+      parts.forEach(function(p, i){
+        var u = new SpeechSynthesisUtterance(p);
+        if (S.voice) { u.voice = S.voice; u.lang = S.voice.lang; }
+        u.pitch = S.male ? CHIEF_PITCH : 0.75; u.rate = CHIEF_RATE;
+        if (i === parts.length - 1) { u.onend = finish; u.onerror = finish; }
+        speechSynthesis.speak(u);
+      });
+      (function poll(){ if (done || token !== S.token) return;
+        if ((!speechSynthesis.speaking && !speechSynthesis.pending && Date.now() - started > 1500) || Date.now() - started > 9000 + text.split(/\\s+/).length * 900) return finish();
+        setTimeout(poll, 400); })();
+    }
+    if (speechSynthesis.speaking || speechSynthesis.pending) { speechSynthesis.cancel(); setTimeout(go, 150); } else go();
+  }
+  function hush(){ S.token++; try { speechSynthesis.cancel(); } catch(e){} }
+
+  // ── Listening: one thing you say at a time ──
+  function stopListening(){ if (S.rec) { try { S.rec.abort(); } catch(e){} S.rec = null; } }
+  function listen(){
+    if (!S.on || S.paused) return;
+    if (!SR) { setMode("listening", "Type to Chief"); $("type").hidden = false; return; }
+    stopListening(); setMode("listening");
+    var r = new SR(), final = ""; S.rec = r;
+    r.lang = navigator.language || "en-US"; r.continuous = false; r.interimResults = true;
+    r.onresult = function(e){
+      var interim = "";
+      for (var i = e.resultIndex; i < e.results.length; i++) { if (e.results[i].isFinal) final += e.results[i][0].transcript; else interim += e.results[i][0].transcript; }
+      $("you").textContent = (final + interim).trim();
+    };
+    r.onerror = function(e){ if (e.error === "not-allowed" || e.error === "service-not-allowed") { S.on = false; setMode("idle", "Microphone is off"); $("said").textContent = "Allow the microphone for Chief in your phone's settings, then tap to talk."; } };
+    r.onend = function(){
+      if (S.rec !== r) return; S.rec = null;
+      var t = final.trim();
+      if (!S.on || S.paused) return;
+      if (!t || isEcho(t)) return setTimeout(listen, 200); // nothing heard (or only Chief's own voice): keep listening
+      send(t);
+    };
+    try { r.start(); } catch(e){ setTimeout(listen, 500); }
+  }
+  function isEcho(t){
+    var h = t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\\s+/g, " ").trim();
+    return h.split(" ").length >= 3 && S.lastSaid.replace(/[^a-z0-9 ]/g, " ").replace(/\\s+/g, " ").indexOf(h) >= 0;
+  }
+
+  // ── Talking to Chief ──
+  async function call(path, body){
+    var r = await fetch(path, { method:"POST", credentials:"same-origin", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body) });
+    if (r.status === 401) { location.href = "/login"; throw new Error("locked"); }
+    return r.json();
+  }
+  function show(res){
+    var d = res.draft;
+    if (d) { $("dmeta").textContent = "To " + d.to + "  ·  " + d.subject; $("dbody").textContent = d.body; $("draft").hidden = false; }
+    else $("draft").hidden = true;
+    if (typeof res.waiting === "number") { var p = $("pill"); p.className = "pill" + (res.waiting ? " wait" : ""); p.lastChild.textContent = res.waiting ? res.waiting + " important email" + (res.waiting === 1 ? "" : "s") + " waiting" : "All caught up"; }
+  }
+  function handle(res){
+    show(res);
+    speak(res.say, function(){ if (res.end) { S.on = false; setMode("idle"); return; } listen(); });
+  }
+  async function send(text){
+    $("you").textContent = text; setMode("thinking");
+    try { handle(await call("/api/talk", { id: S.id, text: text })); }
+    catch(e){ speak("I couldn't reach the server. Check your connection.", listen); }
+  }
+  async function start(){
+    S.on = true; S.paused = false; S.id = newId(); lockScreen();
+    try { var u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch(e){} // unlocks speech on iPhone
+    setMode("thinking", "Connecting");
+    try { handle(await call("/api/talk/start", { id: S.id })); }
+    catch(e){ S.on = false; setMode("idle"); $("said").textContent = "Couldn't connect. Tap to try again."; }
+  }
+
+  $("orb").addEventListener("click", function(){
+    if (!S.on) return start();
+    if (S.paused) return resume(true);
+    if (S.mode === "speaking") { hush(); listen(); }   // tap to interrupt Chief
+  });
+  $("type").addEventListener("submit", function(e){ e.preventDefault(); var t = $("typed").value.trim(); if (!t) return; $("typed").value = ""; if (!S.on) { S.on = true; S.id = S.id || newId(); } send(t); });
+
+  // ── Leaving the app: pause; coming back: pick up where we were ──
+  async function resume(fromTap){
+    S.paused = false; lockScreen(); setMode("thinking", "Welcome back");
+    try {
+      var res = await call("/api/talk/resume", { id: S.id }); show(res);
+      var before = S.token; speak(res.say, function(){ if (res.end) { S.on = false; setMode("idle"); return; } listen(); });
+      if (!fromTap) setTimeout(function(){ if (S.token === before + 1 && !speechSynthesis.speaking && S.mode === "speaking") { hush(); S.paused = true; setMode("paused"); } }, 2500);
+    } catch(e){ S.paused = true; setMode("paused"); }
+  }
+  document.addEventListener("visibilitychange", function(){
+    if (!S.on) return;
+    if (document.visibilityState === "hidden") { S.paused = true; hush(); stopListening(); setMode("paused"); }
+    else if (S.paused) resume(false);
+  });
+
+  ${o.canNotify ? `var a = $("notify");
+  if (a) {
+    var standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || (/iPhone|iPad/.test(navigator.userAgent) && !standalone) || Notification.permission === "denied") a.remove();
+    else {
+      navigator.serviceWorker.register("/sw.js").catch(function(){});
+      var b64 = function(s){ s=s.replace(/-/g,"+").replace(/_/g,"/"); while(s.length%4) s+="="; var b=atob(s), u=new Uint8Array(b.length); for(var i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u; };
+      var sub = async function(){ var reg = await navigator.serviceWorker.ready; var s = await reg.pushManager.getSubscription();
+        if(!s){ var k = await (await fetch("/api/push-key")).json(); s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(k.key) }); }
+        await fetch("/api/push-subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s) }); a.textContent = "Notifications on"; };
+      if (Notification.permission === "granted") sub();
+      a.addEventListener("click", function(e){ e.preventDefault(); Notification.requestPermission().then(function(p){ if(p==="granted") sub(); }); });
+    }
+  }` : ""}
 })();
-</script>` : ""}`);
+</script>`);
 }
 
 // ── Passcode lock ──
@@ -108,7 +252,7 @@ ${error ? `<p style="color:var(--no);font-weight:600">${esc(error)}</p>` : ""}<b
 export function passcodePage(error?: string) {
   return shell("Chief", `<style>${LOCK_CSS}</style>
 <form class="lock" method="post" action="/passcode"><div class="logo"></div><div style="font-weight:700;font-size:1.15rem">Create a passcode</div>
-<div class="muted small" style="max-width:300px;margin-bottom:16px">6 digits. It unlocks Chief here, and you can say it on a call from any phone that isn't yours.</div>
+<div class="muted small" style="max-width:300px;margin-bottom:16px">6 digits. It unlocks Chief.</div>
 <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="••••••" required autofocus autocomplete="new-password" style="max-width:220px;text-align:center;font-size:1.5rem;letter-spacing:.4em">
 <input name="pin2" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="Again" required autocomplete="new-password" style="max-width:220px;text-align:center;letter-spacing:.3em;margin-top:10px">
 ${error ? `<p style="color:var(--no);font-weight:600">${esc(error)}</p>` : ""}<button class="btn" style="margin-top:14px;min-width:200px">Save</button></form>`);
@@ -120,13 +264,10 @@ export interface OwnerData {
   flash?: string;
   gmail: { connected: boolean; address: string };
   ai: boolean;
-  twilio: boolean;
-  chief: string;
-  owner: string;
   pin: boolean;
   waiting: number;
   repliesSent7: number;
-  calls7: number;
+  talks7: number;
   blocked: string[];
   lastCheck: string;
   recent: { at: string; text: string }[];
@@ -138,16 +279,13 @@ export function ownerPage(d: OwnerData) {
   return shell("Owner · Chief", `${d.flash ? `<div class="flash">${esc(d.flash)}</div>` : ""}
 <div style="font-size:1.9rem;font-weight:800;letter-spacing:-.02em;margin:6px 0 2px">Owner</div>
 <div class="muted small">Private. Not linked anywhere in the app. ${esc(d.lastCheck)}</div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">${tile("Important waiting", d.waiting)}${tile("Replies sent · 7 days", d.repliesSent7)}${tile("Calls · 7 days", d.calls7)}${tile("Blocked senders", d.blocked.length)}</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">${tile("Important waiting", d.waiting)}${tile("Replies sent · 7 days", d.repliesSent7)}${tile("Conversations · 7 days", d.talks7)}${tile("Blocked senders", d.blocked.length)}</div>
 <h2>Recent</h2><div class="card">${d.recent.length ? d.recent.map((r) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(r.text)}</span><span class="muted small" style="white-space:nowrap">${esc(r.at)}</span></div>`).join("") : `<span class="muted">Nothing yet.</span>`}</div>
 <h2>Connections</h2>
-<div class="card small" style="line-height:2">${ok(d.gmail.connected)} Gmail ${d.gmail.address ? `· ${esc(d.gmail.address)}` : ""}<br>${ok(d.ai)} Anthropic key (understands plain words, writes and rewrites replies)<br>${ok(d.twilio)} Phone line ${d.chief ? `· ${esc(d.chief)}` : ""}<br>${ok(Boolean(d.owner))} Your mobile ${d.owner ? `· ${esc(d.owner)}` : ""}<br>${ok(d.pin)} Passcode</div>
+<div class="card small" style="line-height:2">${ok(d.gmail.connected)} Gmail ${d.gmail.address ? `· ${esc(d.gmail.address)}` : ""}<br>${ok(d.ai)} Anthropic key (understands plain words, writes and rewrites replies)<br>${ok(d.pin)} Passcode</div>
 <form method="post" action="/owner/connect" class="card">
 <div style="font-weight:700">Connect, once</div><div class="muted small">Only fill in what's missing. Everything is stored encrypted.</div>
-<label>Your mobile number (calls from it skip the passcode)</label><input name="owner" inputmode="tel" placeholder="${esc(d.owner || "(214) 555-0100")}">
 <label>Anthropic API key</label><input name="anthropic" type="password" autocomplete="off" placeholder="${d.ai ? "Saved · paste to replace" : "sk-ant-…"}">
-<label>Twilio Account SID</label><input name="twilioSid" autocomplete="off" placeholder="${d.twilio ? "Saved · paste to replace" : "AC…"}">
-<label>Twilio Auth Token</label><input name="twilioToken" type="password" autocomplete="off" placeholder="${d.twilio ? "Saved · paste to replace" : "32 characters"}">
 <label>Gmail app password${d.gmail.address ? "" : " (and address)"}</label>${d.gmail.address ? "" : `<input name="gmailAddress" type="email" placeholder="you@gmail.com" style="margin-bottom:8px">`}<input name="gmailPassword" type="password" autocomplete="off" placeholder="${d.gmail.connected ? "Saved · paste to replace" : "16 letters"}">
 <button class="btn" style="width:100%;margin-top:16px">Save and connect</button></form>
 ${d.blocked.length ? `<h2>Blocked senders</h2><div class="card small">${d.blocked.map((b) => `<form method="post" action="/owner/unblock" style="display:flex;justify-content:space-between;align-items:center;padding:4px 0"><span>${esc(b)}</span><input type="hidden" name="email" value="${esc(b)}"><button style="background:none;border:0;color:var(--gold);font:inherit;cursor:pointer">Unblock</button></form>`).join("")}</div>` : ""}

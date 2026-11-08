@@ -1,13 +1,12 @@
 /**
- * Chief: a phone call with your chief of staff.
- * You call Chief's number (or say "Hey Siri, call Chief"); it reads your important emails aloud one at a time,
- * understands what you say in plain words, and sends only what you approve. The app is one calm screen,
- * plus a hidden owner dashboard at /owner.
+ * Chief: talk to your chief of staff inside the app, like a voice assistant.
+ * Tap once and talk; Chief reads your important emails aloud one at a time, understands what you say in
+ * plain words, and sends only what you approve. One calm screen, plus a hidden owner dashboard at /owner.
  */
 import { DurableObject } from "cloudflare:workers";
 import SCHEMA from "../schema.sql";
 import { checkPassword, checkPin, clearCookie, clearLogins, hasPin, isSignedIn, loginAllowed, recordFailedLogin, sessionCookie, setPin } from "./auth";
-import { callTurn, startCall } from "./call";
+import { resumeTalk, startTalk, talkTurn } from "./conversation";
 import { b64url } from "./crypto";
 import { migrate, sqliteDB } from "./db";
 import { gmailCreds, syncInbox, testGmail } from "./inbox";
@@ -15,9 +14,9 @@ import { setPerm } from "./permissions";
 import { pushCount, sendPush, vapidKeys } from "./push";
 import { icon, MANIFEST, SERVICE_WORKER } from "./pwa";
 import { getSettings, hasSecret, saveSettings, setSecret } from "./settings";
-import { chiefNumber, cleanUS, connectTwilio, ownerNumber, prettyNumber, setOwnerNumber, twilioCreds, validTwilioRequest, voiceSecret } from "./twilio";
 import type { Env, WorkerEnv } from "./types";
 import { homePage, lockPage, ownerPage, passcodePage } from "./ui";
+import { VOICE_PICK_JS } from "./voicepick";
 
 const SECURITY_HEADERS: Record<string, string> = {
   "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src 'self'; manifest-src 'self'; connect-src 'self'; form-action 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
@@ -31,7 +30,6 @@ const SECURITY_HEADERS: Record<string, string> = {
 const html = (body: string, status = 200, extra: Record<string, string> = {}) =>
   new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", ...SECURITY_HEADERS, ...extra } });
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json", ...SECURITY_HEADERS } });
-const xmlRes = (body: string) => new Response(body, { headers: { "Content-Type": "text/xml; charset=utf-8", "Cache-Control": "no-store" } });
 const redirect = (to: string, extra: Record<string, string> = {}) => new Response(null, { status: 303, headers: { Location: to, ...SECURITY_HEADERS, ...extra } });
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const EMAIL = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]{2,}$/;
@@ -63,18 +61,6 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/sw.js") return new Response(SERVICE_WORKER, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache" } });
   if (path === "/icon-192.png") return icon(192);
   if (path === "/icon-512.png") return icon(512);
-
-  // ── The phone call (Twilio webhooks): secret address + Twilio's signature, or nothing. ──
-  const vm = path.match(/^\/voice\/([A-Za-z0-9_-]{16,64})\/(start|turn)$/);
-  if (vm) {
-    const secret = env.MAIL_TEST_HOST && env.VOICE_TEST_SECRET ? env.VOICE_TEST_SECRET : await voiceSecret(env); // test secret only in local tests
-    if (method !== "POST" || vm[1] !== secret) return new Response("Not found", { status: 404 });
-    const form = await req.formData();
-    const testMode = Boolean(env.MAIL_TEST_HOST) && req.headers.get("x-chief-test") === "1"; // local tests only
-    if (!testMode && !(await validTwilioRequest(env, req.url, form, req.headers.get("x-twilio-signature")))) return new Response("Forbidden", { status: 403 });
-    const base = `${url.origin}/voice/${vm[1]}`;
-    return xmlRes(vm[2] === "start" ? await startCall(env, form, base) : await callTurn(env, form, base));
-  }
 
   if (method === "POST" && !sameOrigin(req)) return html("Forbidden", 403);
 
@@ -111,20 +97,20 @@ async function handle(req: Request, env: Env): Promise<Response> {
     return redirect("/");
   }
 
-  // ── The one screen ──
+  // ── The one screen: talk to Chief ──
   if (path === "/" && method === "GET") {
-    const n = await chiefNumber(env);
     const waiting = (await env.DB.prepare(IMPORTANT_COUNT).first<{ n: number }>())?.n ?? 0;
     await env.DB.prepare("insert into settings (key, value) values ('app:origin', ?) on conflict(key) do update set value = excluded.value").bind(url.origin).run();
-    return html(homePage({ number: n, pretty: prettyNumber(n), waiting, ready: Boolean(n), canNotify: Boolean(n) && (await pushCount(env)) === 0 }));
+    return html(homePage({ waiting, canNotify: (await pushCount(env)) === 0, voiceJs: VOICE_PICK_JS }));
   }
 
-  // A contact card, so "Hey Siri, call Chief" works.
-  if (path === "/chief.vcf" && method === "GET") {
-    const n = await chiefNumber(env);
-    if (!n) return redirect("/");
-    const card = `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Chief\r\nN:;Chief;;;\r\nORG:Chief of Staff\r\nTEL;TYPE=CELL,VOICE:${n}\r\nEND:VCARD\r\n`;
-    return new Response(card, { headers: { "Content-Type": "text/vcard; charset=utf-8", "Content-Disposition": 'attachment; filename="Chief.vcf"', "Cache-Control": "no-store" } });
+  // The conversation: the phone sends what you said; Chief answers with what to say next.
+  if (path.startsWith("/api/talk") && method === "POST") {
+    const b = (await req.json().catch(() => ({}))) as { id?: string; text?: string };
+    const id = str(b.id, 64);
+    if (path === "/api/talk/start") return json(await startTalk(env, id));
+    if (path === "/api/talk/resume") return json(await resumeTalk(env, id));
+    if (path === "/api/talk") return json(await talkTurn(env, id, str(b.text, 600)));
   }
 
   if (path === "/api/push-key" && method === "GET") return json({ key: b64url((await vapidKeys(env)).publicRaw) });
@@ -142,12 +128,6 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/owner/connect" && method === "POST") {
     const f = await req.formData();
     const notes: string[] = [];
-    const owner = str(f.get("owner"), 40);
-    if (owner) {
-      const n = cleanUS(owner);
-      if (!n) notes.push("That mobile number doesn't look right.");
-      else { await setOwnerNumber(env, n); notes.push("Mobile saved."); }
-    }
     const ai = str(f.get("anthropic"), 400);
     if (ai) {
       if (!ai.startsWith("sk-ant-")) notes.push("That Anthropic key should start with sk-ant-.");
@@ -162,12 +142,6 @@ async function handle(req: Request, env: Env): Promise<Response> {
         if (err) notes.push(`Gmail didn't connect: ${err}`);
         else { await saveSettings(env, { gmailAddress: gAddr }); await setSecret(env, "gmail", gPass); await setPerm(env, "email", true); notes.push("Gmail connected."); }
       }
-    }
-    const sid = str(f.get("twilioSid"), 64), token = str(f.get("twilioToken"), 64);
-    if (sid || token) {
-      const prev = await twilioCreds(env);
-      const r = await connectTwilio(env, { sid: sid || prev?.sid || "", token: token || prev?.token || "" }, url.origin);
-      notes.push(r.ok ? `Phone line ready: ${prettyNumber(r.number)}.` : r.error);
     }
     return redirect(`/owner?m=${encodeURIComponent(notes.join(" ") || "Nothing to save.")}`);
   }
@@ -185,8 +159,8 @@ async function ownerData(env: Env, flash: string | null) {
   const tz = env.APP_TIMEZONE || "America/Chicago";
   const fmt = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: tz, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   const week = new Date(Date.now() - 7 * 86400_000).toISOString();
-  const [s, gmail, ai, tw, chief, owner, pin, waiting, sent7, calls7, blocked, last, recent] = await Promise.all([
-    getSettings(env), hasSecret(env, "gmail"), hasSecret(env, "anthropic"), twilioCreds(env), chiefNumber(env), ownerNumber(env), hasPin(env),
+  const [s, gmail, ai, pin, waiting, sent7, talks7, blocked, last, recent] = await Promise.all([
+    getSettings(env), hasSecret(env, "gmail"), hasSecret(env, "anthropic"), hasPin(env),
     env.DB.prepare(IMPORTANT_COUNT).first<{ n: number }>(),
     env.DB.prepare("select count(*) as n from replies where status = 'sent' and sent_at > ?").bind(week).first<{ n: number }>(),
     env.DB.prepare("select count(*) as n from calls where updated_at > ?").bind(week).first<{ n: number }>(),
@@ -202,8 +176,8 @@ async function ownerData(env: Env, flash: string | null) {
   return {
     flash: flash ?? undefined,
     gmail: { connected: gmail, address: s.gmailAddress },
-    ai, twilio: Boolean(tw), chief: prettyNumber(chief), owner: prettyNumber(owner), pin,
-    waiting: waiting?.n ?? 0, repliesSent7: sent7?.n ?? 0, calls7: calls7?.n ?? 0,
+    ai, pin,
+    waiting: waiting?.n ?? 0, repliesSent7: sent7?.n ?? 0, talks7: talks7?.n ?? 0,
     blocked: blocked.results.map((b) => b.email),
     lastCheck: lt ? `Last Gmail check ${fmt(lt.at)}: ${lt.note}.` : "",
     recent: recent.results.map((r) => ({ at: fmt(r.at), text: r.text })),

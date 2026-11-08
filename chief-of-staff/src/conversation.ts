@@ -1,39 +1,29 @@
 /**
- * The phone call. Twilio sends what you said (speech-to-text) to these handlers; each one answers with
- * what Chief says next. A real call keeps going while you switch to other apps.
+ * The conversation with Chief, inside the app. The phone turns your speech into text, sends it here,
+ * and speaks Chief's answer back. Works through your important emails one at a time.
  */
 import { blockSender, dontReply, unsubscribe } from "./actions";
-import { checkPin, hasPin } from "./auth";
 import { decide, hasBrain } from "./brain";
 import { decideReply, syncInbox, type InboxRow } from "./inbox";
 import { getSettings } from "./settings";
-import { ownerNumber } from "./twilio";
 import type { Env } from "./types";
 
-const VOICE = "Polly.Matthew-Neural"; // a deep, natural male voice
-
 interface State {
-  stage: "auth" | "email" | "confirm" | "done";
+  stage: "email" | "confirm" | "done";
   queue: number[];
   idx: number;
   replyId?: number;
   draft?: string;
   silent: number;
   hinted?: boolean;
-  pinTries?: number;
 }
 
-const xml = (s: string) => s.replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[c]!);
+/** What Chief says, plus the draft to show on screen while it waits for your yes. */
+export interface Say { say: string; end?: boolean; draft?: { to: string; subject: string; body: string } | null; waiting?: number }
 
 /** Makes text pleasant to hear: no web links, no symbol clutter. */
 function speakable(s: string) {
   return s.replace(/https?:\/\/\S+/g, "a link").replace(/[*_#>|~`]+/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function twiml(say: string, action: string | null, opts: { hangup?: boolean; digits?: boolean } = {}) {
-  const sayEl = `<Say voice="${VOICE}">${xml(speakable(say))}</Say>`;
-  if (opts.hangup || !action) return `<?xml version="1.0" encoding="UTF-8"?><Response>${sayEl}<Hangup/></Response>`;
-  return `<?xml version="1.0" encoding="UTF-8"?><Response><Gather input="${opts.digits ? "speech dtmf" : "speech"}" action="${xml(action)}" method="POST" speechTimeout="auto" speechModel="phone_call" enhanced="true" language="en-US" actionOnEmptyResult="true"${opts.digits ? ' numDigits="6"' : ""} hints="send it, yes, no, don't reply, unsubscribe, block that sender, skip, repeat, goodbye">${sayEl}</Gather></Response>`;
 }
 
 async function loadState(env: Env, sid: string): Promise<State | null> {
@@ -126,7 +116,7 @@ async function greeting(env: Env, st: State): Promise<string> {
   const name = (s.senderName || "").split(/\s+/)[0];
   st.queue = await importantQueue(env);
   st.idx = -1;
-  const hi = `Hi${name ? ` ${name}` : ""}, it's Chief.`;
+  const hi = `Hi${name ? ` ${name}` : ""}.`;
   if (!st.queue.length) { st.stage = "done"; return `${hi} You're all caught up. No important emails right now. Anything else? You can say check again, or goodbye.`; }
   const count = st.queue.length === 1 ? "one important email" : `${st.queue.length} important emails`;
   const tip = (await hasBrain(env)) ? "Just tell me what to do in your own words." : "You can say reply, skip, don't reply, unsubscribe, or block.";
@@ -134,64 +124,63 @@ async function greeting(env: Env, st: State): Promise<string> {
   return nextEmail(env, st, `${hi} You have ${count}. ${tip}`);
 }
 
-function digitsFrom(s: string) {
-  const words: Record<string, string> = { zero: "0", oh: "0", one: "1", won: "1", two: "2", to: "2", too: "2", three: "3", four: "4", for: "4", five: "5", six: "6", seven: "7", eight: "8", ate: "8", nine: "9" };
-  return s.toLowerCase().replace(/[a-z]+/g, (w) => words[w] ?? "").replace(/\D/g, "");
-}
 
-// ── Twilio webhooks ──
+// ── The conversation, turn by turn ──
 
-export async function startCall(env: Env, form: FormData, base: string): Promise<string> {
-  const sid = String(form.get("CallSid") ?? "");
-  const from = String(form.get("From") ?? "");
-  const owner = await ownerNumber(env);
-  const pin = await hasPin(env);
-  if (owner && from !== owner && !pin) return twiml("Sorry, Chief only takes calls from its owner. Goodbye.", null, { hangup: true });
-  if (!owner && !pin) return twiml("Chief isn't set up for calls yet. Goodbye.", null, { hangup: true });
-  const st: State = { stage: "auth", queue: [], idx: -1, silent: 0, pinTries: 0 };
-  // Your own phone skips the passcode; any other phone must say it.
-  if (owner && from === owner) {
-    const say = await greeting(env, st);
-    await saveState(env, sid, st);
-    return twiml(say, `${base}/turn`);
+const ID = /^[A-Za-z0-9_-]{16,64}$/;
+
+async function view(env: Env, st: State, say: string, end = false): Promise<Say> {
+  let draft: Say["draft"] = null;
+  if (st.stage === "confirm" && st.draft) {
+    const m = await current(env, st);
+    if (m) draft = { to: m.from_name || m.from_email, subject: /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`, body: st.draft };
   }
-  await saveState(env, sid, st);
-  return twiml("Hi, it's Chief. What's your passcode?", `${base}/turn`, { digits: true });
+  return { say: speakable(say), end, draft, waiting: Math.max(0, st.queue.length - Math.max(st.idx, 0) - (st.stage === "done" ? 0 : 1)) };
 }
 
-export async function callTurn(env: Env, form: FormData, base: string): Promise<string> {
-  const sid = String(form.get("CallSid") ?? "");
-  const heard = String(form.get("SpeechResult") ?? form.get("Digits") ?? "").trim();
-  const st = await loadState(env, sid);
-  if (!st) return twiml("Sorry, I lost track of this call. Please call again.", null, { hangup: true });
-  const done = async (say: string, hang = false) => { await saveState(env, sid, st); return twiml(say, hang ? null : `${base}/turn`, { hangup: hang, digits: st.stage === "auth" }); };
+/** You tapped to talk: Chief greets you and starts on your important emails. */
+export async function startTalk(env: Env, id: string): Promise<Say> {
+  if (!ID.test(id)) return { say: "Something went wrong. Tap to try again.", end: true };
+  const st: State = { stage: "email", queue: [], idx: -1, silent: 0 };
+  const say = await greeting(env, st);
+  await saveState(env, id, st);
+  return view(env, st, say);
+}
 
+/** You came back to the app: pick up exactly where you left off. */
+export async function resumeTalk(env: Env, id: string): Promise<Say> {
+  const st = ID.test(id) ? await loadState(env, id) : null;
+  if (!st) return startTalk(env, id);
+  if (st.stage === "confirm" && st.draft) return view(env, st, `Welcome back. Here's the reply we were on. ${spokenReply(st.draft)} Should I send this?`);
+  const m = st.stage === "email" ? await current(env, st) : null;
+  if (m) return view(env, st, `Welcome back. We were on this one. ${readEmail(m, st.idx + 1, st.queue.length)} What would you like to do?`);
+  return view(env, st, "Welcome back. You're caught up. Anything else? You can say check again, or goodbye.");
+}
+
+/** One thing you said, and Chief's answer. */
+export async function talkTurn(env: Env, id: string, heard: string): Promise<Say> {
+  const st = ID.test(id) ? await loadState(env, id) : null;
+  if (!st) return startTalk(env, id);
+  const done = async (say: string, end = false) => { await saveState(env, id, st); return view(env, st, say, end); };
+
+  heard = heard.trim().slice(0, 600);
   if (!heard) {
     st.silent++;
-    if (st.silent >= 3) return done("I'll let you go. Call me any time. Goodbye.", true);
-    return done(st.stage === "confirm" ? "Should I send this? Say yes, or tell me what to change." : st.stage === "auth" ? "What's your passcode?" : "I'm here. What would you like to do?");
+    return done(st.stage === "confirm" ? "Should I send this? Say yes, or tell me what to change." : "I'm here. What would you like to do?");
   }
   st.silent = 0;
 
-  if (st.stage === "auth") {
-    if (await checkPin(env, digitsFrom(heard))) return done(await greeting(env, st));
-    st.pinTries = (st.pinTries ?? 0) + 1;
-    if (st.pinTries >= 3) return done("That's not right. Goodbye.", true);
-    return done("That passcode didn't match. Try again.");
-  }
-
   const m = st.stage === "done" ? null : await current(env, st);
-  const ctx = {
+  const d = await decide(env, {
     stage: st.stage,
     email: m ? { from: m.from_name || m.from_email, fromEmail: m.from_email, subject: m.subject, body: m.body_text || m.summary } : undefined,
     draft: st.stage === "confirm" ? st.draft : undefined,
     heard,
-  } as const;
-  const d = await decide(env, { ...ctx });
+  });
 
   switch (d.action) {
     case "stop":
-      return done("Okay. Talk soon. Goodbye.", true);
+      return done("Okay. Talk soon.", true);
     case "check_again": {
       const r = await syncInbox(env);
       const say = await greeting(env, st);
@@ -236,10 +225,9 @@ export async function callTurn(env: Env, form: FormData, base: string): Promise<
       return done(await nextEmail(env, st, "Okay, no reply."));
     case "unsubscribe":
       return done(await nextEmail(env, st, await unsubscribe(env, m)));
-    case "block": {
+    case "block":
       await blockSender(env, m);
       return done(await nextEmail(env, st, `Blocked. Emails from ${m.from_name || m.from_email} will go to Spam.`));
-    }
     case "next":
       return done(await nextEmail(env, st, "Okay, I'll keep that one for later."));
   }
