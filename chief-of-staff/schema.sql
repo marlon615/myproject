@@ -122,3 +122,25 @@ create table if not exists outbox (
   decided_at text,
   sent_at text
 )
+;
+
+-- Phones that get notifications (Web Push subscriptions).
+create table if not exists push_subs (
+  id integer primary key autoincrement,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- One-tap approvals sent in notifications. Only a hash of the token is stored.
+create table if not exists approvals (
+  id integer primary key autoincrement,
+  token_hash text not null unique,
+  kind text not null check (kind in ('reply', 'outreach_batch')),
+  ref text not null,
+  title text not null default '',
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  expires_at text not null,
+  used_at text
+)

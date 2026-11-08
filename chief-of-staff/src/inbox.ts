@@ -131,9 +131,11 @@ async function understand(env: Env, s: Settings, e: { fromName: string; fromEmai
  * Pulls new, unread Primary-tab emails from the last few days (without marking them read in Gmail),
  * summarizes each one and drafts a reply where one is needed. Small batches keep each run quick.
  */
-export async function syncInbox(env: Env, max = 6): Promise<{ added: number; more: boolean; error?: string }> {
+export interface NewReply { replyId: number; fromName: string; fromEmail: string; summary: string; body: string }
+
+export async function syncInbox(env: Env, max = 6): Promise<{ added: number; more: boolean; error?: string; newReplies: NewReply[]; prospectReplies: string[] }> {
   const creds = await gmailCreds(env);
-  if (!creds) return { added: 0, more: false, error: "Gmail isn't connected yet." };
+  if (!creds) return { added: 0, more: false, error: "Gmail isn't connected yet.", newReplies: [], prospectReplies: [] };
   const s = await getSettings(env);
   let im: Imap | null = null;
   try {
@@ -150,6 +152,8 @@ export async function syncInbox(env: Env, max = 6): Promise<{ added: number; mor
     im = null;
 
     let added = 0;
+    const newReplies: NewReply[] = [];
+    const prospectReplies: string[] = [];
     for (const { uid, raw } of fetched) {
       const mail = await PostalMime.parse(raw);
       const fromEmail = (mail.from?.address ?? "").toLowerCase();
@@ -168,6 +172,15 @@ export async function syncInbox(env: Env, max = 6): Promise<{ added: number; mor
       if (!automated && (await allowed(env, "contacts"))) {
         await upsertContact(env, { name: mail.from?.name ?? "", email: fromEmail, phone: phoneFromSignature(text), source: "gmail-inbox" });
       }
+      // A prospect wrote back: mark them replied so no more follow-ups go out.
+      const wrote = await env.DB.prepare("select name from prospects where email = ? and status in ('new', 'contacted')").bind(fromEmail).first<{ name: string }>();
+      if (wrote) {
+        await env.DB.batch([
+          env.DB.prepare("update prospects set status = 'replied' where email = ? and status in ('new', 'contacted')").bind(fromEmail),
+          env.DB.prepare("update drafts set status = 'rejected', decided_at = ?, error = 'Prospect replied' where status = 'pending' and prospect_id in (select id from prospects where email = ?)").bind(new Date().toISOString(), fromEmail),
+        ]);
+        prospectReplies.push(wrote.name || mail.from?.name || fromEmail);
+      }
       const u = await understand(env, s, { fromName: mail.from?.name ?? "", fromEmail, subject: mail.subject ?? "", text, automated });
       const refs = [mail.references, mail.messageId].filter(Boolean).join(" ").trim();
       const ins = await env.DB.prepare(
@@ -177,16 +190,17 @@ export async function syncInbox(env: Env, max = 6): Promise<{ added: number; mor
         u.priority, u.needsReply ? 1 : 0, refs.slice(0, 2000), u.source).first<{ id: number }>();
       if (ins && u.needsReply && u.replyBody) {
         const subj = /^re:/i.test(mail.subject ?? "") ? (mail.subject ?? "") : `Re: ${mail.subject ?? ""}`.trim();
-        await env.DB.prepare("insert into replies (inbox_id, to_email, to_name, subject, body) values (?, ?, ?, ?, ?)")
-          .bind(ins.id, fromEmail, mail.from?.name ?? "", subj.slice(0, 300), u.replyBody.slice(0, 5000)).run();
+        const rep = await env.DB.prepare("insert into replies (inbox_id, to_email, to_name, subject, body) values (?, ?, ?, ?, ?) returning id")
+          .bind(ins.id, fromEmail, mail.from?.name ?? "", subj.slice(0, 300), u.replyBody.slice(0, 5000)).first<{ id: number }>();
+        if (rep) newReplies.push({ replyId: rep.id, fromName: mail.from?.name ?? "", fromEmail, summary: u.summary, body: u.replyBody });
       }
       if (ins) added++;
     }
-    return { added, more: fresh.length > batch.length };
+    return { added, more: fresh.length > batch.length, newReplies, prospectReplies };
   } catch (e) {
     if (im) await im.logout().catch(() => {});
     console.error("inbox sync failed:", (e as Error).message);
-    return { added: 0, more: false, error: (e as Error).message };
+    return { added: 0, more: false, error: (e as Error).message, newReplies: [], prospectReplies: [] };
   }
 }
 

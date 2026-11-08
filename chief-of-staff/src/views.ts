@@ -46,7 +46,7 @@ export function page(title: string, body: string, opts: { tab?: string; flash?: 
   ];
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#2f5bd3"><meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Chief of Staff"><title>${esc(title)} · Chief of Staff</title><style>${CSS}</style></head><body>
+<meta name="apple-mobile-web-app-title" content="Chief"><link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-192.png"><title>${esc(title)} · Chief of Staff</title><style>${CSS}</style></head><body>
 <div class="wrap">${opts.bare ? "" : `<div class="top"><div class="brand">Chief of Staff</div></div>`}
 ${opts.flash ? `<div class="flash" role="status">${esc(opts.flash)}</div>` : ""}${body}</div>
 ${opts.bare ? "" : `<nav class="tabs">${tabs.map(([k, h, i, l]) => `<a href="${h}" class="${opts.tab === k ? "on" : ""}"><b aria-hidden="true">${i}</b>${l}</a>`).join("")}</nav>`}
@@ -184,10 +184,16 @@ ${d.byProduct.map((r) => `<tr><td><span class="badge b-${r.product}">${PRODUCT_N
 <div class="card"><h2>Recent drafting runs</h2>${d.runs.length ? `<table>${d.runs.map((r) => `<tr><td class="small">${fmt(r.at)}</td><td class="small">${r.trigger === "cron" ? "Morning" : "Manual"}</td><td class="small">${esc(r.note ?? "")}</td></tr>`).join("")}</table>` : `<p class="muted">None yet. The first one runs tomorrow morning.</p>`}</div>`, { tab: "dashboard" });
 }
 
-export function settingsPage(s: Settings, keys: { anthropic: boolean; resend: boolean; gmail: boolean; calendar: boolean }, flash?: string) {
+export function settingsPage(s: Settings, keys: { anthropic: boolean; resend: boolean; gmail: boolean; calendar: boolean; phones?: number }, flash?: string) {
   const f = (name: keyof Settings, label: string, ph = "", type = "text") =>
     `<label>${label}</label><input name="${name}" type="${type}" value="${esc(s[name])}" placeholder="${esc(ph)}" maxlength="300">`;
+  const check = (ok: boolean, label: string, how: string) => `<li style="margin:6px 0">${ok ? "✅" : "⬜️"} <b>${label}</b>${ok ? "" : ` · <span class="small">${how}</span>`}</li>`;
   return page("Settings", `<h1>Settings</h1>
+<div class="card"><h2>Chief on autopilot</h2><ul style="list-style:none;padding:0;margin:0">
+${check(keys.gmail, "Gmail connected", "paste your app password below")}
+${check(keys.anthropic, "Anthropic key added", "paste it under Connections, so replies are written in full sentences")}
+${check((keys.phones ?? 0) > 0, "Notifications on", "open Chief from your Home Screen and tap Turn on notifications")}
+</ul><p class="muted small" style="margin:8px 0 0">With all three, Chief checks Gmail every 5 minutes on its own, writes replies, and notifies you for one yes.</p></div>
 <form method="post" action="/settings/gmail" class="card"><h2>Gmail ${keys.gmail ? "✅ connected" : ""}</h2>
 <p class="small">Lets Chief read your Primary inbox aloud (without marking anything read) and send the replies and outreach you approve from your own Gmail.</p>
 <label>Gmail address</label><input name="gmailAddress" type="email" value="${esc(s.gmailAddress)}" placeholder="you@gmail.com" autocomplete="email">
@@ -265,6 +271,11 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
   <button id="orb" class="vorb" type="button">Tap to start</button>
   <div id="status" class="vstatus">Tap once to start listening</div>
   <div id="warn" class="vwarn" hidden></div>
+  <div id="notif" class="card" style="width:100%;max-width:560px;text-align:left" hidden>
+    <b>Get a notification when a reply is ready</b>
+    <p id="notifText" class="small" style="margin:6px 0 10px">Chief works in the cloud even when your phone is closed, and asks for your yes with a notification.</p>
+    <button id="notifBtn" class="btn btn-primary block" type="button">Turn on notifications</button>
+  </div>
   <div class="vheard"><b>You said</b><span id="heard">—</span></div>
   <div class="vsaid"><b>Chief</b><span id="said">Say “Hey Chief” and then what you need.</span></div>
   <p class="vhints">Try: “Hey Chief, brief me.” “…check my inbox.” “…email Dave saying I'll call tomorrow.” “…call Dave.” “…text Dave saying running late.” “…what's on my calendar today?” “…remind me to call Dave at 3.” “…directions to Grace Church.” When I ask “Should I send it?”, just say “yes” or “no”.</p>
@@ -423,6 +434,37 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
       fetch("/api/due",{credentials:"same-origin"}).then(function(r){return r.json()}).then(function(j){ if(j.say && S.mode==="wake") speak(j.say, function(){ setMode("wake"); }); }).catch(function(){});
     }, 60000);
   });
+  // ── Notifications (Web Push) ──
+  var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  var standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function(){});
+  function b64ToBytes(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); while(s.length%4) s+="="; var b=atob(s), u=new Uint8Array(b.length); for(var i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u; }
+  function showNotifCard(){
+    var card=$("notif"), btn=$("notifBtn"), txt=$("notifText");
+    var pushOK = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    if(isIOS && !standalone){ card.hidden=false; btn.hidden=true; txt.innerHTML="On iPhone, notifications need Chief on your Home Screen: tap <b>Share</b>, then <b>Add to Home Screen</b>, then open Chief from there."; return; }
+    if(!pushOK){ card.hidden=true; return; }
+    if(Notification.permission==="granted"){ subscribe(true); card.hidden=true; return; }
+    if(Notification.permission==="denied"){ card.hidden=false; btn.hidden=true; txt.textContent="Notifications are blocked for Chief. Turn them on in your phone's settings for this app."; return; }
+    card.hidden=false;
+  }
+  async function subscribe(quiet){
+    try{
+      var reg = await navigator.serviceWorker.ready;
+      var sub = await reg.pushManager.getSubscription();
+      if(!sub){
+        var k = await (await fetch("/api/push-key",{credentials:"same-origin"})).json();
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(k.key) });
+      } else if(quiet){ /* already on: refresh it on the server */ }
+      await fetch("/api/push-subscribe",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(sub)});
+      $("notif").hidden = true;
+    }catch(e){ if(!quiet){ $("notifText").textContent="Couldn't turn on notifications here. "+(e&&e.message?e.message:""); } }
+  }
+  $("notifBtn").addEventListener("click", function(){
+    Notification.requestPermission().then(function(p){ if(p==="granted") subscribe(false); else showNotifCard(); });
+  });
+  showNotifCard();
+
   $("typed").addEventListener("submit", function(e){
     e.preventDefault(); var t=$("typedText").value.trim(); if(!t) return; $("typedText").value="";
     if(!S.on){ S.on=true; lockScreen(); }

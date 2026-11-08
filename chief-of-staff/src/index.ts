@@ -13,11 +13,16 @@ import { allowed, isPerm, setupDone } from "./permissions";
 import { answerPermission } from "./phone";
 import { testIcs } from "./calendar";
 import { harvestSent } from "./contacts";
+import { findApproval, morningRun, notify, notifyNewReplies, rememberOrigin, runApproval } from "./agent";
+import { pushCount, sendPush, vapidKeys } from "./push";
+import { b64url } from "./crypto";
+import { icon, MANIFEST, SERVICE_WORKER } from "./pwa";
+import { approvalDonePage, approvalPage } from "./approve-view";
 import { addTodo, completeTodo, dueToNotify, markNotified, openTodos, takeDueToSpeak } from "./todos";
 import { dashboard } from "./stats";
 
 const SECURITY_HEADERS: Record<string, string> = {
-  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self' mailto:; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
+  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src 'self'; manifest-src 'self'; connect-src 'self'; form-action 'self' mailto:; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "same-origin",
@@ -100,6 +105,29 @@ async function handle(req: Request, env: Env): Promise<Response> {
     return html("<h1>Not configured</h1><p>OWNER_PASSWORD and SESSION_SECRET must be set.</p>", 500);
   }
   if (path === "/robots.txt") return new Response("User-agent: *\nDisallow: /\n", { headers: { "Content-Type": "text/plain" } });
+  if (path === "/manifest.webmanifest") return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json", "Cache-Control": "public, max-age=3600" } });
+  if (path === "/sw.js") return new Response(SERVICE_WORKER, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache", "Service-Worker-Allowed": "/" } });
+  if (path === "/icon-192.png") return icon(192);
+  if (path === "/icon-512.png") return icon(512);
+
+  // One-tap approvals from a notification or email. The secret token in the link is the permission
+  // for that single item; opening the link (GET) never sends anything, only the Yes button (POST) does.
+  const apMatch = path.match(/^\/approve\/([A-Za-z0-9_-]{20,64})$/);
+  if (apMatch) {
+    const a = await findApproval(env, apMatch[1]);
+    if (method === "GET") {
+      if (!a) return html(approvalDonePage("This link has expired or was already used.", false), 410);
+      if (a.used_at) return html(approvalDonePage("Already handled.", true));
+      return html(await approvalPage(env, a));
+    }
+    if (method === "POST") {
+      if (!sameOrigin(req)) return html("Forbidden", 403);
+      const wantsJson = (req.headers.get("accept") ?? "").includes("application/json");
+      const d = str((await req.formData()).get("decision"), 5);
+      const r = !a ? { ok: false, error: "This link has expired." } : d === "yes" || d === "no" ? await runApproval(env, a, d) : { ok: false, error: "Tap Yes or No." };
+      return wantsJson ? json(r, r.ok ? 200 : 400) : html(approvalDonePage(r.ok ? (r.label ?? "Done") : (r.error ?? "That didn't work."), r.ok));
+    }
+  }
   if (method === "POST" && !sameOrigin(req)) return html("Forbidden", 403);
 
   if (path === "/login") {
@@ -117,6 +145,22 @@ async function handle(req: Request, env: Env): Promise<Response> {
   }
 
   if (!(await isSignedIn(req, env))) return method === "GET" ? redirect("/login") : html("Sign in first.", 401);
+  if (method === "GET" && path === "/") await rememberOrigin(env, url.origin);
+
+  if (path === "/api/push-key" && method === "GET") {
+    const { publicRaw } = await vapidKeys(env);
+    return json({ key: b64url(publicRaw) });
+  }
+  if (path === "/api/push-subscribe" && method === "POST") {
+    const sub = (await req.json().catch(() => null)) as { endpoint?: string; keys?: { p256dh?: string; auth?: string } } | null;
+    const ep = sub?.endpoint ?? "";
+    const testEp = Boolean(env.MAIL_TEST_HOST) && /^http:\/\/127\.0\.0\.1:\d+\//.test(ep); // local tests only
+    if ((!/^https:\/\//.test(ep) && !testEp) || !sub?.keys?.p256dh || !sub.keys.auth || ep.length > 1000) return json({ ok: false, error: "Bad subscription" }, 400);
+    await env.DB.prepare("insert into push_subs (endpoint, p256dh, auth) values (?, ?, ?) on conflict(endpoint) do update set p256dh = excluded.p256dh, auth = excluded.auth")
+      .bind(ep, sub.keys.p256dh.slice(0, 200), sub.keys.auth.slice(0, 100)).run();
+    const n = await sendPush(env, { title: "Notifications are on", body: "I'll let you know when a reply is ready for your yes.", url: "/", tag: "welcome" });
+    return json({ ok: true, delivered: n });
+  }
   const msg = url.searchParams.get("m")?.slice(0, 200) || undefined;
 
   if (path === "/logout" && method === "POST") return redirect("/login", { "Set-Cookie": clearCookie });
@@ -299,8 +343,8 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/dashboard" && method === "GET") return html(dashboardPage(await dashboard(env)));
 
   if (path === "/settings" && method === "GET") {
-    const [s, anthropic, resend, gmail, calendar] = await Promise.all([getSettings(env), hasSecret(env, "anthropic"), hasSecret(env, "resend"), hasSecret(env, "gmail"), hasSecret(env, "calendar")]);
-    return html(settingsPage(s, { anthropic, resend, gmail, calendar }, msg));
+    const [s, anthropic, resend, gmail, calendar, phones] = await Promise.all([getSettings(env), hasSecret(env, "anthropic"), hasSecret(env, "resend"), hasSecret(env, "gmail"), hasSecret(env, "calendar"), pushCount(env)]);
+    return html(settingsPage(s, { anthropic, resend, gmail, calendar, phones }, msg));
   }
 
   if (path === "/settings/calendar" && method === "POST") {
@@ -403,32 +447,33 @@ export class ChiefOfStaff extends DurableObject<WorkerEnv> {
       return html("<h1>Something went wrong</h1><p>Try again in a moment. <a href=\"/\">Back</a></p>", 500);
     }
   }
+  /** Morning: draft outreach, ask for one yes, report yesterday; refresh contacts. */
   async morning(): Promise<string> {
-    const drafts = await buildDailyDrafts(this.app, "cron");
-    const inbox = await syncInbox(this.app);
+    const note = await morningRun(this.app);
     const g = await gmailCreds(this.app);
     if (g && (await allowed(this.app, "contacts"))) await harvestSent(this.app, g.user, g.pass).catch(() => 0);
-    return `${drafts.note} Inbox: ${inbox.error ?? `${inbox.added} new`}.`;
+    return note;
   }
-  /** Every 15 minutes: email any reminder that's due; on the quarter-hours during the day, refresh the inbox. */
-  async tick(minute: number, hourUtc: number): Promise<string> {
+  /** Every 5 minutes, phone open or not: check Gmail, write replies, notify; send due reminders. */
+  async tick(): Promise<string> {
     let note = "";
     if (await allowed(this.app, "reminders")) {
-      const g = await gmailCreds(this.app);
       for (const t of await dueToNotify(this.app)) {
-        if (g) {
-          const r = await gmailSend(this.app, { to: g.user, subject: `Reminder: ${t.text}`, text: `${t.text}\n\n— Chief of Staff` });
-          if (!r.ok) continue;
-        }
+        const via = await notify(this.app, { title: "Reminder", body: t.text, url: "/", tag: `todo${t.id}` });
+        if (via === "none" && (await pushCount(this.app)) === 0 && !(await gmailCreds(this.app))) continue; // nowhere to send yet; try later
         await markNotified(this.app, t.id);
         note += ` reminded: ${t.text};`;
       }
     }
-    if ((minute === 15 || minute === 45) && (hourUtc >= 11 || hourUtc <= 3)) {
+    if (await gmailCreds(this.app)) {
       const r = await syncInbox(this.app);
-      note += ` inbox: ${r.error ?? `${r.added} new`}`;
+      if (r.newReplies.length) await notifyNewReplies(this.app, r.newReplies);
+      for (const who of r.prospectReplies) {
+        await notify(this.app, { title: `${who} replied`, body: "I stopped their follow-ups. Their email is in your inbox.", url: "/", tag: `prospect-${who}`.slice(0, 30) });
+      }
+      note += ` inbox: ${r.error ?? `${r.added} new, ${r.newReplies.length} replies drafted`}`;
     }
-    return note.trim() || "nothing due";
+    return note.trim() || "nothing to do";
   }
 }
 
@@ -439,11 +484,8 @@ export default {
     return main(env).fetch(req);
   },
   async scheduled(ctrl: ScheduledController, env: WorkerEnv, ctx: ExecutionContext) {
-    // The morning run drafts outreach and checks Gmail; the half-hourly runs keep the inbox summaries fresh.
+    // The morning run drafts outreach; the 5-minute runs watch Gmail and send reminders.
     if (ctrl.cron === "0 13 * * *") ctx.waitUntil(main(env).morning().then((n) => console.log("morning:", n)));
-    else {
-      const at = new Date(ctrl.scheduledTime);
-      ctx.waitUntil(main(env).tick(at.getUTCMinutes(), at.getUTCHours()).then((n) => console.log("tick:", n)));
-    }
+    else ctx.waitUntil(main(env).tick().then((n) => console.log("tick:", n)));
   },
 } satisfies ExportedHandler<WorkerEnv>;
