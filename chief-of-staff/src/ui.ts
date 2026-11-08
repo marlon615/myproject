@@ -86,7 +86,44 @@ ${o.voiceJs}
   async function lockScreen(){ try { if (navigator.wakeLock) S.lock = await navigator.wakeLock.request("screen"); } catch(e){} }
 
   // ── Voice: the best deep male voice on this phone ──
-  function loadVoice(){ var v = chiefPickVoice(); S.voice = v.voice; S.male = v.male; }
+  // The phone's most natural voices first (Premium, Enhanced, Neural, Google, online), robotic novelty voices left out.
+  function rankedVoices(){
+    var list = (speechSynthesis.getVoices ? speechSynthesis.getVoices() : []) || [];
+    var lang = (navigator.language || "en-US").toLowerCase();
+    return list.map(function(v){
+      var n = (v.name || "") + " " + (v.voiceURI || ""), l = (v.lang || "").toLowerCase().replace("_", "-"), q = 0;
+      if (l.slice(0, 2) !== lang.slice(0, 2)) return null;
+      if (/\\b(fred|junior|ralph|albert|bruce|grandpa|grandma|rocko|eddy|zarvox|trinoids|whisper|bad news|good news|bells|boing|bubbles|cellos|organ|superstar|wobble|jester|shelley|sandy|flo|reed)\\b/i.test(n)) return null;
+      if (/premium/i.test(n)) q += 50; else if (/enhanced|neural|natural/i.test(n)) q += 40; else if (/google|online|-network/i.test(n)) q += 30; else if (/siri/i.test(n)) q += 35;
+      if (/compact/i.test(n)) q -= 10;
+      if (l === lang) q += 8;
+      var g = (CHIEF_MALE.test(n) || CHIEF_ANDROID_MALE.test(n)) ? "m" : (CHIEF_FEMALE.test(n) || CHIEF_ANDROID_FEMALE.test(n)) ? "f" : "";
+      return { v: v, q: q, g: g };
+    }).filter(Boolean).sort(function(a, b){ return b.q - a.q || (a.g === "m" ? -1 : 1); });
+  }
+  function store(k, v){ try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch(e){} }
+  function stored(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+  S.rate = Number(stored("chiefRate")) || 1;
+  function loadVoice(){
+    var r = rankedVoices(), want = stored("chiefVoice2");
+    var pick = r.filter(function(x){ return x.v.voiceURI === want; })[0] || r[0];
+    S.voice = pick ? pick.v : null; S.ranked = r;
+  }
+  /** "Change your voice", "use a woman's voice", "talk slower": handled right here on the phone. */
+  function voiceCommand(text){
+    var t = text.toLowerCase();
+    var r = S.ranked && S.ranked.length ? S.ranked : rankedVoices();
+    if (!r.length && !/faster|slower/.test(t)) return false;
+    var cur = r.map(function(x){ return x.v.voiceURI; }).indexOf(S.voice && S.voice.voiceURI);
+    var choose = function(x, note){ if (!x) return speak("That's the only voice this phone has. You can download more in your iPhone settings, under Accessibility, Spoken Content, Voices.", listen);
+      S.voice = x.v; store("chiefVoice2", x.v.voiceURI); speak(note || "How's this voice? If you want another one, just tell me.", listen); };
+    if (/\\b(woman|women|female|lady|girl)\\b/.test(t) && /\\bvoice\\b/.test(t)) { choose(r.filter(function(x){ return x.g === "f"; })[0] || r.filter(function(x){ return x.g !== "m"; })[0]); return true; }
+    if (/\\b(man|men|male|guy)\\b/.test(t) && /\\bvoice\\b/.test(t)) { choose(r.filter(function(x){ return x.g === "m"; })[0] || r.filter(function(x){ return x.g !== "f"; })[0]); return true; }
+    if (/\\b(change|switch|different|another|new|next|other)\\b.*\\bvoice\\b|\\bvoice\\b.*\\b(annoying|change|switch|different)\\b/.test(t)) { choose(r.length > 1 ? r[(cur + 1) % r.length] : null); return true; }
+    if (/\\b(talk|speak|go|read)\\b.*\\bfaster\\b|^faster\\b/.test(t)) { S.rate = Math.min(1.4, (S.rate || 1) + 0.12); store("chiefRate", String(S.rate)); speak("Okay, a little faster.", listen); return true; }
+    if (/\\b(talk|speak|go|read)\\b.*\\bslower\\b|^slower\\b|slow down/.test(t)) { S.rate = Math.max(0.75, (S.rate || 1) - 0.12); store("chiefRate", String(S.rate)); speak("Okay, a little slower.", listen); return true; }
+    return false;
+  }
   if ("speechSynthesis" in window) { loadVoice(); try { speechSynthesis.addEventListener("voiceschanged", loadVoice); } catch(e){} }
 
   function pieces(text){
@@ -109,7 +146,7 @@ ${o.voiceJs}
       parts.forEach(function(p, i){
         var u = new SpeechSynthesisUtterance(p);
         if (S.voice) { u.voice = S.voice; u.lang = S.voice.lang; }
-        u.pitch = S.male ? CHIEF_PITCH : 0.75; u.rate = CHIEF_RATE;
+        u.pitch = 1; u.rate = S.rate || 1; // the voice as it was made to sound: no pitch tricks
         if (i === parts.length - 1) { u.onend = finish; u.onerror = finish; }
         speechSynthesis.speak(u);
       });
@@ -139,7 +176,7 @@ ${o.voiceJs}
       if (S.rec !== r) return; S.rec = null;
       var t = final.trim();
       if (!S.on || S.paused) return;
-      if (!t || isEcho(t)) return setTimeout(listen, 200); // nothing heard (or only Chief's own voice): keep listening
+      if (!t) return setTimeout(listen, 200); // nothing heard: keep listening (the mic is off while Chief talks, so it never hears itself)
       send(t);
     };
     try { r.start(); } catch(e){ setTimeout(listen, 500); }
@@ -168,6 +205,7 @@ ${o.voiceJs}
     speak(res.say, function(){ if (res.end) { S.on = false; setMode("idle"); return; } listen(); });
   }
   async function send(text){
+    if (voiceCommand(text)) { $("you").textContent = text; return; }
     $("you").textContent = text; setMode("thinking");
     try { handle(await call("/api/talk", { id: S.id, text: text })); }
     catch(e){ speak("I couldn't reach the server. Check your connection.", listen); }
