@@ -1,0 +1,27 @@
+name = "chief-of-staff"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "30f2c89d75621ddef8b783383296410f"
+workers_dev = true
+preview_urls = false
+
+rules = [{ type = "Text", globs = ["**/*.sql"], fallthrough = true }]
+
+[vars]
+APP_TIMEZONE = "America/Chicago"
+
+[[durable_objects.bindings]]
+name = "APP"
+class_name = "ChiefOfStaff"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChiefOfStaff"]
+
+# New drafts every morning: 13:00 UTC = 8 a.m. Central (7 a.m. in winter).
+[triggers]
+crons = ["0 13 * * *"]
+
+[observability]
+enabled = true
