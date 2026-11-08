@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import PostalMime from "postal-mime";
+import { phoneFromSignature, upsertContact } from "./contacts";
+import { allowed } from "./permissions";
 import { Imap } from "./mail/imap";
 import { buildMessage, newMessageId } from "./mail/mime";
 import { mailHosts } from "./mail/net";
@@ -17,7 +19,9 @@ export interface ReplyRow {
   status: "pending" | "approved" | "rejected" | "sent" | "failed"; error: string | null; created_at: string;
 }
 
+/** Gmail sign-in details, or null when Gmail isn't connected or you said no to email. */
 export async function gmailCreds(env: Env): Promise<{ user: string; pass: string } | null> {
+  if (!(await allowed(env, "email"))) return null;
   const s = await getSettings(env);
   const pass = await getSecret(env, "gmail");
   return s.gmailAddress && pass ? { user: s.gmailAddress, pass } : null;
@@ -161,6 +165,9 @@ export async function syncInbox(env: Env, max = 6): Promise<{ added: number; mor
         .replace(/\n>.*$/gm, "")
         .trim();
       const automated = isAutomated(fromEmail, mail.headers ?? []);
+      if (!automated && (await allowed(env, "contacts"))) {
+        await upsertContact(env, { name: mail.from?.name ?? "", email: fromEmail, phone: phoneFromSignature(text), source: "gmail-inbox" });
+      }
       const u = await understand(env, s, { fromName: mail.from?.name ?? "", fromEmail, subject: mail.subject ?? "", text, automated });
       const refs = [mail.references, mail.messageId].filter(Boolean).join(" ").trim();
       const ins = await env.DB.prepare(

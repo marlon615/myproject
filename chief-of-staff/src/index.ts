@@ -8,8 +8,12 @@ import SCHEMA from "../schema.sql";
 import { PRODUCTS, type Draft, type Env, type Product, type Prospect, type WorkerEnv } from "./types";
 import { approvePage, dashboardPage, loginPage, prospectsPage, settingsPage, voicePage } from "./views";
 import { runCommand } from "./voice";
-import { decideReply, gmailCreds, syncInbox, testGmail, type ReplyRow } from "./inbox";
-import { addTodo, completeTodo, openTodos } from "./todos";
+import { decideReply, gmailCreds, gmailSend, syncInbox, testGmail, type ReplyRow } from "./inbox";
+import { allowed, isPerm, setupDone } from "./permissions";
+import { answerPermission } from "./phone";
+import { testIcs } from "./calendar";
+import { harvestSent } from "./contacts";
+import { addTodo, completeTodo, dueToNotify, markNotified, openTodos, takeDueToSpeak } from "./todos";
 import { dashboard } from "./stats";
 
 const SECURITY_HEADERS: Record<string, string> = {
@@ -125,7 +129,47 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/api/command" && method === "POST") {
     const text = str((await req.formData()).get("text"), 500);
     if (!text) return json({ say: "I didn't hear a command." });
-    return json(await runCommand(env, text));
+    return json(await runCommand(env, text, req.headers.get("user-agent") ?? ""));
+  }
+
+  if (path === "/api/state" && method === "GET") {
+    return json({ setupDone: await setupDone(env) });
+  }
+
+  if (path === "/api/due" && method === "GET") {
+    if (!(await allowed(env, "reminders"))) return json({ say: null });
+    const due = await takeDueToSpeak(env);
+    return json({ say: due.length ? `Reminder: ${due.map((t) => t.text).join(". Also: ")}.` : null });
+  }
+
+  const permMatch = path.match(/^\/api\/permission\/([a-z]+)$/);
+  if (permMatch && method === "POST" && isPerm(permMatch[1])) {
+    const d = str((await req.formData()).get("decision"), 5);
+    if (d !== "yes" && d !== "no") return json({ ok: false, error: "Say yes or no." }, 400);
+    return json({ ok: true, say: await answerPermission(env, permMatch[1], d === "yes") });
+  }
+
+  const outMatch = path.match(/^\/outbox\/(\d+)\/decide$/);
+  if (outMatch && method === "POST") {
+    const id = Number(outMatch[1]);
+    const d = str((await req.formData()).get("decision"), 5);
+    const row = await env.DB.prepare("select * from outbox where id = ?").bind(id).first<{ id: number; to_email: string; to_name: string; subject: string; body: string; status: string }>();
+    if (!row || row.status !== "pending") return json({ ok: false, error: "That email was already handled." }, 400);
+    const now = new Date().toISOString();
+    if (d === "no") {
+      await env.DB.prepare("update outbox set status = 'rejected', decided_at = ? where id = ?").bind(now, id).run();
+      return json({ ok: true, label: "Skipped" });
+    }
+    if (d !== "yes") return json({ ok: false, error: "Say yes or no." }, 400);
+    const claim = await env.DB.prepare("update outbox set status = 'approved', decided_at = ? where id = ? and status = 'pending'").bind(now, id).run();
+    if (!claim.meta.changes) return json({ ok: false, error: "That email was already handled." }, 400);
+    const r = await gmailSend(env, { to: row.to_email, toName: row.to_name, subject: row.subject, text: row.body });
+    if (!r.ok) {
+      await env.DB.prepare("update outbox set status = 'pending', error = ? where id = ?").bind(r.error, id).run();
+      return json({ ok: false, error: `Not sent. ${r.error}` }, 400);
+    }
+    await env.DB.prepare("update outbox set status = 'sent', sent_at = ? where id = ?").bind(now, id).run();
+    return json({ ok: true, label: "Sent ✓" });
   }
 
   if (path === "/review" && method === "GET") {
@@ -255,8 +299,21 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/dashboard" && method === "GET") return html(dashboardPage(await dashboard(env)));
 
   if (path === "/settings" && method === "GET") {
-    const [s, anthropic, resend, gmail] = await Promise.all([getSettings(env), hasSecret(env, "anthropic"), hasSecret(env, "resend"), hasSecret(env, "gmail")]);
-    return html(settingsPage(s, { anthropic, resend, gmail }, msg));
+    const [s, anthropic, resend, gmail, calendar] = await Promise.all([getSettings(env), hasSecret(env, "anthropic"), hasSecret(env, "resend"), hasSecret(env, "gmail"), hasSecret(env, "calendar")]);
+    return html(settingsPage(s, { anthropic, resend, gmail, calendar }, msg));
+  }
+
+  if (path === "/settings/calendar" && method === "POST") {
+    const f = await req.formData();
+    if (str(f.get("remove"), 10) === "calendar") {
+      await setSecret(env, "calendar", null);
+      return redirect(withMsg("/settings", "Calendar disconnected."));
+    }
+    const url = str(f.get("calendarUrl"), 1000);
+    const err = await testIcs(url, Boolean(env.MAIL_TEST_HOST));
+    if (err) return redirect(withMsg("/settings", `Calendar didn't connect: ${err}`));
+    await setSecret(env, "calendar", url);
+    return redirect(withMsg("/settings", "Calendar connected. Say “Hey Chief, what's on my calendar today?”"));
   }
 
   if (path === "/settings/gmail" && method === "POST") {
@@ -275,6 +332,7 @@ async function handle(req: Request, env: Env): Promise<Response> {
     if (err) return redirect(withMsg("/settings", `Gmail didn't connect: ${err}`));
     await saveSettings(env, { gmailAddress: address });
     if (pass) await setSecret(env, "gmail", pass);
+    if (await allowed(env, "contacts")) await harvestSent(env, address, usePass).catch(() => 0);
     return redirect(withMsg("/settings", "Gmail connected. Say “Hey Chief, check my inbox.”"));
   }
 
@@ -348,11 +406,29 @@ export class ChiefOfStaff extends DurableObject<WorkerEnv> {
   async morning(): Promise<string> {
     const drafts = await buildDailyDrafts(this.app, "cron");
     const inbox = await syncInbox(this.app);
+    const g = await gmailCreds(this.app);
+    if (g && (await allowed(this.app, "contacts"))) await harvestSent(this.app, g.user, g.pass).catch(() => 0);
     return `${drafts.note} Inbox: ${inbox.error ?? `${inbox.added} new`}.`;
   }
-  async inboxCheck(): Promise<string> {
-    const r = await syncInbox(this.app);
-    return r.error ?? `${r.added} new`;
+  /** Every 15 minutes: email any reminder that's due; on the quarter-hours during the day, refresh the inbox. */
+  async tick(minute: number, hourUtc: number): Promise<string> {
+    let note = "";
+    if (await allowed(this.app, "reminders")) {
+      const g = await gmailCreds(this.app);
+      for (const t of await dueToNotify(this.app)) {
+        if (g) {
+          const r = await gmailSend(this.app, { to: g.user, subject: `Reminder: ${t.text}`, text: `${t.text}\n\n— Chief of Staff` });
+          if (!r.ok) continue;
+        }
+        await markNotified(this.app, t.id);
+        note += ` reminded: ${t.text};`;
+      }
+    }
+    if ((minute === 15 || minute === 45) && (hourUtc >= 11 || hourUtc <= 3)) {
+      const r = await syncInbox(this.app);
+      note += ` inbox: ${r.error ?? `${r.added} new`}`;
+    }
+    return note.trim() || "nothing due";
   }
 }
 
@@ -365,6 +441,9 @@ export default {
   async scheduled(ctrl: ScheduledController, env: WorkerEnv, ctx: ExecutionContext) {
     // The morning run drafts outreach and checks Gmail; the half-hourly runs keep the inbox summaries fresh.
     if (ctrl.cron === "0 13 * * *") ctx.waitUntil(main(env).morning().then((n) => console.log("morning:", n)));
-    else ctx.waitUntil(main(env).inboxCheck().then((n) => console.log("inbox check:", n)));
+    else {
+      const at = new Date(ctrl.scheduledTime);
+      ctx.waitUntil(main(env).tick(at.getUTCMinutes(), at.getUTCHours()).then((n) => console.log("tick:", n)));
+    }
   },
 } satisfies ExportedHandler<WorkerEnv>;

@@ -95,3 +95,30 @@ create table if not exists todos (
   done_at text
 );
 create index if not exists todos_status on todos (status, created_at)
+;
+
+-- People Chief knows, gathered from Gmail (and numbers you tell it). No typing needed.
+create table if not exists contacts (
+  id integer primary key autoincrement,
+  name text not null default '',
+  email text unique,
+  phone text,
+  source text not null default 'gmail',
+  last_seen_at text,
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+create index if not exists contacts_name on contacts (name);
+
+-- One-off emails you dictate to anyone ("email Dave saying ..."), waiting for your yes.
+create table if not exists outbox (
+  id integer primary key autoincrement,
+  to_email text not null,
+  to_name text not null default '',
+  subject text not null,
+  body text not null,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'sent', 'failed')),
+  error text,
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  decided_at text,
+  sent_at text
+)

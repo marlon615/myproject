@@ -6,17 +6,16 @@ import { dashboard } from "./stats";
 import { addTodo, completeTodo, findTodo, openTodos } from "./todos";
 import { PRODUCT_NAME, type Draft, type Env, type Product, type Prospect, type ProspectStatus } from "./types";
 
-/**
- * Something Chief reads aloud. With decideUrl it then waits for a spoken yes or no;
- * with ackUrl it just marks the item as heard and moves on.
- */
-export interface QueueItem { say: string; decideUrl?: string; ackUrl?: string }
-export interface VoiceReply { say: string; queue?: QueueItem[]; end?: boolean }
+import { addToCalendar, call, directions, emailPerson, makeProspect, readCalendar, remind, saveNumber, setupQueue, text as textPerson, togglePerm, type QueueItem, type VoiceReply } from "./phone";
+import { allowed, isPerm, type Perm } from "./permissions";
+import { agendaSpeech } from "./calendar";
+import { findPerson } from "./contacts";
+export type { QueueItem, VoiceReply };
 
 const HELP =
-  "You can say: brief me. Check my inbox. Read my outreach. Write an email to, and a name or church. Draft today's emails. " +
-  "Give me my dashboard. Remember to, and anything you want me to hold on to. What's on my list. I finished, and the item. " +
-  "Mark, a name, as replied. Or say stop.";
+  "You can say: brief me. Check my inbox. Email Dave saying, and your message. Call Dave. Text Dave saying, and your message. " +
+  "What's on my calendar today. Add lunch with Dave tomorrow at noon to my calendar. Remind me to call Dave at 3. " +
+  "Directions to Grace Church. Add Dave as a ChurchFollow prospect. Read my outreach. Draft today's emails. Give me my dashboard. Or say stop.";
 
 const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}@.\s'-]/gu, " ").replace(/\s+/g, " ").trim();
 
@@ -135,6 +134,9 @@ async function brief(env: Env): Promise<VoiceReply> {
   if (gmail) lines.push(inbox.n ? `You have ${plural(inbox.n, "new email")}${inbox.high ? `, ${inbox.high} important` : ""}, and ${plural(inbox.replies, "reply", "replies")} ready for your yes.` : "Your inbox is clear.");
   else lines.push("Gmail isn't connected yet, so I can't check your inbox.");
   lines.push(outQ.length ? `${plural(outQ.length, "outreach email")} waiting.` : "No outreach waiting.");
+  if ((await allowed(env, "calendar")) && (await getSecret(env, "calendar"))) {
+    try { lines.push(await agendaSpeech(env, 0)); } catch {}
+  }
   if (todos.length) lines.push(`On your list: ${listOut(todos.slice(0, 5).map((t) => t.text))}${todos.length > 5 ? `, and ${todos.length - 5} more` : ""}.`);
   const queue = [...inboxQ, ...outQ];
   if (queue.length) lines.push("Let's go through them.");
@@ -205,7 +207,17 @@ const STATUS_WORDS: [RegExp, ProspectStatus][] = [
 ];
 
 type Intent =
-  | { intent: "help" | "dashboard" | "inbox" | "outreach" | "brief" | "draft_today" | "stop" | "list" }
+  | { intent: "help" | "dashboard" | "inbox" | "outreach" | "brief" | "draft_today" | "stop" | "list" | "setup" }
+  | { intent: "toggle"; perm: Perm; on: boolean }
+  | { intent: "call"; target: string }
+  | { intent: "text"; target: string; message: string }
+  | { intent: "text_loose"; rest: string }
+  | { intent: "email_person"; target: string; message: string }
+  | { intent: "save_number"; target: string; number: string }
+  | { intent: "directions"; place: string }
+  | { intent: "calendar_read"; day: number }
+  | { intent: "calendar_add"; what: string }
+  | { intent: "prospect"; target: string; product: Product | null }
   | { intent: "write"; target: string; product: Product | null }
   | { intent: "mark"; target: string; status: ProspectStatus }
   | { intent: "remember"; text: string }
@@ -217,6 +229,16 @@ function parseRules(raw: string): Intent {
   if (!t) return { intent: "unknown" };
   if (/^(help|what can (you|i) (do|say)|commands|options)\b/.test(t)) return { intent: "help" };
   if (/^(stop|cancel|never ?mind|that'?s all|quiet|be quiet|goodbye|bye)\b/.test(t)) return { intent: "stop" };
+  if (/^(set ?up|setup|start (the )?set ?up|(set up|ask me) (the |my )?permissions|permissions)\b/.test(t)) return { intent: "setup" };
+  const tg = t.match(/^(turn on|enable|allow|start using|turn off|disable|stop using|don'?t use)\s+(?:my\s+)?(email|e-mail|contacts|calls|phone calls|texts|text messages|texting|calendar|reminders|maps|directions)\b/);
+  if (tg) {
+    const word = tg[2].replace(/^e-mail$/, "email").replace(/^phone calls$/, "calls").replace(/^(text messages|texting)$/, "texts").replace(/^directions$/, "maps");
+    if (isPerm(word)) return { intent: "toggle", perm: word, on: /^(turn on|enable|allow|start using)/.test(tg[1]) };
+  }
+
+  // "Save Dave's number as ..." comes before "remember ..." so it isn't mistaken for a reminder.
+  const sv0 = t.match(/^(?:save|add|store|remember)\s+(.+?)(?:'s|s)?\s+(?:number|phone(?: number)?|cell(?: number)?|mobile)\s+(?:as|is|to)?\s*([+\d][\d\s().-]{6,})$/);
+  if (sv0) return { intent: "save_number", target: sv0[1], number: sv0[2] };
 
   // Remembering things (matched on the original words, so names keep their capitals)
   const r0 = raw.trim().replace(/[.!?]+$/, "");
@@ -224,6 +246,10 @@ function parseRules(raw: string): Intent {
     r0.match(/^add (.+?) to (?:my )?(?:list|to ?do(?: list)?|waiting(?: items| list)?|reminders)$/i);
   if (rem) return { intent: "remember", text: rem[1].charAt(0).toUpperCase() + rem[1].slice(1) };
   if (/\b(what'?s on my list|read my list|my (to ?do|todo)( list)?|my (waiting items|reminders)|what do i need to do|what am i waiting on)\b/.test(t)) return { intent: "list" };
+
+  // People → prospects, by voice
+  const pr = t.match(/^(?:add|make|save|put)\s+(.+?)\s+(?:as|in|into|on)\s+(?:a\s+|my\s+)?(church ?follow|client ?pulse)?\s*(?:prospects?|leads?|pipeline)\b/);
+  if (pr) return { intent: "prospect", target: pr[1], product: productHint(pr[2] ?? "") ?? productHint(t) };
 
   // Prospect status
   const m = t.match(/\b(?:mark|set|move|put)\s+(.+?)\s+(?:as|to)\s+(.+)$/);
@@ -240,6 +266,25 @@ function parseRules(raw: string): Intent {
     t.match(/^(?:cross off|check off|tick off|remove)\s+(.+?)(?: from (?:my )?list)?$/) || t.match(/^(.+?) is done$/);
   if (dn) return { intent: "done", text: dn[1] };
 
+  const sv = t.match(/^(?:save|add|store|remember)\s+(.+?)(?:'s|s)?\s+(?:number|phone(?: number)?|cell(?: number)?|mobile)\s+(?:as|is|to)?\s*([+\d][\d\s().-]{6,})$/);
+  if (sv) return { intent: "save_number", target: sv[1], number: sv[2] };
+  const cl = t.match(/^(?:call|phone|ring|dial|give)\s+(.+?)(?:\s+a call)?$/);
+  if (cl && !/^(me|back)\b/.test(cl[1])) return { intent: "call", target: cl[1] };
+  const tx = raw.trim().match(/^(?:text|message|send a text to|send a message to|send a text message to)\s+(.+?)\s*(?:,|:)?\s+(?:saying|that says|to say|and say|telling (?:him|her|them)|asking (?:him|her|them))\s+(.+)$/i);
+  if (tx) return { intent: "text", target: tx[1], message: tx[2] };
+  const tl = raw.trim().match(/^(?:text|message)\s+(.+)$/i);
+  if (tl) return { intent: "text_loose", rest: tl[1] };
+  const em = raw.trim().match(/^(?:email|e-mail|send an email to|send an e-mail to|send a note to|write to|shoot)\s+(.+?)\s*(?:,|:)?\s+(saying|that says|to say|about|telling (?:him|her|them)|asking (?:him|her|them)|an email (?:saying|about))\s+(.+)$/i);
+  if (em) return { intent: "email_person", target: em[1], message: (/^(about|asking)/i.test(em[2]) ? em[2] + " " : "") + em[3] };
+  const dr = t.match(/^(?:give me |get me |show me )?(?:directions|navigate|take me|drive|route|get me|how do i get|how to get|the way)\s+(?:to|for)\s+(.+)$/);
+  if (dr) return { intent: "directions", place: raw.trim().replace(/^.*?\b(?:to|for)\s+/i, "") };
+  if (/\b(calendar|schedule|agenda)\b/.test(t) && /\b(what|read|check|what'?s|how'?s|tell me)\b/.test(t) && !/^(add|put|schedule|book|create)/.test(t)) {
+    return { intent: "calendar_read", day: /tomorrow/.test(t) ? 1 : 0 };
+  }
+  if (/^what do i have (today|tomorrow|on)\b/.test(t)) return { intent: "calendar_read", day: /tomorrow/.test(t) ? 1 : 0 };
+  const ca = raw.trim().match(/^(?:add|put|schedule|book|create|set up|block(?: off)?)\s+(.+?)\s+(?:on|to|in|into)\s+(?:my\s+)?calendar\b(.*)$/i) || raw.trim().match(/^(?:schedule|book)\s+(.+)$/i);
+  if (ca) return { intent: "calendar_add", what: `${ca[1]} ${ca[2] ?? ""}`.trim() };
+
   if (/\b(brief me|briefing|catch me up|what'?s (waiting|on my plate|new)|good morning|anything (waiting|for me)|what did i miss|report back)\b/.test(t)) return { intent: "brief" };
   if (/\b(dashboards?|stats|statistics|numbers|report|how (are|am) (we|i) doing|how'?s it going|status update|summary)\b/.test(t)) return { intent: "dashboard" };
   if (/\b(draft|prepare|make|create|write|generate)\b.*\b(today'?s|today|daily|morning|new) (emails|drafts|batch|outreach)\b|\bdraft (today|the emails)\b/.test(t)) return { intent: "draft_today" };
@@ -255,7 +300,7 @@ function parseRules(raw: string): Intent {
 const AI_SCHEMA = {
   type: "object",
   properties: {
-    intent: { type: "string", enum: ["help", "dashboard", "inbox", "outreach", "brief", "draft_today", "stop", "list", "write", "mark", "remember", "done", "unknown"] },
+    intent: { type: "string", enum: ["help", "dashboard", "inbox", "outreach", "brief", "draft_today", "stop", "list", "write", "mark", "remember", "done", "call", "directions", "calendar_today", "calendar_tomorrow", "unknown"] },
     target: { type: "string" },
     product: { type: "string", enum: ["clientpulse", "churchfollow", "none"] },
     status: { type: "string", enum: ["new", "contacted", "replied", "not_interested", "do_not_contact", "none"] },
@@ -279,7 +324,8 @@ async function parseWithAI(env: Env, text: string): Promise<Intent> {
         "You map one spoken command for a voice chief-of-staff assistant to an intent. Intents: help; dashboard (stats); inbox (read new Gmail emails aloud); " +
         "outreach (read pending sales outreach drafts); brief (everything waiting: inbox, outreach, list); draft_today (make today's outreach drafts); stop; " +
         "list (read the owner's remembered to-do items); write (write an outreach email to one prospect: person, church or company in target); " +
-        "mark (change a prospect's status: target and status); remember (save a to-do: the item in target); done (finish a to-do: the item in target); unknown. " +
+        "mark (change a prospect's status: target and status); remember (save a to-do or timed reminder: the whole item with its time in target); done (finish a to-do: the item in target); " +
+        "call (phone a person: name in target); directions (maps: place in target); calendar_today; calendar_tomorrow; unknown. " +
         "Products are ClientPulse and ChurchFollow. The command is speech-to-text and may have mistakes. Latency-sensitive; answer immediately.",
       messages: [{ role: "user", content: `<command>${text.slice(0, 500)}</command>` }],
     });
@@ -290,6 +336,9 @@ async function parseWithAI(env: Env, text: string): Promise<Intent> {
     if (o.intent === "mark" && o.target && o.status !== "none") return { intent: "mark", target: o.target, status: o.status as ProspectStatus };
     if (o.intent === "remember" && o.target) return { intent: "remember", text: o.target };
     if (o.intent === "done" && o.target) return { intent: "done", text: o.target };
+    if (o.intent === "call" && o.target) return { intent: "call", target: o.target };
+    if (o.intent === "directions" && o.target) return { intent: "directions", place: o.target };
+    if (o.intent === "calendar_today" || o.intent === "calendar_tomorrow") return { intent: "calendar_read", day: o.intent === "calendar_today" ? 0 : 1 };
     if (["help", "dashboard", "inbox", "outreach", "brief", "draft_today", "stop", "list"].includes(o.intent)) return { intent: o.intent as "help" };
   } catch (e) {
     console.error("voice AI parse failed:", (e as Error).message);
@@ -297,11 +346,46 @@ async function parseWithAI(env: Env, text: string): Promise<Intent> {
   return { intent: "unknown" };
 }
 
-export async function runCommand(env: Env, text: string): Promise<VoiceReply> {
+/** "text Dave I'm running late": works out where the name ends and the message starts. */
+async function splitNameMessage(env: Env, rest: string): Promise<{ target: string; message: string } | null> {
+  const words = rest.trim().split(/\s+/);
+  for (let n = Math.min(3, words.length - 1); n >= 1; n--) {
+    const name = words.slice(0, n).join(" ");
+    const p = await findPerson(env, name);
+    if (p && words.slice(0, n).every((w) => p.name.toLowerCase().includes(w.toLowerCase().replace(/'s$/, "")))) return { target: name, message: words.slice(n).join(" ") };
+  }
+  return null;
+}
+
+export async function runCommand(env: Env, text: string, ua = ""): Promise<VoiceReply> {
   let it = parseRules(text);
   if (it.intent === "unknown") it = await parseWithAI(env, text);
 
   switch (it.intent) {
+    case "setup":
+      return setupQueue();
+    case "toggle":
+      return togglePerm(env, it.perm, it.on);
+    case "call":
+      return call(env, it.target, ua);
+    case "text":
+      return textPerson(env, it.target, it.message, ua);
+    case "text_loose": {
+      const sp = await splitNameMessage(env, it.rest);
+      return sp ? textPerson(env, sp.target, sp.message, ua) : { say: "Who should I text? Say: text, a name, saying, and your message." };
+    }
+    case "email_person":
+      return emailPerson(env, it.target, it.message);
+    case "save_number":
+      return saveNumber(env, it.target, it.number);
+    case "directions":
+      return directions(env, it.place, ua);
+    case "calendar_read":
+      return readCalendar(env, it.day);
+    case "calendar_add":
+      return addToCalendar(env, it.what);
+    case "prospect":
+      return makeProspect(env, it.target, it.product);
     case "help":
       return { say: HELP };
     case "stop":
@@ -326,10 +410,8 @@ export async function runCommand(env: Env, text: string): Promise<VoiceReply> {
       return writeFor(env, it.target, it.product);
     case "mark":
       return mark(env, it.target, it.status);
-    case "remember": {
-      const t = await addTodo(env, it.text);
-      return { say: t ? `Got it. I'll remember: ${t.text}.` : "I didn't catch what to remember." };
-    }
+    case "remember":
+      return remind(env, it.text);
     case "list": {
       const todos = await openTodos(env);
       return { say: todos.length ? `You have ${plural(todos.length, "item")}: ${listOut(todos.map((t) => t.text))}.` : "Your list is clear." };

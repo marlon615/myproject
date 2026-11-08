@@ -90,6 +90,27 @@ export class Imap {
     return out;
   }
 
+  /** Finds the Sent folder (its name depends on the account's language). */
+  async sentMailbox(): Promise<string | null> {
+    const res = await this.cmd('LIST "" "*"');
+    for (const r of res) {
+      const m = r.text.match(/^\* LIST \(([^)]*)\) "[^"]*" (?:"((?:[^"\\]|\\.)*)"|(\S+))$/i);
+      if (m && /\\Sent\b/i.test(m[1])) return (m[2] ?? m[3]).replace(/\\(.)/g, "$1");
+    }
+    return null;
+  }
+
+  async examine(mailbox: string) {
+    await this.cmd(`EXAMINE ${q(mailbox)}`);
+  }
+
+  /** Fetches just the To and Cc headers of each message. */
+  async fetchRecipients(uids: number[]): Promise<Uint8Array[]> {
+    if (!uids.length) return [];
+    const res = await this.cmd(`UID FETCH ${uids.join(",")} (UID BODY.PEEK[HEADER.FIELDS (TO CC)])`);
+    return res.filter((r) => /^\* \d+ FETCH/i.test(r.text) && r.literals[0]).map((r) => r.literals[0]);
+  }
+
   async logout() {
     try { await this.cmd("LOGOUT"); } catch {}
     await this.c.close();

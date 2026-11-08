@@ -55,4 +55,12 @@ export function migrate(storage: DurableObjectStorage, schema: string) {
     .map((s) => s.trim())
     .filter(Boolean);
   for (const s of statements) storage.sql.exec(s);
+  // Columns added after the first release. "duplicate column" just means it's already there.
+  for (const alter of [
+    "alter table todos add column due_at text",
+    "alter table todos add column notified_at text",
+    "alter table todos add column spoken_at text",
+  ]) {
+    try { storage.sql.exec(alter); } catch {}
+  }
 }

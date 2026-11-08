@@ -184,7 +184,7 @@ ${d.byProduct.map((r) => `<tr><td><span class="badge b-${r.product}">${PRODUCT_N
 <div class="card"><h2>Recent drafting runs</h2>${d.runs.length ? `<table>${d.runs.map((r) => `<tr><td class="small">${fmt(r.at)}</td><td class="small">${r.trigger === "cron" ? "Morning" : "Manual"}</td><td class="small">${esc(r.note ?? "")}</td></tr>`).join("")}</table>` : `<p class="muted">None yet. The first one runs tomorrow morning.</p>`}</div>`, { tab: "dashboard" });
 }
 
-export function settingsPage(s: Settings, keys: { anthropic: boolean; resend: boolean; gmail: boolean }, flash?: string) {
+export function settingsPage(s: Settings, keys: { anthropic: boolean; resend: boolean; gmail: boolean; calendar: boolean }, flash?: string) {
   const f = (name: keyof Settings, label: string, ph = "", type = "text") =>
     `<label>${label}</label><input name="${name}" type="${type}" value="${esc(s[name])}" placeholder="${esc(ph)}" maxlength="300">`;
   return page("Settings", `<h1>Settings</h1>
@@ -216,6 +216,12 @@ ${f("link_churchfollow", "ChurchFollow link (optional)", "https://")}
 <p class="muted small">New drafts are made every morning around 7–8 a.m. Central.</p>
 </div>
 <button class="btn btn-primary block">Save settings</button>
+</form>
+<form method="post" action="/settings/calendar" class="card"><h2>Google Calendar ${keys.calendar ? "✅ connected" : ""}</h2>
+<p class="small">Lets Chief read your schedule aloud. (Adding events works without this.)</p>
+<label>Secret address in iCal format</label><input name="calendarUrl" type="password" autocomplete="off" placeholder="${keys.calendar ? "Saved. Paste a new one to replace it." : "https://calendar.google.com/calendar/ical/…/basic.ics"}">
+<p class="muted small">On a computer or in your phone's browser: <a href="https://calendar.google.com/calendar/r/settings" target="_blank" rel="noopener">Google Calendar settings</a> → your calendar under “Settings for my calendars” → “Integrate calendar” → copy “Secret address in iCal format”.</p>
+<div class="row"><button class="btn btn-primary" style="flex:1">${keys.calendar ? "Save and test" : "Connect calendar"}</button>${keys.calendar ? `<button class="btn" name="remove" value="calendar">Disconnect</button>` : ""}</div>
 </form>
 <form method="post" action="/settings/keys" class="card"><h2>Connections</h2>
 <p class="small"><b>AI writing:</b> ${keys.anthropic ? "✅ connected" : "not connected. Drafts use built-in templates."}</p>
@@ -261,7 +267,7 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
   <div id="warn" class="vwarn" hidden></div>
   <div class="vheard"><b>You said</b><span id="heard">—</span></div>
   <div class="vsaid"><b>Chief</b><span id="said">Say “Hey Chief” and then what you need.</span></div>
-  <p class="vhints">Try: “Hey Chief, brief me.” “Hey Chief, check my inbox.” “Hey Chief, write an email to Grace Church.” “Hey Chief, remember to call Pastor Dave.” “Hey Chief, give me my dashboard.” When I ask “Should I send it?”, just say “yes” or “no”.</p>
+  <p class="vhints">Try: “Hey Chief, brief me.” “…check my inbox.” “…email Dave saying I'll call tomorrow.” “…call Dave.” “…text Dave saying running late.” “…what's on my calendar today?” “…remind me to call Dave at 3.” “…directions to Grace Church.” When I ask “Should I send it?”, just say “yes” or “no”.</p>
   ${sendNote}
   <form id="typed" class="vtype"><input id="typedText" placeholder="Or type a command" autocomplete="off" enterkeyhint="send"><button class="btn">Go</button></form>
 </div>
@@ -301,6 +307,7 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
   function pauseListening(){ if(S.rec){ try{ S.rec.abort(); }catch(e){} } }
 
   function speak(text, then){
+    if(!text){ if(then) then(); return; }
     $("said").textContent = text;
     if(!("speechSynthesis" in window)){ if(then) then(); return; }
     S.speaking = true; pauseListening(); setMode("speaking");
@@ -352,16 +359,22 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
     var fd = new FormData(); fd.set("text", text);
     try{
       var r = await post("/api/command", fd);
-      speak(r.say, function(){
+      speak(r.say || "", function(){
         if(r.queue && r.queue.length){ S.queue = r.queue; next(); } else { setMode("wake"); }
       });
     }catch(e){ speak("I couldn't reach the server. Check your connection.", function(){ setMode("wake"); }); }
   }
 
+  function openIt(url){
+    if(window.__chiefOpen) return window.__chiefOpen(url); // used by automated tests
+    // Phone links (tel:, sms:) open the phone's own screen; web links open beside the app so Chief stays open.
+    if(/^(tel|sms|mailto):/i.test(url)){ location.href = url; } else { var w = window.open(url, "_blank"); if(!w) location.href = url; }
+  }
   function next(){
     if(!S.queue.length){ S.cur=null; return speak("That's everything for now.", function(){ setMode("wake"); }); }
     S.cur = S.queue.shift();
-    if(!S.cur.decideUrl){
+    if(S.cur.openUrl && !S.cur.confirm){ var u = S.cur.openUrl; return speak(S.cur.say, function(){ openIt(u); next(); }); }
+    if(!S.cur.decideUrl && !S.cur.openUrl){
       // Just information: read it, mark it heard, move on.
       var ack = S.cur.ackUrl;
       return speak(S.cur.say, function(){ if(ack){ var fd=new FormData(); post(ack, fd).catch(function(){}); } next(); });
@@ -378,11 +391,17 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
   }
 
   async function decide(d){
+    if(S.cur.openUrl){
+      if(d==="no") return speak("Okay, I won't.", next);
+      var u = S.cur.openUrl;
+      return speak(/^tel:/.test(u) ? "Calling. Tap the call button." : /^sms:/.test(u) ? "Opening Messages. Tap send." : "Opening it. Tap save.", function(){ openIt(u); setTimeout(next, 1200); });
+    }
     setMode("working");
     var fd = new FormData(); fd.set("decision", d);
     try{
       var j = await post(S.cur.decideUrl, fd);
       if(!j.ok) return speak(j.error || "That didn't work.", next);
+      if(j.say) return speak(j.say, next);
       if(d==="no") return speak("Skipped.", next);
       if(j.href){ var href=j.href; return speak("Opening Mail. Tap send there.", function(){ location.href = href; setTimeout(next, 1500); }); }
       speak("Sent.", next);
@@ -394,7 +413,15 @@ export function voicePage(sending: "gmail" | "resend" | "mailto") {
     if(S.on) return;
     if(!SR){ warn("This browser can't listen. Use Safari on iPhone or Chrome on Android, or type a command below."); }
     S.on = true; warn(""); lockScreen();
-    speak("Chief is listening. Say hey chief, and tell me what you need.", function(){ setMode("wake"); });
+    fetch("/api/state",{credentials:"same-origin"}).then(function(r){return r.json()}).then(function(st){
+      if(!st.setupDone) return command("set up");
+      speak("Chief is listening. Say hey chief, and tell me what you need.", function(){ setMode("wake"); });
+    }).catch(function(){ speak("Chief is listening.", function(){ setMode("wake"); }); });
+    // Speak reminders when they come due, while the app is open.
+    setInterval(function(){
+      if(!S.on || S.mode!=="wake" || S.speaking) return;
+      fetch("/api/due",{credentials:"same-origin"}).then(function(r){return r.json()}).then(function(j){ if(j.say && S.mode==="wake") speak(j.say, function(){ setMode("wake"); }); }).catch(function(){});
+    }, 60000);
   });
   $("typed").addEventListener("submit", function(e){
     e.preventDefault(); var t=$("typedText").value.trim(); if(!t) return; $("typedText").value="";

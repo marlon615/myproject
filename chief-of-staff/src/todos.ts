@@ -1,15 +1,33 @@
 import type { Env } from "./types";
 
-export interface Todo { id: number; text: string; status: "open" | "done"; created_at: string; done_at: string | null }
+export interface Todo { id: number; text: string; status: "open" | "done"; created_at: string; done_at: string | null; due_at: string | null; notified_at: string | null; spoken_at: string | null }
 
 export async function openTodos(env: Env): Promise<Todo[]> {
   return (await env.DB.prepare("select * from todos where status = 'open' order by id limit 100").all<Todo>()).results;
 }
 
-export async function addTodo(env: Env, text: string): Promise<Todo | null> {
+export async function addTodo(env: Env, text: string, dueAt?: Date | null): Promise<Todo | null> {
   const t = text.trim().replace(/[.!?]+$/, "").slice(0, 300);
   if (t.length < 2) return null;
-  return env.DB.prepare("insert into todos (text) values (?) returning *").bind(t).first<Todo>();
+  return env.DB.prepare("insert into todos (text, due_at) values (?, ?) returning *").bind(t, dueAt ? dueAt.toISOString() : null).first<Todo>();
+}
+
+/** Reminders that are due and haven't been spoken in the app yet (marks them spoken). */
+export async function takeDueToSpeak(env: Env): Promise<Todo[]> {
+  const now = new Date().toISOString();
+  const { results } = await env.DB.prepare("select * from todos where status = 'open' and due_at is not null and due_at <= ? and spoken_at is null order by due_at limit 5").bind(now).all<Todo>();
+  for (const t of results) await env.DB.prepare("update todos set spoken_at = ? where id = ?").bind(now, t.id).run();
+  return results;
+}
+
+/** Reminders that are due and haven't been emailed yet. */
+export async function dueToNotify(env: Env): Promise<Todo[]> {
+  const now = new Date().toISOString();
+  return (await env.DB.prepare("select * from todos where status = 'open' and due_at is not null and due_at <= ? and notified_at is null order by due_at limit 10").bind(now).all<Todo>()).results;
+}
+
+export async function markNotified(env: Env, id: number) {
+  await env.DB.prepare("update todos set notified_at = ? where id = ?").bind(new Date().toISOString(), id).run();
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
