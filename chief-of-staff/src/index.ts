@@ -6,7 +6,7 @@
 import { DurableObject } from "cloudflare:workers";
 import SCHEMA from "../schema.sql";
 import { checkPassword, checkPin, clearCookie, clearLogins, hasPin, isSignedIn, loginAllowed, recordFailedLogin, sessionCookie, setPin } from "./auth";
-import { resumeTalk, startTalk, talkTurn } from "./conversation";
+import { converse, isPaused } from "./agent";
 import { b64url } from "./crypto";
 import { migrate, sqliteDB } from "./db";
 import { gmailCreds, syncInbox, testGmail } from "./inbox";
@@ -101,16 +101,16 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/" && method === "GET") {
     const waiting = (await env.DB.prepare(IMPORTANT_COUNT).first<{ n: number }>())?.n ?? 0;
     await env.DB.prepare("insert into settings (key, value) values ('app:origin', ?) on conflict(key) do update set value = excluded.value").bind(url.origin).run();
-    return html(homePage({ waiting, canNotify: (await pushCount(env)) === 0, voiceJs: VOICE_PICK_JS }));
+    return html(homePage({ waiting, canNotify: (await pushCount(env)) === 0, voiceJs: VOICE_PICK_JS, killPhrase: (await getSettings(env)).killPhrase }));
   }
 
   // The conversation: the phone sends what you said; Chief answers with what to say next.
   if (path.startsWith("/api/talk") && method === "POST") {
     const b = (await req.json().catch(() => ({}))) as { id?: string; text?: string };
     const id = str(b.id, 64);
-    if (path === "/api/talk/start") return json(await startTalk(env, id));
-    if (path === "/api/talk/resume") return json(await resumeTalk(env, id));
-    if (path === "/api/talk") return json(await talkTurn(env, id, str(b.text, 600)));
+    if (path === "/api/talk/start") return json(await converse(env, id, "", "start"));
+    if (path === "/api/talk/resume") return json(await converse(env, id, "", "resume"));
+    if (path === "/api/talk") return json(await converse(env, id, str(b.text, 2000)));
   }
 
   if (path === "/api/push-key" && method === "GET") return json({ key: b64url((await vapidKeys(env)).publicRaw) });
@@ -203,6 +203,8 @@ export class ChiefOfStaff extends DurableObject<WorkerEnv> {
   /** Every 5 minutes, phone closed or not: check Gmail, and nudge you when something important arrives. */
   async tick(): Promise<string> {
     let note = "Gmail not connected";
+    if (await isPaused(this.app)) note = "stopped by your kill phrase";
+    else
     if (await gmailCreds(this.app)) {
       const r = await syncInbox(this.app);
       const fresh = r.newReplies.length + r.important.length;

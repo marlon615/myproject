@@ -158,3 +158,18 @@ create table if not exists blocked (
   email text primary key,
   created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 )
+;
+
+-- Conversations with Chief: the full message history sent to Claude each turn (append-only).
+create table if not exists convos (
+  id text primary key,
+  messages text not null default '[]',
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- Places Chief can open for you ("open my dashboard").
+create table if not exists dashboards (
+  name text primary key,
+  url text not null
+)

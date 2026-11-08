@@ -55,7 +55,7 @@ const HOME_CSS = `
 @media (prefers-reduced-motion:reduce){.orb{animation:none!important}}
 `;
 
-export function homePage(o: { waiting: number; canNotify: boolean; voiceJs: string }) {
+export function homePage(o: { waiting: number; canNotify: boolean; voiceJs: string; killPhrase: string }) {
   const pill = o.waiting ? `<div class="pill wait" id="pill"><i></i><span>${o.waiting} important email${o.waiting === 1 ? "" : "s"} waiting</span></div>`
     : `<div class="pill" id="pill"><i></i><span>All caught up</span></div>`;
   return shell("Chief", `<style>${HOME_CSS}</style>
@@ -64,12 +64,12 @@ export function homePage(o: { waiting: number; canNotify: boolean; voiceJs: stri
   <section class="stage">
     <button class="orb idle" id="orb" aria-label="Talk to Chief"></button>
     <div class="state" id="state">Tap to talk</div>
-    <div class="said" id="said">Chief reads your important emails and does what you say.</div>
+    <div class="said" id="said">Talk to Chief like you'd talk to a person. It can read and answer your email and open your dashboards.</div>
     <div class="you" id="you"></div>
     <div class="draft" id="draft" hidden><div class="meta" id="dmeta"></div><div class="body" id="dbody"></div></div>
-    <form class="type" id="type" hidden><input id="typed" placeholder="Type to Chief" autocomplete="off" enterkeyhint="send"><button class="btn">Send</button></form>
+    <form class="type" id="type"><input id="typed" placeholder="Or type to Chief" autocomplete="off" enterkeyhint="send"><button class="btn">Send</button></form>
   </section>
-  <div class="foot" id="foot">Keep Chief open on screen while you talk. If you switch apps, Chief pauses and picks up where you left off when you come back.${o.canNotify ? ` <a href="#" id="notify">Notify me about important email</a>` : ""}</div>
+  <div class="foot" id="foot">Keep Chief open on screen while you talk; if you switch apps it pauses and picks up when you're back. To stop everything, say “${esc(o.killPhrase)}”.${o.canNotify ? ` <a href="#" id="notify">Notify me about important email</a>` : ""}</div>
 </main>
 <script>
 ${o.voiceJs}
@@ -125,7 +125,7 @@ ${o.voiceJs}
   function stopListening(){ if (S.rec) { try { S.rec.abort(); } catch(e){} S.rec = null; } }
   function listen(){
     if (!S.on || S.paused) return;
-    if (!SR) { setMode("listening", "Type to Chief"); $("type").hidden = false; return; }
+    if (!SR) { setMode("listening", "Type to Chief"); return; }
     stopListening(); setMode("listening");
     var r = new SR(), final = ""; S.rec = r;
     r.lang = navigator.language || "en-US"; r.continuous = false; r.interimResults = true;
@@ -159,6 +159,8 @@ ${o.voiceJs}
     var d = res.draft;
     if (d) { $("dmeta").textContent = "To " + d.to + "  ·  " + d.subject; $("dbody").textContent = d.body; $("draft").hidden = false; }
     else $("draft").hidden = true;
+    if (res.open) { var w = window.open(res.open, "_blank"); if (!w) location.href = res.open; }
+    if (res.paused) $("state").textContent = "Stopped";
     if (typeof res.waiting === "number") { var p = $("pill"); p.className = "pill" + (res.waiting ? " wait" : ""); p.lastChild.textContent = res.waiting ? res.waiting + " important email" + (res.waiting === 1 ? "" : "s") + " waiting" : "All caught up"; }
   }
   function handle(res){
