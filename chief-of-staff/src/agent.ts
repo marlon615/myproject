@@ -14,7 +14,7 @@ const MODEL = "claude-opus-5-5";
 
 type Msg = Anthropic.Beta.BetaMessageParam;
 interface Draft { kind: "reply" | "new"; id: number; to: string; subject: string; body: string; shown: boolean }
-interface Convo { messages: Msg[]; draft: Draft | null }
+interface Convo { messages: Msg[]; draft: Draft | null; basic?: { queue: number[]; idx: number } }
 export interface Turn { say: string; draft: { to: string; subject: string; body: string } | null; open: string | null; end: boolean; paused?: boolean }
 
 const ID = /^[A-Za-z0-9_-]{16,64}$/;
@@ -240,7 +240,7 @@ export async function converse(env: Env, id: string, text: string, kind: "messag
   }
 
   const key = await getSecret(env, "anthropic");
-  if (!key) return none("I need your Anthropic key before I can think. Open the owner page and paste it in.", { end: true });
+  if (!key) return basicTurn(env, id, text, kind); // no AI key yet: Chief's built-in basic mode
 
   const c = await load(env, id);
   const userText = kind === "start" ? "[I just opened Chief and tapped to talk. Greet me in a sentence and tell me what's waiting, briefly.]"
@@ -294,4 +294,142 @@ export async function converse(env: Env, id: string, text: string, kind: "messag
   if (c.draft) c.draft.shown = true;
   await save(env, id, c);
   return { say: say || "Okay.", draft: c.draft ? { to: c.draft.to, subject: c.draft.subject, body: c.draft.body } : null, open: out.open, end: out.end };
+}
+
+
+// ── Basic mode: works without an Anthropic key ──
+// Reads your important email one at a time and does the common things you ask, using your own words for replies.
+// The same tools and the same "only after a clear yes" lock as the full Claude brain.
+
+function firstName(n: string) {
+  const w = n.replace(/"/g, "").trim().split(/\s+/).filter(Boolean);
+  if (!w.length) return "";
+  if (/^(pastor|father|bishop|elder)$/i.test(w[0]) && w[1]) return `${w[0]} ${w[1]}`;
+  return /^(dr|mr|mrs|ms|rev)\.?$/i.test(w[0]) && w[1] ? w[1] : w[0];
+}
+const ORG = /\b(team|inc|llc|ltd|co|corp|company|billing|support|weekly|daily|news|deals|store|shop|bank|service|services|notifications?|alerts?|google|apple|amazon|cloudflare|paypal|stripe)\b/i;
+const sentence = (s: string) => { const t = s.trim(); return t ? t.charAt(0).toUpperCase() + t.slice(1).replace(/([^.!?])$/, "$1.") : t; };
+const spoken = (body: string) => body.split(/\n+/).map((l) => l.trim()).filter(Boolean).map((l) => (/[.!?,:;]$/.test(l) ? l : l + ".")).join(" ");
+
+function readAloud(m: InboxRow, n: number, of: number) {
+  const who = m.from_name || m.from_email;
+  const lines = cleanBody(m).split("\n");
+  if (lines.length > 1 && /^(hi|hello|hey|dear|good (morning|afternoon|evening))\b[^.!?]{0,40}[,!]?$/i.test(lines[0])) lines.shift();
+  let body = lines.join(" ").replace(/\s+/g, " ").trim();
+  if (body.length > 900) body = body.slice(0, 900).replace(/[^.!?]*$/, "") + " That's the main part.";
+  const person = m.needs_reply && m.from_name && !ORG.test(m.from_name);
+  const lead = of > 1 ? (n === 1 ? "First" : n === of ? "Last one" : `Email ${n} of ${of}`) : "Here it is";
+  return `${lead}, from ${who}.${m.subject ? ` Subject: ${m.subject}.` : ""} ${person ? `${firstName(m.from_name)} says` : "It says"}: ${body || "There's no text in it."}`;
+}
+
+async function basicTurn(env: Env, id: string, text: string, kind: "message" | "start" | "resume"): Promise<Turn> {
+  const c = await load(env, id);
+  const out = { open: null as string | null, end: false };
+  const s = await getSettings(env);
+  const me = (s.senderName || "").split(/\s+/)[0];
+  const HELP = "You can say: reply saying, and what to say. Skip. Don't reply. Unsubscribe. Block that sender. Read it again. Check again. Or goodbye.";
+  const finish = async (say: string): Promise<Turn> => {
+    if (c.draft) c.draft.shown = true;
+    await save(env, id, c);
+    return { say, draft: c.draft ? { to: c.draft.to, subject: c.draft.subject, body: c.draft.body } : null, open: out.open, end: out.end };
+  };
+  const tool = (name: string, input: Record<string, unknown> = {}) => runTool(env, c, name, input, text, out) as Promise<Record<string, unknown>>;
+
+  const loadQueue = async () => {
+    const { results } = await env.DB.prepare(IMPORTANT).all<InboxRow>();
+    c.basic = { queue: results.map((m) => m.id), idx: 0 };
+  };
+  const current = async () => {
+    const b = c.basic;
+    if (!b || b.idx >= b.queue.length) return null;
+    return env.DB.prepare("select * from inbox where id = ?").bind(b.queue[b.idx]).first<InboxRow>();
+  };
+  /** Move on to the next email that still needs you, and read it. */
+  const next = async (prefix: string) => {
+    c.draft = null;
+    const b = c.basic!;
+    b.idx++;
+    while (b.idx < b.queue.length) {
+      const m = await current();
+      if (m && m.status === "new") return `${prefix} ${readAloud(m, b.idx + 1, b.queue.length)} What would you like to do?`.trim();
+      b.idx++;
+    }
+    return `${prefix} That's everything important. Anything else? You can say check again, or goodbye.`.trim();
+  };
+  const readCurrent = async (prefix: string) => {
+    const m = await current();
+    if (!m) return `${prefix} You're all caught up. No important emails right now.`.trim();
+    return `${prefix} ${readAloud(m, c.basic!.idx + 1, c.basic!.queue.length)} What would you like to do?`.trim();
+  };
+
+  if (kind === "start" || !c.basic) {
+    await loadQueue();
+    const n = c.basic!.queue.length;
+    const hi = `Hi${me ? ` ${me}` : ""}.`;
+    if (!n) return finish(`${hi} You're all caught up. No important emails right now.`);
+    return finish(await readCurrent(`${hi} You have ${n === 1 ? "one important email" : `${n} important emails`}. ${kind === "start" ? "Tell me what to do with each one." : ""}`));
+  }
+  if (kind === "resume") {
+    if (c.draft) return finish(`Welcome back. Here's the reply we were on. ${spoken(c.draft.body)} Should I send this?`);
+    return finish(await readCurrent("Welcome back."));
+  }
+
+  const t = words(text);
+  const m = await current();
+
+  // A draft is waiting for your answer.
+  if (c.draft) {
+    const change = text.match(/^\s*(?:no|nope)?[,.!\s]*(?:(?:change it to|make it say|instead say|say instead|say|tell (?:him|her|them))\s+)(.+)$/i);
+    if (change && m) {
+      const r = await tool("draft_reply", { email_id: m.id, body: `Hi ${firstName(m.from_name) || "there"},\n\n${sentence(change[1].replace(/^that\s+/i, ""))}\n\n${me}`.trim() });
+      return finish(r.error ? String(r.error) : `Okay, here's the new version. ${spoken(String(r.body))} Should I send this?`);
+    }
+    if (clearYes(text)) {
+      const r = await tool("send_draft");
+      if (!r.sent) return finish(`I didn't send it. ${String(r.error ?? "")}`);
+      return finish(await next("Sent."));
+    }
+    if (/^(no|nope|don t|dont|cancel|never mind|not now)\b/.test(t)) {
+      return finish("Okay, I won't send it. Tell me what it should say instead, like: say I'll call you Tuesday. Or say skip.");
+    }
+    if (/\b(repeat|again|read it)\b/.test(t)) return finish(`Here it is again. ${spoken(c.draft.body)} Should I send this?`);
+  }
+
+  if (/\b(goodbye|bye|that s all|that is all|i m done|im done|end)\b/.test(t)) { out.end = true; return finish("Okay. Talk soon."); }
+  if (/\b(check (again|my email|for new|email)|any new|new email)\b/.test(t)) {
+    await tool("check_for_new_email");
+    await loadQueue();
+    const n = c.basic!.queue.length;
+    return finish(n ? await readCurrent(`You have ${n === 1 ? "one important email" : `${n} important emails`}.`) : "Nothing new that's important.");
+  }
+  if (/\b(how are we doing|stats|numbers|status|summary)\b/.test(t)) {
+    const r = await tool("get_stats");
+    return finish(`You have ${r.important_waiting} important email${r.important_waiting === 1 ? "" : "s"} waiting, ${r.replies_sent_last_7_days} replies sent this week, and ${r.blocked_senders} blocked sender${r.blocked_senders === 1 ? "" : "s"}.`);
+  }
+  const open = text.match(/\bopen (?:my |the )?(.+)$/i);
+  if (open) {
+    const r = await tool("open_dashboard", { name: open[1] });
+    return finish(r.opened ? "Opening it." : `I don't know that one. I can open ${(r.known as string[] | undefined)?.join(", ") ?? "Chief, Gmail, or Cloudflare"}.`);
+  }
+  const newMail = text.match(/^\s*(?:email|write to|send an email to)\s+(.+?)\s+(?:saying|that says|to say|and say)\s+(.+)$/i);
+  if (newMail) {
+    const msg = sentence(newMail[2]);
+    const r = await tool("write_email", { to: newMail[1], subject: msg.split(/\s+/).slice(0, 6).join(" ").replace(/[.,!?]+$/, ""), body: `Hi ${firstName(newMail[1]) || "there"},\n\n${msg}\n\n${me}`.trim() });
+    return finish(r.error ? String(r.error) : `Here's the email to ${r.to}. ${spoken(String(r.body))} Should I send this?`);
+  }
+
+  if (!m) return finish(`You're all caught up. ${HELP}`);
+  if (/\b(repeat|again|read it|what did (he|she|they) say)\b/.test(t)) return finish(await readCurrent(""));
+  if (/\bunsubscribe\b/.test(t)) { const r = await tool("unsubscribe", { email_id: m.id }); return finish(await next(String(r.result ?? "Done."))); }
+  if (/\bblock\b/.test(t)) { await tool("block_sender", { email_id: m.id }); return finish(await next(`Blocked. Emails from ${m.from_name || m.from_email} will go to Spam.`)); }
+  if (/\b(don t reply|do not reply|dont reply|no reply|ignore|no need)\b/.test(t)) { await tool("dont_reply", { email_id: m.id }); return finish(await next("Okay, no reply.")); }
+  if (/\b(skip|next|later|move on)\b/.test(t)) return finish(await next("Okay, I'll keep that one for later."));
+  const reply = text.match(/\breply\b[,:]?\s*(?:(?:and\s+)?(?:saying|say|that says|tell (?:him|her|them)|with)\s+|:\s*)?(.*)$/i);
+  if (reply) {
+    const what = reply[1].trim().replace(/^that\s+/i, "");
+    if (!what) return finish("What should the reply say? For example: reply saying yes, thirty five dollars is the price going forward.");
+    const r = await tool("draft_reply", { email_id: m.id, body: `Hi ${firstName(m.from_name) || "there"},\n\n${sentence(what)}\n\n${me}`.trim() });
+    return finish(r.error ? String(r.error) : `Here's the reply. ${spoken(String(r.body))} Should I send this?`);
+  }
+  return finish(`Without your Anthropic key I understand simple requests. ${HELP}`);
 }
