@@ -61,10 +61,27 @@ ${error ? `<p style="color:var(--no);font-weight:600">${esc(error)}</p>` : ""}<b
 
 type PendingRow = Draft & { name: string; email: string; organization: string };
 
-export function approvePage(rows: PendingRow[], s: Settings, mode: "resend" | "mailto", flash?: string) {
-  const how = mode === "resend"
+type ReplyCard = { id: number; to_email: string; to_name: string; subject: string; body: string; summary: string; orig_subject: string; from_name: string; from_email: string };
+type TodoItem = { id: number; text: string };
+
+export function approvePage(rows: PendingRow[], s: Settings, mode: "gmail" | "resend" | "mailto", flash?: string, replies: ReplyCard[] = [], todos: TodoItem[] = []) {
+  const how = mode === "gmail"
+    ? "Tapping <b>Yes</b> sends it from your Gmail right away."
+    : mode === "resend"
     ? "Tapping <b>Yes</b> sends the email right away."
-    : "Tapping <b>Yes</b> opens it in your Mail app, ready to send. (Add an email service in Settings to send straight from here.)";
+    : "Tapping <b>Yes</b> opens it in your Mail app, ready to send. (Connect Gmail in Settings to send straight from here.)";
+  const replyCards = replies.map((r) => `
+<form class="card draft" method="post" action="/replies/${r.id}/decide">
+  <div class="meta"><span class="badge" style="background:var(--yes)">Inbox reply</span></div>
+  <div><b>${esc(r.from_name || r.from_email)}</b><div class="muted small">${esc(r.from_email)} · ${esc(r.orig_subject)}</div></div>
+  <p class="small" style="margin:8px 0 0">${esc(r.summary)}</p>
+  <label>Subject</label><input name="subject" value="${esc(r.subject)}" maxlength="300" required>
+  <label>Reply</label><textarea name="body" rows="6" maxlength="5000" required>${esc(r.body)}</textarea>
+  <div class="row"><button class="btn btn-no" name="decision" value="no">No</button><button class="btn btn-yes" name="decision" value="yes">Yes, send</button></div>
+</form>`).join("");
+  const list = `<div class="card"><h2>Your list</h2>
+${todos.length ? todos.map((t) => `<form method="post" action="/todos" style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><input type="hidden" name="done" value="${t.id}"><button class="btn" style="min-height:36px;padding:4px 10px" aria-label="Done: ${esc(t.text)}">✓</button><span>${esc(t.text)}</span></form>`).join("") : `<p class="muted small">Nothing yet. Say “Hey Chief, remember to…”.</p>`}
+<form method="post" action="/todos" style="display:flex;gap:8px;margin-top:8px"><input name="text" placeholder="Add something to remember" maxlength="300"><button class="btn">Add</button></form></div>`;
   const cards = rows.map((d) => `
 <form class="card draft" method="post" action="/drafts/${d.id}/decide" data-id="${d.id}">
   <div class="meta"><span class="badge b-${d.product}">${PRODUCT_NAME[d.product]}</span><span class="pill">${d.touch === 1 ? "First email" : `Follow-up ${d.touch - 1}`}</span><span class="pill">${d.source === "ai" ? "AI draft" : "Template"}</span></div>
@@ -74,10 +91,15 @@ export function approvePage(rows: PendingRow[], s: Settings, mode: "resend" | "m
   <div class="foot">${esc(footer(s))}</div>
   <div class="row"><button class="btn btn-no" name="decision" value="no">No</button><button class="btn btn-yes" name="decision" value="yes">Yes, send</button></div>
 </form>`).join("");
-  return page("Review", `<h1>Review emails</h1>
+  return page("Review", `<h1>Review</h1>
 <p class="muted small">${how} Nothing is ever sent without your yes.</p>
+<h2>Inbox replies</h2>
+${replyCards || `<div class="card empty muted small">No reply drafts waiting.</div>`}
+<form method="post" action="/inbox/sync" style="margin-bottom:18px"><button class="btn block">Check Gmail now</button></form>
+<h2>Outreach</h2>
 ${rows.length ? cards : `<div class="card empty"><p><b>All caught up.</b></p><p class="muted">New drafts arrive every morning. Add prospects, or draft now.</p></div>`}
-<form method="post" action="/draft-now"><button class="btn block">Draft today's emails now</button></form>
+<form method="post" action="/draft-now" style="margin-bottom:18px"><button class="btn block">Draft today's emails now</button></form>
+${list}
 <script>
 document.querySelectorAll("form.draft").forEach(function(f){
   f.addEventListener("submit",function(e){
@@ -134,6 +156,8 @@ export interface DashData {
   days: { day: string; sent: number; rejected: number }[];
   runs: { at: string; trigger: string; created: number; note: string | null }[];
   tz: string;
+  inbox?: { newCount: number; repliesPending: number; repliesSentToday: number } | null;
+  todosOpen?: number;
 }
 
 export function dashboardPage(d: DashData) {
@@ -147,7 +171,9 @@ export function dashboardPage(d: DashData) {
 <div class="tile"><span>Skipped today</span><b>${d.noToday}</b></div>
 <div class="tile"><span>Sent all time</span><b>${d.sentTotal}</b></div>
 <div class="tile"><span>Yes rate (30 days)</span><b>${d.approval30 === null ? "—" : d.approval30 + "%"}</b></div>
-<div class="tile"><span>Replies</span><b>${d.prospects.replied ?? 0}</b></div>
+<div class="tile"><span>Prospects replied</span><b>${d.prospects.replied ?? 0}</b></div>
+${d.inbox ? `<div class="tile"><span>New emails</span><b>${d.inbox.newCount}</b></div><div class="tile"><span>Replies to approve</span><b>${d.inbox.repliesPending}</b></div><div class="tile"><span>Replies sent today</span><b>${d.inbox.repliesSentToday}</b></div>` : ""}
+<div class="tile"><span>On your list</span><b>${d.todosOpen ?? 0}</b></div>
 </div>
 <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h2>Last 14 days</h2><div class="legend"><span><i class="i-sent"></i>Sent</span><span><i class="i-no"></i>Skipped</span></div></div>
 <div class="bars" role="img" aria-label="Emails sent and skipped per day">${d.days.map((x) => `<div class="bar" title="${x.day}: ${x.sent} sent, ${x.rejected} skipped"><i class="i-sent" style="height:${(x.sent / max) * 100}%"></i><i class="i-no" style="height:${(x.rejected / max) * 100}%"></i></div>`).join("")}</div>
@@ -158,14 +184,21 @@ ${d.byProduct.map((r) => `<tr><td><span class="badge b-${r.product}">${PRODUCT_N
 <div class="card"><h2>Recent drafting runs</h2>${d.runs.length ? `<table>${d.runs.map((r) => `<tr><td class="small">${fmt(r.at)}</td><td class="small">${r.trigger === "cron" ? "Morning" : "Manual"}</td><td class="small">${esc(r.note ?? "")}</td></tr>`).join("")}</table>` : `<p class="muted">None yet. The first one runs tomorrow morning.</p>`}</div>`, { tab: "dashboard" });
 }
 
-export function settingsPage(s: Settings, keys: { anthropic: boolean; resend: boolean }, flash?: string) {
+export function settingsPage(s: Settings, keys: { anthropic: boolean; resend: boolean; gmail: boolean }, flash?: string) {
   const f = (name: keyof Settings, label: string, ph = "", type = "text") =>
     `<label>${label}</label><input name="${name}" type="${type}" value="${esc(s[name])}" placeholder="${esc(ph)}" maxlength="300">`;
   return page("Settings", `<h1>Settings</h1>
+<form method="post" action="/settings/gmail" class="card"><h2>Gmail ${keys.gmail ? "✅ connected" : ""}</h2>
+<p class="small">Lets Chief read your Primary inbox aloud (without marking anything read) and send the replies and outreach you approve from your own Gmail.</p>
+<label>Gmail address</label><input name="gmailAddress" type="email" value="${esc(s.gmailAddress)}" placeholder="you@gmail.com" autocomplete="email">
+<label>Gmail app password</label><input name="gmailPassword" type="password" autocomplete="off" placeholder="${keys.gmail ? "Saved. Paste a new one to replace it." : "16 letters from Google"}">
+<p class="muted small">Get one at <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>: type “Chief” as the name, tap Create, and copy the 16 letters. (Google shows that page only when 2-Step Verification is on.)</p>
+<div class="row"><button class="btn btn-primary" style="flex:1">${keys.gmail ? "Save and test" : "Connect Gmail"}</button>${keys.gmail ? `<button class="btn" name="remove" value="gmail">Disconnect</button>` : ""}</div>
+</form>
 <form method="post" action="/settings">
 <div class="card"><h2>You</h2>
 ${f("senderName", "Your name (signs the emails)", "Marlon Rivera")}
-${f("senderEmail", "Sending address (needed only for the email service)", "marlon@yourdomain.com", "email")}
+${f("senderEmail", "Sending address for Resend (skip if you use Gmail)", "marlon@yourdomain.com", "email")}
 ${f("replyTo", "Replies go to (optional)", "you@gmail.com", "email")}
 <label>Mailing address (US law requires one in outreach emails)</label><input name="mailingAddress" value="${esc(s.mailingAddress)}" maxlength="300" placeholder="123 Main St, Dallas, TX 75201">
 </div>
@@ -184,10 +217,10 @@ ${f("link_churchfollow", "ChurchFollow link (optional)", "https://")}
 </div>
 <button class="btn btn-primary block">Save settings</button>
 </form>
-<form method="post" action="/settings/keys" class="card" style="margin-top:14px"><h2>Connections</h2>
+<form method="post" action="/settings/keys" class="card"><h2>Connections</h2>
 <p class="small"><b>AI writing:</b> ${keys.anthropic ? "✅ connected" : "not connected. Drafts use built-in templates."}</p>
 <label>Anthropic API key</label><input name="anthropic" type="password" autocomplete="off" placeholder="${keys.anthropic ? "Saved. Paste a new one to replace it." : "sk-ant-…"}">
-<p class="small" style="margin-top:14px"><b>Sending from here:</b> ${keys.resend ? "✅ connected" : "not connected. Yes opens your Mail app instead."}</p>
+<p class="small" style="margin-top:14px"><b>Resend (optional, not needed with Gmail):</b> ${keys.resend ? "✅ connected" : keys.gmail ? "not needed, Gmail sends for you." : "not connected."}</p>
 <label>Resend API key</label><input name="resend" type="password" autocomplete="off" placeholder="${keys.resend ? "Saved. Paste a new one to replace it." : "re_…"}">
 <p class="muted small">Keys are stored encrypted and never shown again.</p>
 <div class="row"><button class="btn btn-primary" style="flex:1">Save keys</button></div>
@@ -218,8 +251,8 @@ const VOICE_CSS = `
 @media (prefers-reduced-motion:reduce){.vorb{animation:none!important}}
 `;
 
-export function voicePage(sending: "resend" | "mailto") {
-  const sendNote = sending === "resend" ? "" : `<p class="vhints">Until an email service is added in Settings, “yes” opens your Mail app and you tap Send there.</p>`;
+export function voicePage(sending: "gmail" | "resend" | "mailto") {
+  const sendNote = sending !== "mailto" ? "" : `<p class="vhints">Until Gmail is connected in Settings, “yes” opens your Mail app and you tap Send there, and I can't read your inbox.</p>`;
   return page("Voice", `<style>${VOICE_CSS}</style>
 <div class="voice">
   <div class="vtop"><span class="brand">Chief of Staff</span><a href="/review">Manage ›</a></div>
@@ -228,7 +261,7 @@ export function voicePage(sending: "resend" | "mailto") {
   <div id="warn" class="vwarn" hidden></div>
   <div class="vheard"><b>You said</b><span id="heard">—</span></div>
   <div class="vsaid"><b>Chief</b><span id="said">Say “Hey Chief” and then what you need.</span></div>
-  <p class="vhints">Try: “Hey Chief, read my emails.” “Hey Chief, write an email to Grace Church.” “Hey Chief, give me my dashboard.” “Hey Chief, draft today's emails.” After an email is read, just say “yes” or “no”.</p>
+  <p class="vhints">Try: “Hey Chief, brief me.” “Hey Chief, check my inbox.” “Hey Chief, write an email to Grace Church.” “Hey Chief, remember to call Pastor Dave.” “Hey Chief, give me my dashboard.” When I ask “Should I send it?”, just say “yes” or “no”.</p>
   ${sendNote}
   <form id="typed" class="vtype"><input id="typedText" placeholder="Or type a command" autocomplete="off" enterkeyhint="send"><button class="btn">Go</button></form>
 </div>
@@ -326,8 +359,13 @@ export function voicePage(sending: "resend" | "mailto") {
   }
 
   function next(){
-    if(!S.queue.length){ S.cur=null; return speak("That's all for now.", function(){ setMode("wake"); }); }
+    if(!S.queue.length){ S.cur=null; return speak("That's everything for now.", function(){ setMode("wake"); }); }
     S.cur = S.queue.shift();
+    if(!S.cur.decideUrl){
+      // Just information: read it, mark it heard, move on.
+      var ack = S.cur.ackUrl;
+      return speak(S.cur.say, function(){ if(ack){ var fd=new FormData(); post(ack, fd).catch(function(){}); } next(); });
+    }
     speak(S.cur.say, function(){ waitFor("confirm", 30000, function(){ S.queue=[]; S.cur=null; speak("I'll keep it for later.", function(){ setMode("wake"); }); }); });
   }
 
@@ -343,7 +381,7 @@ export function voicePage(sending: "resend" | "mailto") {
     setMode("working");
     var fd = new FormData(); fd.set("decision", d);
     try{
-      var j = await post("/drafts/"+S.cur.id+"/decide", fd);
+      var j = await post(S.cur.decideUrl, fd);
       if(!j.ok) return speak(j.error || "That didn't work.", next);
       if(d==="no") return speak("Skipped.", next);
       if(j.href){ var href=j.href; return speak("Opening Mail. Tap send there.", function(){ location.href = href; setTimeout(next, 1500); }); }

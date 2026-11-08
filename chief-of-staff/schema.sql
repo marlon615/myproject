@@ -50,3 +50,48 @@ create table if not exists runs (
   created integer not null default 0,
   note text
 );
+
+-- Gmail messages Chief has seen (summaries only, plus what's needed to reply in the same thread).
+create table if not exists inbox (
+  id integer primary key autoincrement,
+  message_id text not null unique,
+  uid integer,
+  from_name text not null default '',
+  from_email text not null,
+  subject text not null default '',
+  received_at text,
+  summary text not null default '',
+  priority text not null default 'normal',
+  needs_reply integer not null default 0,
+  refs text not null default '',
+  status text not null default 'new' check (status in ('new', 'heard', 'replied', 'dismissed')),
+  source text not null default 'template',
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+create index if not exists inbox_status on inbox (status, received_at);
+
+-- Reply drafts waiting for a yes or no.
+create table if not exists replies (
+  id integer primary key autoincrement,
+  inbox_id integer not null references inbox(id) on delete cascade,
+  to_email text not null,
+  to_name text not null default '',
+  subject text not null,
+  body text not null,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'sent', 'failed')),
+  error text,
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  decided_at text,
+  sent_at text
+);
+create index if not exists replies_status on replies (status, created_at);
+
+-- Things Chief remembers for you ("remember to call Pastor Dave").
+create table if not exists todos (
+  id integer primary key autoincrement,
+  text text not null,
+  status text not null default 'open' check (status in ('open', 'done')),
+  created_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  done_at text
+);
+create index if not exists todos_status on todos (status, created_at)

@@ -47,6 +47,23 @@ export async function dashboard(env: Env): Promise<DashData> {
     days,
     runs: runs.results,
     tz,
+    ...(await extras(env, tz)),
   };
 }
 
+
+async function extras(env: Env, tz: string) {
+  const gmail = await env.DB.prepare("select 1 from settings where key = 'secret:gmail'").first();
+  const todo = await env.DB.prepare("select count(*) as n from todos where status = 'open'").first<{ n: number }>();
+  if (!gmail) return { inbox: null, todosOpen: todo?.n ?? 0 };
+  const [n, rp, sent] = await Promise.all([
+    env.DB.prepare("select count(*) as n from inbox where status = 'new'").first<{ n: number }>(),
+    env.DB.prepare("select count(*) as n from replies where status = 'pending'").first<{ n: number }>(),
+    env.DB.prepare("select sent_at from replies where status = 'sent' and sent_at > ?").bind(new Date(Date.now() - 2 * 86400_000).toISOString()).all<{ sent_at: string }>(),
+  ]);
+  const today = localDay(new Date(), tz);
+  return {
+    inbox: { newCount: n?.n ?? 0, repliesPending: rp?.n ?? 0, repliesSentToday: sent.results.filter((r) => localDay(new Date(r.sent_at), tz) === today).length },
+    todosOpen: todo?.n ?? 0,
+  };
+}

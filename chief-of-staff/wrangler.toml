@@ -21,7 +21,7 @@ new_sqlite_classes = ["ChiefOfStaff"]
 
 # New drafts every morning: 13:00 UTC = 8 a.m. Central (7 a.m. in winter).
 [triggers]
-crons = ["0 13 * * *"]
+crons = ["0 13 * * *", "15,45 11-23,0-3 * * *"]
 
 [observability]
 enabled = true

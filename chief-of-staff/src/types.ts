@@ -3,6 +3,9 @@ import type { DB } from "./db";
 /** What Cloudflare gives the Worker. */
 export interface WorkerEnv {
   APP: DurableObjectNamespace;
+  MAIL_TEST_HOST?: string;
+  MAIL_TEST_IMAP_PORT?: string;
+  MAIL_TEST_SMTP_PORT?: string;
   OWNER_PASSWORD: string;
   SESSION_SECRET: string;
   APP_TIMEZONE?: string;
@@ -11,6 +14,9 @@ export interface WorkerEnv {
 /** What the app code uses: the same, plus the database. */
 export interface Env {
   DB: DB;
+  MAIL_TEST_HOST?: string;
+  MAIL_TEST_IMAP_PORT?: string;
+  MAIL_TEST_SMTP_PORT?: string;
   OWNER_PASSWORD: string;
   SESSION_SECRET: string;
   APP_TIMEZONE?: string;

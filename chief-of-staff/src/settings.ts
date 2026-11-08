@@ -14,6 +14,7 @@ export interface Settings {
   product_churchfollow: string;
   link_clientpulse: string;
   link_churchfollow: string;
+  gmailAddress: string;
 }
 
 export const DEFAULTS: Settings = {
@@ -31,6 +32,7 @@ export const DEFAULTS: Settings = {
     "ChurchFollow: done-for-you first-time visitor follow-up for small churches. Guests scan a QR code on a pew card, and ChurchFollow automatically texts them a welcome right away, a check-in from the pastor on day 3, and an invitation back on day 7. Pastors see every visitor, reply and return on a simple dashboard. $39/month, nothing to install, set up in 10 minutes.",
   link_clientpulse: "",
   link_churchfollow: "",
+  gmailAddress: "",
 };
 
 const NUM = new Set<string>(["dailyLimit", "followUpDays", "maxTouches"]);
@@ -60,7 +62,7 @@ export function productLink(s: Settings, p: Product) {
 }
 
 // ── Keys the owner pastes in Settings, stored encrypted, never shown again ──
-export type SecretName = "anthropic" | "resend";
+export type SecretName = "anthropic" | "resend" | "gmail";
 
 export async function getSecret(env: Env, name: SecretName): Promise<string | null> {
   const row = await env.DB.prepare("select value from settings where key = ?").bind(`secret:${name}`).first<{ value: string }>();

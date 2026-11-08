@@ -1,13 +1,15 @@
 import { changePassword, checkPassword, clearCookie, clearLogins, isSignedIn, loginAllowed, recordFailedLogin, sessionCookie } from "./auth";
 import { buildDailyDrafts } from "./draft";
 import { sendEmail } from "./send";
-import { getSettings, hasSecret, saveSettings, setSecret, DEFAULTS, type Settings } from "./settings";
+import { getSecret, getSettings, hasSecret, saveSettings, setSecret, DEFAULTS, type Settings } from "./settings";
 import { DurableObject } from "cloudflare:workers";
 import { migrate, sqliteDB, type Stmt } from "./db";
 import SCHEMA from "../schema.sql";
 import { PRODUCTS, type Draft, type Env, type Product, type Prospect, type WorkerEnv } from "./types";
 import { approvePage, dashboardPage, loginPage, prospectsPage, settingsPage, voicePage } from "./views";
 import { runCommand } from "./voice";
+import { decideReply, gmailCreds, syncInbox, testGmail, type ReplyRow } from "./inbox";
+import { addTodo, completeTodo, openTodos } from "./todos";
 import { dashboard } from "./stats";
 
 const SECURITY_HEADERS: Record<string, string> = {
@@ -116,8 +118,8 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/logout" && method === "POST") return redirect("/login", { "Set-Cookie": clearCookie });
 
   if (path === "/" && method === "GET") {
-    const [s, resend] = await Promise.all([getSettings(env), hasSecret(env, "resend")]);
-    return html(voicePage(resend && s.senderEmail ? "resend" : "mailto"));
+    const [s, resend, gmail] = await Promise.all([getSettings(env), hasSecret(env, "resend"), gmailCreds(env)]);
+    return html(voicePage(gmail ? "gmail" : resend && s.senderEmail ? "resend" : "mailto"));
   }
 
   if (path === "/api/command" && method === "POST") {
@@ -127,13 +129,48 @@ async function handle(req: Request, env: Env): Promise<Response> {
   }
 
   if (path === "/review" && method === "GET") {
-    const [{ results }, s, resend] = await Promise.all([
+    const [{ results }, s, resend, gmail, replies, todos] = await Promise.all([
       env.DB.prepare(`select d.*, p.name, p.email, p.organization from drafts d join prospects p on p.id = d.prospect_id
                       where d.status = 'pending' order by d.created_at, d.id limit 50`).all<Draft & { name: string; email: string; organization: string }>(),
       getSettings(env),
       hasSecret(env, "resend"),
+      gmailCreds(env),
+      env.DB.prepare(`select r.*, i.summary, i.subject as orig_subject, i.from_name, i.from_email from replies r join inbox i on i.id = r.inbox_id
+                      where r.status = 'pending' order by r.created_at desc limit 30`).all<ReplyRow & { summary: string; orig_subject: string; from_name: string; from_email: string }>(),
+      openTodos(env),
     ]);
-    return html(approvePage(results, s, resend && s.senderEmail ? "resend" : "mailto", msg));
+    return html(approvePage(results, s, gmail ? "gmail" : resend && s.senderEmail ? "resend" : "mailto", msg, replies.results, todos));
+  }
+
+  const replyMatch = path.match(/^\/replies\/(\d+)\/decide$/);
+  if (replyMatch && method === "POST") {
+    const f = await req.formData();
+    const d = str(f.get("decision"), 5);
+    const wantsJson = (req.headers.get("accept") ?? "").includes("application/json");
+    const r = d === "yes" || d === "no"
+      ? await decideReply(env, Number(replyMatch[1]), d, { subject: str(f.get("subject"), 300), body: str(f.get("body"), 5000) })
+      : { ok: false as const, error: "Tap Yes or No." };
+    if (wantsJson) return json(r, r.ok ? 200 : 400);
+    return redirect(withMsg("/review", r.ok ? r.label : r.error));
+  }
+
+  const heardMatch = path.match(/^\/inbox\/(\d+)\/heard$/);
+  if (heardMatch && method === "POST") {
+    await env.DB.prepare("update inbox set status = 'heard' where id = ? and status = 'new'").bind(Number(heardMatch[1])).run();
+    return json({ ok: true });
+  }
+
+  if (path === "/inbox/sync" && method === "POST") {
+    const r = await syncInbox(env);
+    return redirect(withMsg("/review", r.error ? `Gmail: ${r.error}` : `Checked Gmail: ${r.added} new.${r.more ? " More waiting; check again." : ""}`));
+  }
+
+  if (path === "/todos" && method === "POST") {
+    const f = await req.formData();
+    const done = Number(f.get("done"));
+    if (done) await completeTodo(env, done);
+    else await addTodo(env, str(f.get("text"), 300));
+    return redirect(withMsg("/review", done ? "Crossed off." : "Added to your list."));
   }
 
   const decideMatch = path.match(/^\/drafts\/(\d+)\/decide$/);
@@ -218,8 +255,27 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/dashboard" && method === "GET") return html(dashboardPage(await dashboard(env)));
 
   if (path === "/settings" && method === "GET") {
-    const [s, anthropic, resend] = await Promise.all([getSettings(env), hasSecret(env, "anthropic"), hasSecret(env, "resend")]);
-    return html(settingsPage(s, { anthropic, resend }, msg));
+    const [s, anthropic, resend, gmail] = await Promise.all([getSettings(env), hasSecret(env, "anthropic"), hasSecret(env, "resend"), hasSecret(env, "gmail")]);
+    return html(settingsPage(s, { anthropic, resend, gmail }, msg));
+  }
+
+  if (path === "/settings/gmail" && method === "POST") {
+    const f = await req.formData();
+    if (str(f.get("remove"), 10) === "gmail") {
+      await setSecret(env, "gmail", null);
+      return redirect(withMsg("/settings", "Gmail disconnected."));
+    }
+    const address = str(f.get("gmailAddress"), 200).toLowerCase();
+    const pass = str(f.get("gmailPassword"), 100).replace(/\s+/g, "");
+    if (!EMAIL.test(address)) return redirect(withMsg("/settings", "Enter your Gmail address."));
+    const usePass = pass || (await getSecret(env, "gmail"));
+    if (!usePass) return redirect(withMsg("/settings", "Paste your 16-letter Gmail app password."));
+    if (pass && !/^[a-z]{16}$/i.test(pass)) return redirect(withMsg("/settings", "A Gmail app password is 16 letters. Copy it again from Google."));
+    const err = await testGmail(env, address, usePass);
+    if (err) return redirect(withMsg("/settings", `Gmail didn't connect: ${err}`));
+    await saveSettings(env, { gmailAddress: address });
+    if (pass) await setSecret(env, "gmail", pass);
+    return redirect(withMsg("/settings", "Gmail connected. Say “Hey Chief, check my inbox.”"));
   }
 
   if (path === "/settings" && method === "POST") {
@@ -279,7 +335,7 @@ export class ChiefOfStaff extends DurableObject<WorkerEnv> {
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => migrate(ctx.storage, SCHEMA));
-    this.app = { DB: sqliteDB(ctx.storage), OWNER_PASSWORD: env.OWNER_PASSWORD, SESSION_SECRET: env.SESSION_SECRET, APP_TIMEZONE: env.APP_TIMEZONE };
+    this.app = { DB: sqliteDB(ctx.storage), OWNER_PASSWORD: env.OWNER_PASSWORD, SESSION_SECRET: env.SESSION_SECRET, APP_TIMEZONE: env.APP_TIMEZONE, MAIL_TEST_HOST: env.MAIL_TEST_HOST, MAIL_TEST_IMAP_PORT: env.MAIL_TEST_IMAP_PORT, MAIL_TEST_SMTP_PORT: env.MAIL_TEST_SMTP_PORT };
   }
   async fetch(req: Request): Promise<Response> {
     try {
@@ -290,7 +346,13 @@ export class ChiefOfStaff extends DurableObject<WorkerEnv> {
     }
   }
   async morning(): Promise<string> {
-    return (await buildDailyDrafts(this.app, "cron")).note;
+    const drafts = await buildDailyDrafts(this.app, "cron");
+    const inbox = await syncInbox(this.app);
+    return `${drafts.note} Inbox: ${inbox.error ?? `${inbox.added} new`}.`;
+  }
+  async inboxCheck(): Promise<string> {
+    const r = await syncInbox(this.app);
+    return r.error ?? `${r.added} new`;
   }
 }
 
@@ -300,7 +362,9 @@ export default {
   async fetch(req: Request, env: WorkerEnv): Promise<Response> {
     return main(env).fetch(req);
   },
-  async scheduled(_ctrl: ScheduledController, env: WorkerEnv, ctx: ExecutionContext) {
-    ctx.waitUntil(main(env).morning().then((note) => console.log("morning drafts:", note)));
+  async scheduled(ctrl: ScheduledController, env: WorkerEnv, ctx: ExecutionContext) {
+    // The morning run drafts outreach and checks Gmail; the half-hourly runs keep the inbox summaries fresh.
+    if (ctrl.cron === "0 13 * * *") ctx.waitUntil(main(env).morning().then((n) => console.log("morning:", n)));
+    else ctx.waitUntil(main(env).inboxCheck().then((n) => console.log("inbox check:", n)));
   },
 } satisfies ExportedHandler<WorkerEnv>;

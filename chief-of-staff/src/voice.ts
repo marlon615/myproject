@@ -1,16 +1,22 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { buildDailyDrafts, writeDraft } from "./draft";
+import { gmailCreds, syncInbox, type InboxRow, type ReplyRow } from "./inbox";
 import { getSecret, getSettings, hasSecret } from "./settings";
 import { dashboard } from "./stats";
+import { addTodo, completeTodo, findTodo, openTodos } from "./todos";
 import { PRODUCT_NAME, type Draft, type Env, type Product, type Prospect, type ProspectStatus } from "./types";
 
-/** One email waiting for a spoken yes or no. */
-export interface QueueItem { id: number; say: string }
+/**
+ * Something Chief reads aloud. With decideUrl it then waits for a spoken yes or no;
+ * with ackUrl it just marks the item as heard and moves on.
+ */
+export interface QueueItem { say: string; decideUrl?: string; ackUrl?: string }
 export interface VoiceReply { say: string; queue?: QueueItem[]; end?: boolean }
 
 const HELP =
-  "You can say: read my emails. Write an email to, and a name or church. Draft today's emails. Give me my dashboard. " +
-  "Mark, a name, as replied, or not interested. Or say stop.";
+  "You can say: brief me. Check my inbox. Read my outreach. Write an email to, and a name or church. Draft today's emails. " +
+  "Give me my dashboard. Remember to, and anything you want me to hold on to. What's on my list. I finished, and the item. " +
+  "Mark, a name, as replied. Or say stop.";
 
 const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}@.\s'-]/gu, " ").replace(/\s+/g, " ").trim();
 
@@ -24,45 +30,121 @@ function plural(n: number, one: string, many = one + "s") {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** Turns a draft into what gets read aloud, ending with the question. */
-export function draftSpeech(d: Draft, p: Pick<Prospect, "name" | "email" | "organization">, i?: number, of?: number) {
-  const who = p.name || p.email.replace(/@.*/, "");
-  const head = of && of > 1 ? `Email ${i} of ${of}. ` : "";
-  const body = d.body
+/** Joins email lines into something that reads naturally aloud. */
+function spoken(body: string) {
+  return body
     .split(/\n+/)
     .map((l) => l.trim())
     .filter(Boolean)
     .map((l) => (/[.!?,:;]$/.test(l) ? l : l + "."))
     .join(" ");
-  return `${head}${PRODUCT_NAME[d.product]} email to ${who}${p.organization ? ` at ${p.organization}` : ""}. Subject: ${d.subject}. ${body} Should I send it?`;
 }
 
-async function pendingQueue(env: Env): Promise<QueueItem[]> {
+function listOut(items: string[]) {
+  if (items.length <= 1) return items.join("");
+  return items.slice(0, -1).join(", ") + ", and " + items[items.length - 1];
+}
+
+// ── Outreach drafts ──
+
+export function draftSpeech(d: Draft, p: Pick<Prospect, "name" | "email" | "organization">, i?: number, of?: number) {
+  const who = p.name || p.email.replace(/@.*/, "");
+  const head = of && of > 1 ? `Outreach ${i} of ${of}. ` : "";
+  return `${head}${PRODUCT_NAME[d.product]} email to ${who}${p.organization ? ` at ${p.organization}` : ""}. Subject: ${d.subject}. ${spoken(d.body)} Should I send it?`;
+}
+
+async function outreachQueue(env: Env): Promise<QueueItem[]> {
   const { results } = await env.DB.prepare(
     `select d.*, p.name, p.email, p.organization from drafts d join prospects p on p.id = d.prospect_id
      where d.status = 'pending' order by d.created_at, d.id limit 25`,
   ).all<Draft & { name: string; email: string; organization: string }>();
-  return results.map((d, i) => ({ id: d.id, say: draftSpeech(d, d, i + 1, results.length) }));
+  return results.map((d, i) => ({ say: draftSpeech(d, d, i + 1, results.length), decideUrl: `/drafts/${d.id}/decide` }));
 }
+
+// ── Inbox ──
+
+async function inboxQueue(env: Env): Promise<QueueItem[]> {
+  const { results } = await env.DB.prepare(
+    `select i.*, r.id as reply_id, r.body as reply_body from inbox i
+     left join replies r on r.inbox_id = i.id and r.status = 'pending'
+     where i.status = 'new'
+     order by case i.priority when 'high' then 0 when 'normal' then 1 else 2 end, coalesce(i.received_at, i.created_at) desc
+     limit 20`,
+  ).all<InboxRow & { reply_id: number | null; reply_body: string | null }>();
+  return results.map((m, i) => {
+    const who = m.from_name || m.from_email;
+    const head = `${results.length > 1 ? `Email ${i + 1} of ${results.length}. ` : ""}From ${who}${m.priority === "high" ? ", marked important" : ""}. ${m.subject ? `Subject: ${m.subject}. ` : ""}${m.summary}`;
+    if (m.reply_id && m.reply_body) {
+      return { say: `${head} Here's a reply: ${spoken(m.reply_body)} Should I send it?`, decideUrl: `/replies/${m.reply_id}/decide` };
+    }
+    return { say: `${head} No reply needed.`, ackUrl: `/inbox/${m.id}/heard` };
+  });
+}
+
+async function inboxCounts(env: Env) {
+  const row = await env.DB.prepare(
+    `select count(*) as n, sum(case when exists (select 1 from replies r where r.inbox_id = inbox.id and r.status = 'pending') then 1 else 0 end) as replies,
+            sum(case when priority = 'high' then 1 else 0 end) as high
+     from inbox where status = 'new'`,
+  ).first<{ n: number; replies: number | null; high: number | null }>();
+  return { n: row?.n ?? 0, replies: row?.replies ?? 0, high: row?.high ?? 0 };
+}
+
+async function checkInbox(env: Env): Promise<VoiceReply> {
+  if (!(await gmailCreds(env))) {
+    return { say: "Gmail isn't connected yet. Open Manage, then Settings, and paste your Gmail app password. Then I can read your inbox." };
+  }
+  const sync = await syncInbox(env);
+  const queue = await inboxQueue(env);
+  if (sync.error && !queue.length) return { say: `I couldn't check Gmail. ${sync.error}` };
+  if (!queue.length) return { say: "No new emails in your Primary inbox." };
+  const c = await inboxCounts(env);
+  const more = sync.more ? " There are more after these; ask me again when we're done." : "";
+  return { say: `You have ${plural(c.n, "new email")}${c.replies ? `, and I drafted ${plural(c.replies, "reply", "replies")}` : ""}.${more}`, queue };
+}
+
+// ── Dashboard and briefing ──
 
 async function dashboardSpeech(env: Env) {
   const d = await dashboard(env);
   const p = d.prospects;
   const total = Object.values(p).reduce((a, b) => a + b, 0);
+  const inbox = await inboxCounts(env);
+  const todos = await openTodos(env);
   const parts = [
-    d.pending ? `You have ${plural(d.pending, "email")} waiting for your yes or no.` : "Nothing is waiting for you.",
-    `Today you sent ${d.sentToday} and skipped ${d.noToday}.`,
-    `${plural(d.sentTotal, "email")} sent all time${d.approval30 === null ? "" : `, and you said yes to ${d.approval30} percent over the last 30 days`}.`,
-    `${plural(p.replied ?? 0, "reply", "replies")} so far.`,
-    total ? `You have ${plural(total, "prospect")}: ${p.new ?? 0} new, ${p.contacted ?? 0} contacted, ${p.not_interested ?? 0} not interested.` : "You have no prospects yet. Add some on the Prospects page.",
+    (await gmailCreds(env)) ? `Inbox: ${plural(inbox.n, "new email")}, ${plural(inbox.replies, "reply", "replies")} waiting for your yes.` : "Gmail isn't connected yet.",
+    d.pending ? `Outreach: ${plural(d.pending, "email")} waiting for your yes or no.` : "No outreach is waiting.",
+    `Today you sent ${d.sentToday} and skipped ${d.noToday}. ${plural(d.sentTotal, "outreach email")} sent all time${d.approval30 === null ? "" : `, and you said yes to ${d.approval30} percent over the last 30 days`}.`,
+    `${plural(p.replied ?? 0, "prospect")} replied so far.`,
+    total ? `You have ${plural(total, "prospect")}: ${p.new ?? 0} new, ${p.contacted ?? 0} contacted.` : "You have no prospects yet.",
+    todos.length ? `${plural(todos.length, "item")} on your list.` : "Your list is clear.",
   ];
   for (const b of d.byProduct) if (b.sent || b.replied) parts.push(`${PRODUCT_NAME[b.product as Product]}: ${b.sent} sent, ${b.replied} replied.`);
   return parts.join(" ");
 }
 
-/** Finds the prospect a spoken name, church, company or email most likely means. */
-async function findProspect(env: Env, spoken: string, product: Product | null): Promise<Prospect | null> {
-  const words = norm(spoken)
+async function brief(env: Env): Promise<VoiceReply> {
+  const gmail = await gmailCreds(env);
+  let syncNote = "";
+  if (gmail) {
+    const r = await syncInbox(env);
+    if (r.error) syncNote = ` I couldn't check Gmail: ${r.error}`;
+  }
+  const [inbox, inboxQ, outQ, todos] = await Promise.all([inboxCounts(env), gmail ? inboxQueue(env) : Promise.resolve([]), outreachQueue(env), openTodos(env)]);
+  const lines: string[] = [];
+  if (gmail) lines.push(inbox.n ? `You have ${plural(inbox.n, "new email")}${inbox.high ? `, ${inbox.high} important` : ""}, and ${plural(inbox.replies, "reply", "replies")} ready for your yes.` : "Your inbox is clear.");
+  else lines.push("Gmail isn't connected yet, so I can't check your inbox.");
+  lines.push(outQ.length ? `${plural(outQ.length, "outreach email")} waiting.` : "No outreach waiting.");
+  if (todos.length) lines.push(`On your list: ${listOut(todos.slice(0, 5).map((t) => t.text))}${todos.length > 5 ? `, and ${todos.length - 5} more` : ""}.`);
+  const queue = [...inboxQ, ...outQ];
+  if (queue.length) lines.push("Let's go through them.");
+  return { say: lines.join(" ") + syncNote, queue: queue.length ? queue : undefined };
+}
+
+// ── Writing to a prospect ──
+
+async function findProspect(env: Env, spokenName: string, product: Product | null): Promise<Prospect | null> {
+  const words = norm(spokenName)
     .replace(/\b(church ?follow|client ?pulse|for|about|the|at|from|email|an?)\b/g, " ")
     .split(" ")
     .filter((w) => w.length > 1);
@@ -81,7 +163,7 @@ async function findProspect(env: Env, spoken: string, product: Product | null): 
 
 async function writeFor(env: Env, target: string, product: Product | null): Promise<VoiceReply> {
   const p = await findProspect(env, target, product);
-  if (!p) return { say: `I couldn't find ${target} in your prospects. Add them on the Prospects page, then ask me again.` };
+  if (!p) return { say: `I couldn't find ${target} in your prospects. Add them under Manage, then Prospects, and ask me again.` };
   if (p.status === "do_not_contact" || p.status === "not_interested") {
     return { say: `${p.name || p.email} is marked ${p.status.replace(/_/g, " ")}, so I won't write to them.` };
   }
@@ -98,7 +180,7 @@ async function writeFor(env: Env, target: string, product: Product | null): Prom
     d = await env.DB.prepare("select * from drafts where prospect_id = ? and status = 'pending' order by id desc limit 1").bind(p.id).first<Draft>();
   }
   if (!d) return { say: "Something went wrong writing that one. Try again." };
-  return { say: "Here it is.", queue: [{ id: d.id, say: draftSpeech(d, p) }] };
+  return { say: "Here it is.", queue: [{ say: draftSpeech(d, p), decideUrl: `/drafts/${d.id}/decide` }] };
 }
 
 async function mark(env: Env, target: string, status: ProspectStatus): Promise<VoiceReply> {
@@ -112,49 +194,68 @@ async function mark(env: Env, target: string, status: ProspectStatus): Promise<V
   return { say: `Done. ${p.name || p.email} is now marked ${status.replace(/_/g, " ")}.` };
 }
 
+// ── Understanding the command ──
+
 const STATUS_WORDS: [RegExp, ProspectStatus][] = [
   [/not interested/, "not_interested"],
   [/do not contact|don'?t contact|unsubscribe/, "do_not_contact"],
   [/repl(ied|y)|responded|answered/, "replied"],
   [/contacted/, "contacted"],
-  [/new/, "new"],
+  [/\bnew\b/, "new"],
 ];
 
 type Intent =
-  | { intent: "help" | "dashboard" | "read" | "draft_today" | "stop" }
+  | { intent: "help" | "dashboard" | "inbox" | "outreach" | "brief" | "draft_today" | "stop" | "list" }
   | { intent: "write"; target: string; product: Product | null }
   | { intent: "mark"; target: string; status: ProspectStatus }
+  | { intent: "remember"; text: string }
+  | { intent: "done"; text: string }
   | { intent: "unknown" };
 
-/** Understands the everyday phrasings without needing any AI. */
 function parseRules(raw: string): Intent {
   const t = norm(raw);
   if (!t) return { intent: "unknown" };
   if (/^(help|what can (you|i) (do|say)|commands|options)\b/.test(t)) return { intent: "help" };
   if (/^(stop|cancel|never ?mind|that'?s all|quiet|be quiet|goodbye|bye)\b/.test(t)) return { intent: "stop" };
 
+  // Remembering things (matched on the original words, so names keep their capitals)
+  const r0 = raw.trim().replace(/[.!?]+$/, "");
+  const rem = r0.match(/^(?:please )?(?:remember|remind me|don'?t let me forget|make a note|note|add a reminder)(?: that| to)?\s+(?:to\s+)?(.+)$/i) ||
+    r0.match(/^add (.+?) to (?:my )?(?:list|to ?do(?: list)?|waiting(?: items| list)?|reminders)$/i);
+  if (rem) return { intent: "remember", text: rem[1].charAt(0).toUpperCase() + rem[1].slice(1) };
+  if (/\b(what'?s on my list|read my list|my (to ?do|todo)( list)?|my (waiting items|reminders)|what do i need to do|what am i waiting on)\b/.test(t)) return { intent: "list" };
+
+  // Prospect status
   const m = t.match(/\b(?:mark|set|move|put)\s+(.+?)\s+(?:as|to)\s+(.+)$/);
   if (m) {
     const st = STATUS_WORDS.find(([re]) => re.test(m[2]));
     if (st) return { intent: "mark", target: m[1], status: st[1] };
+    if (/\b(done|complete|completed|finished)\b/.test(m[2])) return { intent: "done", text: m[1] };
   }
   const m2 = t.match(/^(.+?)\s+(?:replied|responded|is not interested|isn'?t interested|said no)$/);
   if (m2) return { intent: "mark", target: m2[1], status: /not interested|isn'?t|said no/.test(t) ? "not_interested" : "replied" };
 
-  if (/\b(dashboard|stats|statistics|numbers|report|how (are|am) (we|i) doing|how'?s it going|status update|summary)\b/.test(t)) return { intent: "dashboard" };
-  if (/\b(draft|prepare|make|create|write|generate)\b.*\b(today'?s|today|daily|morning|new) (emails|drafts|batch)\b|\bdraft (today|the emails)\b/.test(t)) return { intent: "draft_today" };
+  // Finishing items
+  const dn = t.match(/^(?:i )?(?:finished|did|completed|handled|took care of|done with)\s+(.+)$/) ||
+    t.match(/^(?:cross off|check off|tick off|remove)\s+(.+?)(?: from (?:my )?list)?$/) || t.match(/^(.+?) is done$/);
+  if (dn) return { intent: "done", text: dn[1] };
 
-  const w = t.match(/\b(?:write|draft|compose|email|send|prepare)\b(?:\s+(?:an?|another|the))?(?:\s+(?:email|e-mail|note|message|follow[- ]?up|intro))?(?:\s+(?:for\s+(?:church ?follow|client ?pulse)))?\s+(?:to|for)\s+(.+)$/);
+  if (/\b(brief me|briefing|catch me up|what'?s (waiting|on my plate|new)|good morning|anything (waiting|for me)|what did i miss|report back)\b/.test(t)) return { intent: "brief" };
+  if (/\b(dashboards?|stats|statistics|numbers|report|how (are|am) (we|i) doing|how'?s it going|status update|summary)\b/.test(t)) return { intent: "dashboard" };
+  if (/\b(draft|prepare|make|create|write|generate)\b.*\b(today'?s|today|daily|morning|new) (emails|drafts|batch|outreach)\b|\bdraft (today|the emails)\b/.test(t)) return { intent: "draft_today" };
+
+  const w = t.match(/\b(?:write|draft|compose|email|prepare)\b(?:\s+(?:an?|another|the))?(?:\s+(?:email|e-mail|note|message|follow[- ]?up|intro))?(?:\s+(?:for\s+(?:church ?follow|client ?pulse)))?\s+(?:to|for)\s+(.+)$/);
   if (w) return { intent: "write", target: w[1].replace(/\b(about|for) (church ?follow|client ?pulse)\b/, "").trim(), product: productHint(t) };
 
-  if (/\b(read|go through|review|check|what'?s (waiting|pending)|any(thing)? (waiting|pending)|my (emails|drafts|queue)|pending)\b/.test(t)) return { intent: "read" };
+  if (/\b(outreach|approvals?|my drafts|prospect emails|sales emails)\b/.test(t)) return { intent: "outreach" };
+  if (/\b(inbox|gmail|new (emails|mail|messages)|my (emails|email|mail|messages)|read (my )?(emails|mail)|check (my )?(email|mail)|who emailed)\b/.test(t)) return { intent: "inbox" };
   return { intent: "unknown" };
 }
 
 const AI_SCHEMA = {
   type: "object",
   properties: {
-    intent: { type: "string", enum: ["help", "dashboard", "read", "draft_today", "stop", "write", "mark", "unknown"] },
+    intent: { type: "string", enum: ["help", "dashboard", "inbox", "outreach", "brief", "draft_today", "stop", "list", "write", "mark", "remember", "done", "unknown"] },
     target: { type: "string" },
     product: { type: "string", enum: ["clientpulse", "churchfollow", "none"] },
     status: { type: "string", enum: ["new", "contacted", "replied", "not_interested", "do_not_contact", "none"] },
@@ -163,7 +264,6 @@ const AI_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-/** When the rules don't recognize a phrasing and an AI key is saved, ask Claude what was meant. */
 async function parseWithAI(env: Env, text: string): Promise<Intent> {
   const key = await getSecret(env, "anthropic");
   if (!key) return { intent: "unknown" };
@@ -176,20 +276,21 @@ async function parseWithAI(env: Env, text: string): Promise<Intent> {
       fallbacks: "default",
       output_config: { effort: "low", format: { type: "json_schema", schema: AI_SCHEMA } },
       system:
-        "You map one spoken command for an outreach assistant to an intent. Intents: help; dashboard (report stats); read (read pending email drafts aloud); " +
-        "draft_today (make today's batch of drafts); stop; write (write an email to one prospect: put the person, church or company in target); " +
-        "mark (change a prospect's status: target and status); unknown. Products are ClientPulse and ChurchFollow. The command is speech-to-text and may have mistakes. " +
-        "Latency-sensitive; answer immediately.",
+        "You map one spoken command for a voice chief-of-staff assistant to an intent. Intents: help; dashboard (stats); inbox (read new Gmail emails aloud); " +
+        "outreach (read pending sales outreach drafts); brief (everything waiting: inbox, outreach, list); draft_today (make today's outreach drafts); stop; " +
+        "list (read the owner's remembered to-do items); write (write an outreach email to one prospect: person, church or company in target); " +
+        "mark (change a prospect's status: target and status); remember (save a to-do: the item in target); done (finish a to-do: the item in target); unknown. " +
+        "Products are ClientPulse and ChurchFollow. The command is speech-to-text and may have mistakes. Latency-sensitive; answer immediately.",
       messages: [{ role: "user", content: `<command>${text.slice(0, 500)}</command>` }],
     });
     if (res.stop_reason === "refusal") return { intent: "unknown" };
-    const out = JSON.parse(res.content.filter((b) => b.type === "text").map((b) => b.text).join("")) as {
-      intent: string; target: string; product: string; status: string;
-    };
-    const product = out.product === "none" ? null : (out.product as Product);
-    if (out.intent === "write" && out.target) return { intent: "write", target: out.target, product };
-    if (out.intent === "mark" && out.target && out.status !== "none") return { intent: "mark", target: out.target, status: out.status as ProspectStatus };
-    if (["help", "dashboard", "read", "draft_today", "stop"].includes(out.intent)) return { intent: out.intent as "help" };
+    const o = JSON.parse(res.content.filter((b) => b.type === "text").map((b) => b.text).join("")) as { intent: string; target: string; product: string; status: string };
+    const product = o.product === "none" ? null : (o.product as Product);
+    if (o.intent === "write" && o.target) return { intent: "write", target: o.target, product };
+    if (o.intent === "mark" && o.target && o.status !== "none") return { intent: "mark", target: o.target, status: o.status as ProspectStatus };
+    if (o.intent === "remember" && o.target) return { intent: "remember", text: o.target };
+    if (o.intent === "done" && o.target) return { intent: "done", text: o.target };
+    if (["help", "dashboard", "inbox", "outreach", "brief", "draft_today", "stop", "list"].includes(o.intent)) return { intent: o.intent as "help" };
   } catch (e) {
     console.error("voice AI parse failed:", (e as Error).message);
   }
@@ -207,21 +308,42 @@ export async function runCommand(env: Env, text: string): Promise<VoiceReply> {
       return { say: "Okay.", end: true };
     case "dashboard":
       return { say: await dashboardSpeech(env) };
-    case "read": {
-      const queue = await pendingQueue(env);
-      if (!queue.length) return { say: "No emails are waiting. Say draft today's emails, or write an email to someone." };
-      return { say: `You have ${plural(queue.length, "email")} waiting.`, queue };
+    case "brief":
+      return brief(env);
+    case "inbox":
+      return checkInbox(env);
+    case "outreach": {
+      const queue = await outreachQueue(env);
+      if (!queue.length) return { say: "No outreach is waiting. Say draft today's emails, or write an email to someone." };
+      return { say: `You have ${plural(queue.length, "outreach email")} waiting.`, queue };
     }
     case "draft_today": {
       const r = await buildDailyDrafts(env, "manual");
-      const queue = r.created ? await pendingQueue(env) : [];
+      const queue = r.created ? await outreachQueue(env) : [];
       return { say: queue.length ? `${r.note} Here's the first one.` : r.note, queue: queue.length ? queue : undefined };
     }
     case "write":
       return writeFor(env, it.target, it.product);
     case "mark":
       return mark(env, it.target, it.status);
+    case "remember": {
+      const t = await addTodo(env, it.text);
+      return { say: t ? `Got it. I'll remember: ${t.text}.` : "I didn't catch what to remember." };
+    }
+    case "list": {
+      const todos = await openTodos(env);
+      return { say: todos.length ? `You have ${plural(todos.length, "item")}: ${listOut(todos.map((t) => t.text))}.` : "Your list is clear." };
+    }
+    case "done": {
+      const t = await findTodo(env, it.text);
+      if (!t) return { say: `I couldn't find ${it.text} on your list.` };
+      await completeTodo(env, t.id);
+      const left = (await openTodos(env)).length;
+      return { say: `Nice. Crossed off: ${t.text}. ${left ? `${plural(left, "item")} left.` : "Your list is clear."}` };
+    }
     default:
       return { say: `Sorry, I didn't catch that.${(await hasSecret(env, "anthropic")) ? "" : " Say help to hear what I can do."}` };
   }
 }
+
+export type { ReplyRow };
