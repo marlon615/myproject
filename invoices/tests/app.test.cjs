@@ -173,7 +173,8 @@ async function qrText(page) {
     await page.waitForTimeout(100);
     check(await page.inputValue("#address") === "12 Main Street\nMontego Bay", "known store fills in its address");
     await row(page, "Okra").locator(".prod-check").click();
-    check(await row(page, "Okra").locator(".price-input").inputValue() === "90", "last price is remembered for the product");
+    check(await row(page, "Okra").locator(".price-input").inputValue() === "", "prices stay on their invoice: the next invoice starts fresh");
+    await row(page, "Okra").locator(".price-input").fill("90");
     await page.waitForTimeout(900);
 
     // Owner dashboard: PIN, totals, history, open.

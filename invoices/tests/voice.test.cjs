@@ -183,6 +183,54 @@ const NO_SPEECH = `Object.defineProperty(window, "SpeechRecognition", { value: u
     await p3.waitForSelector("dialog.sheet[open] textarea.dictate-box");
     check(await p3.inputValue("dialog.sheet[open] textarea.dictate-box") === "Hope Store two dozen okra", "if listening is refused, the words so far carry into the keyboard box");
     await c3.close();
+
+    // The owner's test sentence: three clean lines, no orange, 24×315 + 16×230 + 12×250 = $14,240.
+    const c4 = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await c4.addInitScript(FAKE_SPEECH);
+    const p4 = await c4.newPage();
+    p4.on("pageerror", (e) => errors.push("test sentence: " + e.message));
+    await p4.goto(`${srv.url}/`);
+    await p4.waitForFunction(() => window.__appReady === true);
+    await p4.click("#mic-btn");
+    await p4.waitForFunction(() => window.__speech.started === 1);
+    await p4.evaluate(() => window.__say("Sarah Supermarket, 14 Wellington Street, Brownstone, 24 beetroot juice 315 per unit, 16 green juice 230 per unit, 12 pumpkin punch 250 per unit"));
+    await p4.click("#mic-btn");
+    await p4.waitForSelector("dialog.review[open]");
+    const lines4 = await p4.locator("dialog.review .review-line").allTextContents();
+    check(lines4.length === 3, "test sentence: exactly three lines in the review", lines4.join(" | "));
+    check(await p4.locator("dialog.review .review-line.needs-fix, dialog.review .review-line.needs-look, dialog.review .review-issue").count() === 0, "test sentence: no orange warnings at all");
+    const calc4 = await p4.locator("dialog.review .review-line-calc").allTextContents();
+    check(calc4.join(" | ") === "24 × $315.00 | 16 × $230.00 | 12 × $250.00", "test sentence: each price attached to its own product", calc4.join(" | "));
+    check(await p4.textContent("dialog.review .review-total-amt") === "$14,240.00" && await p4.locator("dialog.review .review-apply").isEnabled(), "test sentence: review total $14,240.00, ready to put on the invoice", await p4.textContent("dialog.review .review-total-amt"));
+    await p4.screenshot({ path: path.join(OUT, "voice-6-test-sentence-review.png") });
+    await p4.click("dialog.review .review-apply");
+    await p4.waitForSelector("dialog.review", { state: "detached" });
+    await p4.waitForTimeout(300);
+    const r4 = (n) => p4.locator(".prod-row", { hasText: n }).first().locator(".line-total").textContent();
+    check(await r4("Beetroot Juice") === "$7,560.00" && await r4("Green Juice") === "$3,680.00" && await r4("Pumpkin Punch") === "$3,000.00", "line totals: quantity × spoken unit price");
+    check(await p4.textContent("#grand-amount") === "$14,240.00" && await p4.textContent("#grand-count") === "3 items", "grand total on the invoice: $14,240.00", await p4.textContent("#grand-amount"));
+    await p4.locator(".prod-row", { hasText: "Beetroot Juice" }).first().scrollIntoViewIfNeeded();
+    await p4.screenshot({ path: path.join(OUT, "voice-7-test-sentence-invoice.png") });
+
+    // A spoken date sets the invoice date (not the address); and the next invoice starts fresh (no $315 carried over).
+    await p4.waitForTimeout(700);
+    await p4.click("#new-btn");
+    await p4.waitForTimeout(300);
+    await p4.evaluate(() => window.scrollTo(0, 0));
+    await p4.click("#mic-btn");
+    await p4.waitForFunction(() => window.__speech.started === 2);
+    await p4.evaluate(() => window.__say("Sarah Supermarket, 12th of the 11th 2026, 14 Wellington Street, Brownstone, 24 beetroot juice"));
+    await p4.click("#mic-btn");
+    await p4.waitForSelector("dialog.review[open]");
+    check(await p4.inputValue("dialog.review input[aria-label='Invoice date']") === "2026-11-12" && await p4.inputValue("dialog.review textarea[aria-label='Store address']") === "14 Wellington Street, Brownstone", "'12th of the 11th 2026' → date 12 Nov 2026, kept out of the address");
+    check(/24 × no price/.test(await p4.textContent("dialog.review")) && !/315/.test(await p4.textContent("dialog.review")), "next invoice starts fresh: no price carried over from the last one");
+    await p4.click("dialog.review .review-apply");
+    await p4.waitForSelector("dialog.review", { state: "detached" });
+    await p4.waitForTimeout(200);
+    check(await p4.inputValue("#date") === "2026-11-12" && await p4.inputValue("#address") === "14 Wellington Street, Brownstone", "invoice date set from what was said");
+    check(await p4.locator(".prod-row", { hasText: "Beetroot Juice" }).first().locator(".price-input").inputValue() === "", "the beetroot price box is empty on the new invoice");
+    await c4.close();
+    check(errors.length === 0, "no console errors (test sentence)", errors.join(" | "));
   } finally {
     await browser.close();
     await srv.close();

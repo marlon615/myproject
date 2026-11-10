@@ -4,7 +4,7 @@
  */
 import { init as initDb, invoices, products, settings } from "./db.js";
 import {
-  SELLER, UNITS, UNIT_NAMES, debounce, defaultUnitFor, h, invoiceNo, itemsMissingPrice, lastPriceFor, lineTotal, money,
+  SELLER, UNITS, UNIT_NAMES, debounce, defaultUnitFor, h, invoiceNo, itemsMissingPrice, lineTotal, money,
   normalizeUnit, parseAmount, priceInputText, qtyText, storeKey, sumTotals, todayISO, uid, withTotals,
 } from "./util.js";
 import { choiceSheet, confirmSheet, toast } from "./ui.js";
@@ -167,16 +167,7 @@ async function saveNow() {
     const saved = await invoices.put({ ...d, number: state.inv.number || undefined });
     Object.assign(state.inv, { id: saved.id, number: saved.number, createdAt: saved.createdAt });
     state.savedAt = new Date(saved.updatedAt);
-    await settings.set("currentId", saved.id);
-    const prices = {};
-    for (const it of saved.items) if (it.productId && it.price !== null && state.products.some((p) => p.id === it.productId)) prices[it.productId] = { price: it.price, unit: it.unit };
-    await products.rememberPrices(prices);
-    for (const p of state.products) {
-      const v = prices[p.id];
-      if (!v) continue;
-      p.lastPrices = { ...(p.lastPrices || {}), [v.unit]: v.price };
-      if (v.unit === defaultUnitFor(p)) p.lastPrice = v.price;
-    }
+    await settings.set("currentId", saved.id); // prices stay on this invoice only: the next one starts fresh
     renderNumber();
     renderSaveStatus();
   } catch (e) {
@@ -258,7 +249,7 @@ function buildRow(p) {
     UNITS.map((u) => h("option", { value: u }, UNIT_NAMES[u])));
   unit.value = unitNow;
   qty.value = l?.qty ?? "1";
-  price.value = l?.price ?? priceInputText(lastPriceFor(p, unitNow));
+  price.value = l?.price ?? "";
   const total = h("output", { class: "line-total num", id: `${id}-total` });
   const detail = h("div", { class: "prod-detail" },
     h("div", { class: "qty" },
@@ -313,7 +304,6 @@ function setOn(pid, on) {
   l.name = r.product.name;
   l.unit = l.unit || defaultUnitFor(r.product);
   if (on && !(parseAmount(l.qty) > 0)) l.qty = "1";
-  if (on && !l.price) l.price = priceInputText(lastPriceFor(r.product, l.unit));
   r.qty.value = l.qty;
   r.price.value = l.price;
   updateRow(pid);
@@ -432,11 +422,7 @@ function wireEvents() {
     if (e.target.matches(".unit-select")) {
       const pid = e.target.closest(".prod-row").dataset.id;
       const r = rows.get(pid), l = lineFor(pid);
-      l.unit = normalizeUnit(e.target.value);
-      // A price is per unit: offer the last price used for this unit, never a converted one.
-      const remembered = lastPriceFor(r.product, l.unit);
-      l.price = remembered !== null ? priceInputText(remembered) : "";
-      r.price.value = l.price;
+      l.unit = normalizeUnit(e.target.value); // the price box is now per this unit
       updateRow(pid);
       changed();
       return;
@@ -630,9 +616,10 @@ async function typedInvoice(reason, text) {
 }
 
 async function reviewAndApply(candidates) {
-  const parsed = bestParse(candidates, { products: state.products, stores: state.stores });
+  const parsed = bestParse(candidates, { products: state.products, stores: state.stores, today: todayISO() });
   const result = await reviewSpokenInvoice(parsed, {
     products: state.products,
+    currentDate: el.date.value || todayISO(),
     onSpeakAgain: () => { voice.busy = false; if (canListen()) startListening(); else typedInvoice("unsupported", ""); },
   });
   if (result) await applyVoice(result);
@@ -651,6 +638,7 @@ async function applyVoice(result) {
     });
     if (!mode) return;
   }
+  if (result.date) el.date.value = result.date;
   if (result.store) el.store.value = result.store;
   if (result.address) el.address.value = result.address;
   else {
@@ -667,8 +655,8 @@ async function applyVoice(result) {
     l.on = true;
     l.unit = line.unit;
     l.name = p.name;
-    if (line.price !== null) l.price = priceInputText(line.price);
-    else if (!sameUnit) l.price = priceInputText(lastPriceFor(p, line.unit));
+    if (line.price !== null) l.price = priceInputText(line.price); // this invoice only — never saved as a standing price
+    else if (!(mode === "add" && sameUnit)) l.price = "";
   }
   renderList();
   changed();

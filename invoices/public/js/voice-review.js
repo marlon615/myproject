@@ -6,14 +6,14 @@
  * "Speak again" calls onSpeakAgain() inside the tap (so listening can start straight away) and resolves null.
  */
 import {
-  UNITS, UNIT_NAMES, defaultUnitFor, h, lastPriceFor, lineTotal, money, normalizeUnit, parseAmount, priceInputText, qtyText,
+  UNITS, UNIT_NAMES, defaultUnitFor, h, lineTotal, money, normalizeUnit, parseAmount, priceInputText, qtyText,
   qtyWithUnit, sumTotals,
 } from "./util.js";
 
 const BLOCKING = new Set(["product", "which", "quantity", "price"]);
 const blocking = (line) => Boolean(line.issue && BLOCKING.has(line.issue.kind));
 
-export function reviewSpokenInvoice(parsed, { products, onSpeakAgain } = {}) {
+export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDate = "" } = {}) {
   return new Promise((resolve) => {
     const byId = new Map(products.map((p) => [p.id, p]));
     const lines = parsed.lines.map((l) => ({ ...l }));
@@ -24,6 +24,8 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain } = {}) {
     store.value = parsed.store || "";
     const address = h("textarea", { class: "review-input", rows: "2", autocapitalize: "words", "aria-label": "Store address", placeholder: "Store address" });
     address.value = parsed.address || "";
+    const date = h("input", { type: "date", class: "review-input", "aria-label": "Invoice date" });
+    date.value = parsed.date || currentDate;
     const list = h("ul", { class: "review-lines", "aria-label": "Products heard" });
     const totalAmt = h("strong", { class: "review-total-amt num" });
     const totalCount = h("span", { class: "review-total-count" });
@@ -43,11 +45,7 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain } = {}) {
       if (!p) return;
       line.productId = id;
       line.name = p.name;
-      if (!line.unitSaid) line.unit = line.unit || defaultUnitFor(p);
-      if (line.price === null) {
-        const last = lastPriceFor(p, line.unit);
-        if (last !== null) { line.price = last; line.priceFrom = "last time"; }
-      }
+      if (!line.unitSaid) line.unit = defaultUnitFor(p);
       line.issue = recheck(line);
       render();
     }
@@ -63,16 +61,7 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain } = {}) {
       unit.value = normalizeUnit(line.unit);
       const price = h("input", { type: "text", inputmode: "decimal", class: "review-input num", autocomplete: "off", "aria-label": "Price per unit", placeholder: "Add price" });
       price.value = line.price === null ? "" : priceInputText(line.price);
-      let priceTyped = false;
-      price.addEventListener("input", () => { priceTyped = true; });
-      const offerPrice = () => {
-        const p = byId.get(sel.value);
-        if (!p || priceTyped) return;
-        const last = lastPriceFor(p, unit.value);
-        price.value = last === null ? "" : priceInputText(last);
-      };
-      sel.addEventListener("change", () => { const p = byId.get(sel.value); if (p && !line.unitSaid) unit.value = defaultUnitFor(p); offerPrice(); });
-      unit.addEventListener("change", offerPrice);
+      sel.addEventListener("change", () => { const p = byId.get(sel.value); if (p && !line.unitSaid) unit.value = defaultUnitFor(p); });
 
       const save = () => {
         const p = byId.get(sel.value);
@@ -81,7 +70,7 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain } = {}) {
         line.qty = parseAmount(qty.value);
         line.unit = normalizeUnit(unit.value);
         const newPrice = parseAmount(price.value);
-        if (newPrice !== line.price) line.priceFrom = newPrice === null ? null : priceTyped ? "typed" : "last time";
+        if (newPrice !== line.price) line.priceFrom = newPrice === null ? null : "typed";
         line.price = newPrice;
         line.issue = recheck(line);
         openKey = null;
@@ -108,7 +97,6 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain } = {}) {
         h("span", { class: "review-line-calc num" }, calc),
         h("span", { class: "review-line-total num" }, line.qty === null || line.price === null ? "—" : money(lineTotal(line.qty, line.price)))));
       if (line.issue) li.append(h("p", { class: "review-issue" }, line.issue.message));
-      else if (line.priceFrom === "last time") li.append(h("p", { class: "review-note" }, "Price from last time"));
       const choices = (line.issue?.choices || []).filter((id) => byId.has(id));
       if (choices.length && openKey !== line.key) {
         li.append(h("div", { class: "review-choices", role: "group", "aria-label": "Choose the product" },
@@ -135,6 +123,7 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain } = {}) {
     apply.addEventListener("click", () => {
       if (apply.disabled) return;
       finish({
+        date: /^\d{4}-\d{2}-\d{2}$/.test(date.value) ? date.value : null,
         store: store.value.trim(),
         address: address.value.trim(),
         lines: lines.map((l) => ({ productId: l.productId, qty: parseAmount(l.qty), unit: normalizeUnit(l.unit), price: parseAmount(l.price) })),
@@ -152,7 +141,8 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain } = {}) {
       h("div", { class: "review-body" },
         h("section", { class: "review-card" },
           h("label", { class: "review-field" }, h("span", { class: "review-field-label" }, "Store"), store),
-          h("label", { class: "review-field" }, h("span", { class: "review-field-label" }, parsed.addressFrom === "last time" ? "Address (from last time)" : "Address"), address)),
+          h("label", { class: "review-field" }, h("span", { class: "review-field-label" }, parsed.addressFrom === "last time" ? "Address (from last time)" : "Address"), address),
+          h("label", { class: "review-field" }, h("span", { class: "review-field-label" }, parsed.date ? `Date (heard “${parsed.dateHeard}”)` : "Date"), date)),
         list,
         h("button", { type: "button", class: "btn btn-ghost review-add", onclick: () => {
           const line = { key: `r${++keySeq}`, productId: null, name: "", qty: null, unit: "each", price: null, priceFrom: null, heard: "", issue: { kind: "product", message: "Choose the product." } };

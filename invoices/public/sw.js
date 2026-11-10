@@ -4,7 +4,7 @@
  * newest version; the open app reloads itself if it's still on the splash, or offers "Refresh" otherwise.
  * VERSION is stamped by scripts/stamp-sw.cjs.
  */
-const VERSION = "98629c1ad425";
+const VERSION = "f4ff74709019";
 const CACHE = `mw-invoices-${VERSION}`;
 
 // On Cloudflare "/index.html" redirects to "/" and "/v.html" to "/v", so the pages are cached by those URLs.

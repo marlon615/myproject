@@ -3,16 +3,19 @@
  *   "Sarah Supermarket, 14 Wellington Street, Brownstone, two dozen beetroot juice, one dozen cucumber juice,
  *    five dozen large bammy, fifty pounds okra at two fifty"
  *
- * parseSpokenInvoice(text, { products, stores }) →
- *   { store, address, addressFrom, lines, transcript }
- *   line: { key, productId, name, qty, unit, price, priceFrom ("said" | "last time" | null), heard, issue }
+ * parseSpokenInvoice(text, { products, stores, today }) →
+ *   { store, address, addressFrom, date, dateHeard, lines, transcript }
+ *   line: { key, productId, name, qty, unit, price, priceFrom ("said" | null), heard, issue }
+ *
+ * Prices are only ever the ones said for this invoice ("24 beetroot juice 315 per unit", "16 green juice at 230");
+ * nothing is filled in from earlier invoices. A spoken date ("12th of the 11th 2026") sets the invoice date.
  *   issue: null | { kind, message, choices? }   kind: "product" | "which" | "quantity" | "price" | "noPrice" | "store"
  *
  * Nothing unclear is guessed: a word that doesn't clearly match a product, a missing amount, or a price that
  * can't be read comes back as a line with an `issue`, for the review screen to highlight.
  * Pure (no DOM), so it can be tested anywhere.
  */
-import { defaultUnitFor, lastPriceFor, normalizeUnit, storeKey } from "./util.js";
+import { defaultUnitFor, normalizeUnit, todayISO } from "./util.js";
 
 // ── Words ────────────────────────────────────────────────────────────────
 
@@ -21,6 +24,8 @@ const ONES = { zero: 0, oh: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 
 const TENS = { twenty: 20, thirty: 30, forty: 40, fourty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
 const CONNECTORS = new Set(["and", "also", "plus", "then", "the", "some", "with", "um", "uh", "er", "ok", "okay", "next"]);
 const PRICE_WORDS = new Set(["at", "for", "@", "$", "price", "priced", "cost", "costs"]);
+/** Words that only ever describe a price ("per unit", "each") — never part of a product name. */
+const PER_WORDS = new Set(["per", "each", "apiece", "unit", "units", "item", "items"]);
 const STREET_WORDS = new Set(["street", "st", "road", "rd", "avenue", "ave", "lane", "ln", "drive", "dr", "way", "close", "crescent",
   "boulevard", "blvd", "terrace", "place", "square", "highway", "hwy", "circle", "court", "path", "district", "plaza"]);
 const BUSINESS_WORDS = new Set(["supermarket", "supermarkets", "store", "stores", "shop", "shops", "mart", "minimart", "market", "markets",
@@ -138,6 +143,22 @@ function unitAt(t, j) {
   return null;
 }
 
+/**
+ * After a price: "per unit", "per item", "per dozen", "per pound", "per bag", "each", "apiece", "a dozen", "a pound".
+ * → { unit: "dozen"|"bag"|"lb"|null (null = per item), end } | null
+ */
+function perMarkerAt(t, j) {
+  const w = t[j]?.w;
+  if (!w) return null;
+  if (w === "each" || w === "apiece") return { unit: null, end: j + 1 };
+  if (w !== "per" && w !== "a" && w !== "an") return null;
+  const next = t[j + 1]?.w;
+  const u = unitAt(t, j + 1);
+  if (u) return { unit: u.unit === "each" ? null : u.unit, end: u.end };
+  if (next && /^(unit|units|item|items|one|piece|pieces)$/.test(next)) return { unit: null, end: j + 2 };
+  return w === "per" ? { unit: null, end: j + 1 } : null;
+}
+
 /** "two dozen", "a dozen", "half a dozen", "fifty pounds of", "3 bags", "12". → { qty, unit|null, end } | null */
 function readQuantity(t, i) {
   let j = i, qty = null;
@@ -223,7 +244,7 @@ const scoreWindow = (text, e) => Math.max(similarity(compact(text), e.c), simila
  * Words that are numbers, units or price words never start or join a product name.
  */
 function matchAt(t, i, matcher) {
-  const stop = (tok) => !tok || wordNumber(tok.w) !== null || unitAt([tok], 0) || PRICE_WORDS.has(tok.w) || CONNECTORS.has(tok.w) || tok.w === "of";
+  const stop = (tok) => !tok || wordNumber(tok.w) !== null || unitAt([tok], 0) || PRICE_WORDS.has(tok.w) || PER_WORDS.has(tok.w) || CONNECTORS.has(tok.w) || tok.w === "of";
   if (stop(t[i])) return null;
   const best = new Map(); // product id → { score, end }
   for (let len = 1; len <= 5 && i + len <= t.length; len++) {
@@ -326,6 +347,66 @@ function splitHeader(tokens, stores) {
   return { store, address, addressFrom };
 }
 
+// ── Dates ────────────────────────────────────────────────────────────────
+
+const ORDINALS = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
+  eleventh: 11, twelfth: 12, thirteenth: 13, fourteenth: 14, fifteenth: 15, sixteenth: 16, seventeenth: 17, eighteenth: 18,
+  nineteenth: 19, twentieth: 20, thirtieth: 30 };
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+const MONTH_RE = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec";
+const ORD_RE = "(?:\\d{1,2}(?:st|nd|rd|th)?|(?:twenty|thirty)[\\s-]+(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth)";
+const YEAR_RE = "(?:\\d{4}|twenty[\\s-]+twenty(?:[\\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?|two[\\s-]+thousand(?:[\\s-]+and)?[\\s-]+twenty(?:[\\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?)";
+const LEAD_RE = "(?:\\b(?:dated|date|on)\\s+)?(?:the\\s+)?";
+
+function ordinalValue(s) {
+  const w = s.toLowerCase().replace(/[\s-]+/g, " ").trim();
+  const d = /^(\d{1,2})(?:st|nd|rd|th)?$/.exec(w);
+  if (d) return Number(d[1]);
+  const two = /^(twenty|thirty) (\w+)$/.exec(w);
+  if (two) return (two[1] === "twenty" ? 20 : 30) + (ORDINALS[two[2]] || 0);
+  return ORDINALS[w] ?? null;
+}
+function yearValue(s, fallback) {
+  if (!s) return fallback;
+  const w = s.toLowerCase().replace(/[\s-]+/g, " ").trim();
+  if (/^\d{4}$/.test(w)) return Number(w);
+  const tail = /twenty(?: (\w+))?$/.exec(w);
+  return tail ? 2020 + (ONES[tail[1]] || 0) : fallback;
+}
+const monthValue = (s) => {
+  const w = s.toLowerCase();
+  const i = MONTHS.findIndex((m) => m === w || m.slice(0, 3) === w.slice(0, 3));
+  return i >= 0 ? i + 1 : null;
+};
+
+/**
+ * Finds a spoken date — "12th of the 11th 2026", "the twelfth of November", "November 12th, 2026", "12/11/2026"
+ * (day first) — and removes it from the text so it never ends up in the store or address.
+ * → { date: "YYYY-MM-DD" | null, heard, rest }
+ */
+export function extractDate(text, today = todayISO()) {
+  const thisYear = Number(String(today).slice(0, 4)) || new Date().getFullYear();
+  const patterns = [
+    [new RegExp(`${LEAD_RE}(${ORD_RE})\\s+of\\s+(?:the\\s+)?(${ORD_RE})(?:\\s*,?\\s*(${YEAR_RE}))?`, "i"), (m) => [ordinalValue(m[1]), ordinalValue(m[2]), m[3]]],
+    [new RegExp(`${LEAD_RE}(${ORD_RE})\\s+(?:of\\s+)?(${MONTH_RE})\\b(?:\\s*,?\\s*(${YEAR_RE}))?`, "i"), (m) => [ordinalValue(m[1]), monthValue(m[2]), m[3]]],
+    [new RegExp(`(?:\\b(?:dated|date|on)\\s+)?\\b(${MONTH_RE})\\s+(?:the\\s+)?(${ORD_RE})\\b(?:\\s*,?\\s*(${YEAR_RE}))?`, "i"), (m) => [ordinalValue(m[2]), monthValue(m[1]), m[3]]],
+    [/(?:\b(?:dated|date|on)\s+)?\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})\b/i, (m) => [Number(m[1]), Number(m[2]), m[3].length === 2 ? String(2000 + Number(m[3])) : m[3]]],
+  ];
+  for (const [re, read] of patterns) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const [day, month, yearText] = read(m);
+    const year = yearValue(yearText, thisYear);
+    if (!day || !month || month > 12) continue;
+    const dim = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (day < 1 || day > dim) continue;
+    const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const rest = (text.slice(0, m.index) + ", " + text.slice(m.index + m[0].length)).replace(/\s*,\s*(,\s*)+/g, ", ");
+    return { date, heard: m[0].trim(), rest };
+  }
+  return { date: null, heard: "", rest: text };
+}
+
 // ── The whole invoice ────────────────────────────────────────────────────
 
 /** Where the products start: the first amount followed by a product (or a unit), or a product followed by an amount. */
@@ -350,8 +431,9 @@ function findItemsStart(t, matcher) {
 let keySeq = 0;
 const nextKey = () => `v${++keySeq}`;
 
-export function parseSpokenInvoice(text, { products = [], stores = [] } = {}) {
-  const t = tokenize(text);
+export function parseSpokenInvoice(text, { products = [], stores = [], today = todayISO() } = {}) {
+  const spokenDate = extractDate(String(text || ""), today);
+  const t = tokenize(spokenDate.rest);
   const matcher = buildMatcher(products);
   const byId = new Map(products.map((p) => [p.id, p]));
   const start = findItemsStart(t, matcher);
@@ -385,7 +467,7 @@ export function parseSpokenInvoice(text, { products = [], stores = [] } = {}) {
     } else {
       // Words that aren't a product we know: keep them, and ask.
       const words = [];
-      while (t[i] && !PRICE_WORDS.has(t[i].w) && !readQuantity(t, i) && !CONNECTORS.has(t[i].w)) { words.push(t[i]); i++; if (t[i - 1].pause) break; }
+      while (t[i] && !PRICE_WORDS.has(t[i].w) && !PER_WORDS.has(t[i].w) && !readQuantity(t, i) && !CONNECTORS.has(t[i].w)) { words.push(t[i]); i++; if (t[i - 1].pause) break; }
       if (!words.length && !q) { i = Math.max(i, from + 1); continue; } // stray word we can't use at all
       line.heard = words.map((x) => x.raw).join(" ");
       line.issue = { kind: "product", message: words.length ? `Didn't catch the product (heard “${line.heard}”).` : "Didn't catch the product.", choices: suggest(words.map((x) => x.w), products) };
@@ -396,48 +478,56 @@ export function parseSpokenInvoice(text, { products = [], stores = [] } = {}) {
       const after = readQuantity(t, i);
       if (after && (after.unit || !isConfident(matchAt(t, after.end, matcher)))) { line.qty = after.qty; line.unit = after.unit; i = after.end; }
     }
-    // Price: "at two fifty", "for 300", "$250", "at three fifty a pound"
+    // Unit price for this line: "at 230", "for 300", "$250", "315 per unit", "250 each", "4200 per dozen",
+    // "300 a pound" — or a number right after the product that isn't the next product's amount ("… 315, 16 green juice").
+    let price = null;
     if (t[i] && PRICE_WORDS.has(t[i].w)) {
-      const p = readPrice(t, t[i].w === "$" ? i : i + 1, { lineStartsAt });
-      if (p) {
-        line.price = p.value; line.priceFrom = "said"; i = p.end;
-        if (t[i] && /^(each|per|a|an)$/.test(t[i].w)) { const u = unitAt(t, t[i].w === "each" ? i : i + 1); if (u) { if (!line.unit) line.unit = u.unit; i = u.end; } else if (t[i].w === "each") i++; }
-      } else if (!line.issue) {
-        line.issue = { kind: "price", message: "Didn't catch the price." };
-        i++;
-      }
-    } else if (t[i] && i === t.length - 1 && wordNumber(t[i].w) !== null && line.productId) {
-      // A last number on its own after a product is its price ("… okra two fifty").
-      const p = readPrice(t, i);
-      if (p) { line.price = p.value; line.priceFrom = "said"; i = p.end; }
+      price = readPrice(t, t[i].w === "$" ? i : i + 1, { lineStartsAt });
+      if (!price && !line.issue) { line.issue = { kind: "price", message: "Didn't catch the price." }; i++; }
+    } else if (t[i] && wordNumber(t[i].w) !== null && (line.productId || line.issue?.kind === "which")) {
+      const cand = readPrice(t, i, { lineStartsAt });
+      if (cand && (perMarkerAt(t, cand.end) || cand.end >= t.length || (line.qty !== null && !lineStartsAt(i)))) price = cand;
     }
+    if (price) {
+      line.price = price.value;
+      line.priceFrom = "said";
+      i = price.end;
+      const per = perMarkerAt(t, i);
+      if (per) {
+        if (per.unit && !line.unit) line.unit = per.unit;
+        else if (per.unit && line.unit && per.unit !== line.unit && !line.issue) {
+          line.issue = { kind: "price", message: `The price was per ${per.unit === "lb" ? "pound" : per.unit}, but the amount was in ${line.unit === "lb" ? "pounds" : line.unit === "each" ? "items" : line.unit + "s"}.` };
+        }
+        i = per.end;
+      }
+    }
+    // Any leftover price words ("per unit" said twice, "each") are part of this line, never a product of their own.
+    while (t[i] && (PER_WORDS.has(t[i].w) || (t[i].w === "a" && t[i + 1] && PER_WORDS.has(t[i + 1].w)))) i++;
     lines.push(line);
     if (i === from) i++; // always move on
   }
 
-  // Units, prices from last time, and what still needs a look.
+  // Units, and what still needs a look. (Prices are only the ones said for this invoice.)
   for (const line of lines) {
     const p = line.productId ? byId.get(line.productId) : null;
     line.unitSaid = Boolean(line.unit);
     line.unit = normalizeUnit(line.unit || (p ? defaultUnitFor(p) : "each"));
-    if (line.price === null && p) {
-      const last = lastPriceFor(p, line.unit);
-      if (last !== null) { line.price = last; line.priceFrom = "last time"; }
-    }
     if (!line.issue && line.qty === null) line.issue = { kind: "quantity", message: "How many? I didn't catch the amount." };
-    if (!line.issue && line.productId && line.price === null) line.issue = { kind: "noPrice", message: `No price yet for ${line.unit === "each" ? "this" : `a ${line.unit === "lb" ? "pound" : line.unit}`}.` };
+    if (!line.issue && line.productId && line.price === null) line.issue = { kind: "noPrice", message: `No price said${line.unit === "each" ? "" : ` per ${line.unit === "lb" ? "pound" : line.unit}`}. Tap to add it.` };
   }
 
   // The same product said twice in the same unit: one line.
   const merged = [];
+  const mergeable = (l) => !l.issue || l.issue.kind === "noPrice";
   for (const line of lines) {
-    const twin = line.productId && merged.find((x) => x.productId === line.productId && x.unit === line.unit && !x.issue && !line.issue);
+    const twin = line.productId && mergeable(line) && merged.find((x) => x.productId === line.productId && x.unit === line.unit && mergeable(x));
     if (twin) {
       twin.qty = (twin.qty || 0) + (line.qty || 0);
       if (line.priceFrom === "said") {
         if (twin.priceFrom === "said" && twin.price !== line.price) twin.issue = { kind: "price", message: "Two different prices were said." };
         twin.price = line.price; twin.priceFrom = "said";
       }
+      if (twin.price !== null && twin.issue?.kind === "noPrice") twin.issue = null;
     } else merged.push(line);
   }
 
@@ -445,6 +535,8 @@ export function parseSpokenInvoice(text, { products = [], stores = [] } = {}) {
     store,
     address,
     addressFrom,
+    date: spokenDate.date,
+    dateHeard: spokenDate.heard,
     storeIssue: store ? null : { kind: "store", message: "Didn't hear the store name." },
     lines: merged,
     transcript: String(text || "").trim(),

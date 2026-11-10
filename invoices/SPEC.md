@@ -355,7 +355,10 @@ On every launch of the main app (`index.html` only, never the viewer) a splash s
   - Splits the store and address by pauses, the house number or business words.
   - Matches products by sound, aliases included.
   - Okra and Hot Pepper default to pounds.
-  - Last prices are used per unit only; a dozen is never priced as 12 × each.
+  - **Spoken prices** are the unit price for that line, on this invoice only: "24 beetroot juice 315 per unit", "16 green juice at 230", "250 each", "4200 per dozen", "300 a pound", or a bare number after the product that isn't the next product's amount.
+  - "Per unit", "each", "per dozen", "per pound" and "at" never become a product line.
+  - **No standing prices:** nothing is saved or pre-filled from earlier invoices, whether spoken or typed. Every invoice starts fresh.
+  - **Spoken dates** set the invoice date and are removed before the store and address are read. They're read day first: "12th of the 11th 2026", "the twelfth of November", "November 12th", "12/11/2026".
   - **Nothing unclear is guessed:** such lines carry an `issue`.
 - **Review (`js/voice-review.js`):** a full-screen "Check before the customer signs" screen.
   - Tap any line to fix the product, amount, unit or price.

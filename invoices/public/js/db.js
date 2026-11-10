@@ -2,11 +2,11 @@
  * On-phone storage (IndexedDB). Everything stays on this device; nothing is ever uploaded.
  *
  * Stores:
- *   products  { id, name, order, custom, hidden, lastPrice, createdAt }
+ *   products  { id, name, order, custom, hidden, createdAt }   (prices live on invoices only)
  *   invoices  { id, number, seller, store, address, date, items[], total, signature, signedAt, createdAt, updatedAt }
  *   settings  { key, value }
  */
-import { DEFAULT_PRODUCTS, SELLER, defaultProductId, defaultUnitFor, normalizeUnit, storeKey, tidy, uid, withTotals } from "./util.js";
+import { DEFAULT_PRODUCTS, SELLER, defaultProductId, storeKey, tidy, uid, withTotals } from "./util.js";
 
 const DB_NAME = "marlon-invoices";
 const DB_VERSION = 1;
@@ -108,7 +108,7 @@ export const products = {
         return same;
       }
       const order = rows.reduce((m, p) => Math.max(m, p.order ?? 0), 0) + 1;
-      const p = { id: uid("c_"), name: clean, order, custom: true, hidden: false, lastPrice: null, createdAt: nowISO() };
+      const p = { id: uid("c_"), name: clean, order, custom: true, hidden: false, createdAt: nowISO() };
       await done(s.products.put(p));
       return p;
     });
@@ -138,27 +138,6 @@ export const products = {
     const a = list[i], b = list[j];
     [a.order, b.order] = [b.order, a.order];
     await run("products", "readwrite", async (s) => { await done(s.products.put(a)); await done(s.products.put(b)); });
-  },
-  /**
-   * Remembers the last price used for each product, per unit: { productId: price } (the product's usual unit)
-   * or { productId: { price, unit } }. Prices are never converted between units (a dozen isn't 12 × each).
-   */
-  async rememberPrices(map) {
-    const entries = Object.entries(map || {})
-      .map(([id, v]) => [id, typeof v === "number" ? { price: v, unit: null } : v])
-      .filter(([, v]) => v && typeof v.price === "number" && Number.isFinite(v.price));
-    if (!entries.length) return;
-    await run("products", "readwrite", async (s) => {
-      for (const [id, { price, unit }] of entries) {
-        const p = await done(s.products.get(id));
-        if (!p) continue;
-        const u = unit ? normalizeUnit(unit) : defaultUnitFor(p);
-        let changed = false;
-        if (p.lastPrices?.[u] !== price) { p.lastPrices = { ...(p.lastPrices || {}), [u]: price }; changed = true; }
-        if (u === defaultUnitFor(p) && p.lastPrice !== price) { p.lastPrice = price; changed = true; }
-        if (changed) await done(s.products.put(p));
-      }
-    });
   },
 };
 
@@ -228,7 +207,7 @@ export async function init() {
     const created = nowISO();
     await run("products", "readwrite", async (s) => {
       for (const [i, name] of DEFAULT_PRODUCTS.entries()) {
-        await done(s.products.put({ id: defaultProductId(i), name, order: i + 1, custom: false, hidden: false, lastPrice: null, createdAt: created }));
+        await done(s.products.put({ id: defaultProductId(i), name, order: i + 1, custom: false, hidden: false, createdAt: created }));
       }
     });
     seeded = true;

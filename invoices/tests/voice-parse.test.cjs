@@ -6,11 +6,13 @@
   const check = (ok, name, extra = "") => { console.log(`${ok ? "PASS" : "FAIL"}  ${name}${extra ? "  — " + extra : ""}`); if (!ok) failures++; };
   const products = DEFAULT_PRODUCTS.map((name, i) => ({ id: defaultProductId(i), name }));
   const P = Object.fromEntries(products.map((p) => [p.name, p]));
-  P["Beetroot Juice"].lastPrice = 350;            // each
-  P["Okra"].lastPrice = 240;                      // per lb (okra's usual unit)
+  // Old saved prices (from before prices became per-invoice) must be ignored completely.
+  P["Beetroot Juice"].lastPrice = 350;
+  P["Okra"].lastPrice = 240;
   P["Cucumber Juice"].lastPrices = { dozen: 3800 };
   products.push({ id: "c_sorrel", name: "Sorrel Drink", custom: true });
-  const ctx = { products, stores: [{ name: "Rose Hall Grocery", address: "12 Main Street, Montego Bay" }] };
+  const ctx = { products, stores: [{ name: "Rose Hall Grocery", address: "12 Main Street, Montego Bay" }], today: "2026-11-10" };
+  const { sumTotals } = await import("../public/js/util.js");
   const brief = (l) => `${l.name || "?"}|${l.qty}|${l.unit}|${l.price}${l.issue ? "|!" + l.issue.kind : ""}`;
   const parse = (s) => parseSpokenInvoice(s, ctx);
 
@@ -18,9 +20,9 @@
   let r = parse("Sarah Supermarket, 14 Wellington Street, Brownstone, two dozen beetroot juice, one dozen cucumber juice, five dozen large bammy, fifty pounds okra at two fifty");
   check(r.store === "Sarah Supermarket", "store", r.store);
   check(r.address === "14 Wellington Street, Brownstone", "address", r.address);
-  check(r.lines.map(brief).join(" / ") === "Beetroot Juice|2|dozen|null|!noPrice / Cucumber Juice|1|dozen|3800 / Large Bammy|5|dozen|null|!noPrice / Okra|50|lb|250",
-    "lines: dozens, pounds, spoken price, per-unit last price, no conversion", r.lines.map(brief).join(" / "));
-  check(r.lines[1].priceFrom === "last time" && r.lines[3].priceFrom === "said", "price sources");
+  check(r.lines.map(brief).join(" / ") === "Beetroot Juice|2|dozen|null|!noPrice / Cucumber Juice|1|dozen|null|!noPrice / Large Bammy|5|dozen|null|!noPrice / Okra|50|lb|250",
+    "lines: dozens, pounds, the spoken price; nothing filled in from earlier invoices", r.lines.map(brief).join(" / "));
+  check(r.lines[3].priceFrom === "said" && r.lines.every((l) => l.priceFrom === "said" || l.price === null), "prices only ever come from what was said");
 
   // Same thing as speech recognition often returns it: no punctuation at all.
   r = parse("sarah supermarket 14 wellington street brownstone two dozen beetroot juice one dozen cucumber juice five dozen large bammy fifty pounds okra at two fifty");
@@ -55,7 +57,7 @@
   r = parse("Corner Shop, beetroot juice at banana, okra 5 pounds, okra 3 pounds");
   check(r.lines[0].name === "Beetroot Juice" && r.lines[0].issue && ["price", "quantity"].includes(r.lines[0].issue.kind), "unreadable price / missing amount is highlighted", JSON.stringify(r.lines[0].issue));
   const okra = r.lines.filter((l) => l.name === "Okra");
-  check(okra.length === 1 && okra[0].qty === 8 && okra[0].price === 240, "same product twice in the same unit: one line, amounts added", okra.map(brief).join(" / "));
+  check(okra.length === 1 && okra[0].qty === 8 && okra[0].price === null, "same product twice in the same unit: one line, amounts added (no old price)", okra.map(brief).join(" / "));
 
   // Nothing but products: no store heard.
   r = parse("2 dozen beetroot juice");
@@ -66,6 +68,34 @@
   check(r.store === "Corner Shop" && r.address === "6 Hope Road", "store and address before the products (no commas)", `${r.store} | ${r.address}`);
   check(r.lines.map(brief).join(" / ") === "Hot Pepper|3|lb|400 / Limes|2|bag|1200 / Okra|null|lb|250|!quantity",
     "'at four hundred and two bags limes' = 400, then 2 bags of limes; 'two hundred and fifty' = 250", r.lines.map(brief).join(" / "));
+
+  // The owner's test: prices said after each product, "per unit".
+  r = parse("Sarah Supermarket, 14 Wellington Street, Brownstone, 24 beetroot juice 315 per unit, 16 green juice 230 per unit, 12 pumpkin punch 250 per unit");
+  check(r.store === "Sarah Supermarket" && r.address === "14 Wellington Street, Brownstone", "test sentence: store and address", `${r.store} | ${r.address}`);
+  check(r.lines.map(brief).join(" / ") === "Beetroot Juice|24|each|315 / Green Juice|16|each|230 / Pumpkin Punch|12|each|250", "test sentence: three clean lines, no warnings", r.lines.map(brief).join(" / "));
+  check(sumTotals(r.lines) === 14240, "test sentence: 24×315 + 16×230 + 12×250 = $14,240", String(sumTotals(r.lines)));
+  check(!r.lines.some((l) => /per|unit|each/i.test(l.name + l.heard)), "'per unit' never becomes a product line");
+
+  // Every way of saying a unit price after the product.
+  const one = (s) => parse(`Shop, ${s}`).lines.map(brief).join(" / ");
+  check(one("24 beetroot, 315 per unit") === "Beetroot Juice|24|each|315", "'24 beetroot, 315 per unit'", one("24 beetroot, 315 per unit"));
+  check(one("16 green juice at 230") === "Green Juice|16|each|230", "'16 green juice at 230'", one("16 green juice at 230"));
+  check(one("12 pumpkin punch 250 each") === "Pumpkin Punch|12|each|250", "'250 each'", one("12 pumpkin punch 250 each"));
+  check(one("2 pumpkin punch 4200 per dozen") === "Pumpkin Punch|2|dozen|4200", "'4200 per dozen' makes it 2 dozen", one("2 pumpkin punch 4200 per dozen"));
+  check(one("5 okra 300 per pound") === "Okra|5|lb|300", "'300 per pound'", one("5 okra 300 per pound"));
+  check(one("24 beetroot juice three fifteen per unit, 16 green juice at two thirty") === "Beetroot Juice|24|each|315 / Green Juice|16|each|230", "spoken-word prices with 'per unit' and 'at'", one("24 beetroot juice three fifteen per unit, 16 green juice at two thirty"));
+  check(one("24 beetroot juice 315, 16 green juice 230") === "Beetroot Juice|24|each|315 / Green Juice|16|each|230", "a bare price after each product", one("24 beetroot juice 315, 16 green juice 230"));
+  check(one("24 beetroot juice 16 green juice") === "Beetroot Juice|24|each|null|!noPrice / Green Juice|16|each|null|!noPrice", "the next product's amount is never taken as a price", one("24 beetroot juice 16 green juice"));
+  check(one("24 beetroot juice at 315 per unit each") === "Beetroot Juice|24|each|315", "extra price words are absorbed, never a line", one("24 beetroot juice at 315 per unit each"));
+
+  // Dates: set the invoice date, and stay out of the address.
+  r = parse("Sarah Supermarket, 12th of the 11th 2026, 14 Wellington Street, Brownstone, 24 beetroot juice 315 per unit");
+  check(r.date === "2026-11-12" && r.address === "14 Wellington Street, Brownstone" && r.store === "Sarah Supermarket", "'12th of the 11th 2026' sets the date and stays out of the address", `${r.date} | ${r.store} | ${r.address}`);
+  r = parse("Sarah Supermarket 14 Wellington Street Brownstone 12th of the 11th 2026 24 beetroot juice 315 per unit");
+  check(r.date === "2026-11-12" && r.address === "14 Wellington Street, Brownstone" && r.lines.length === 1, "date with no commas, after the address", `${r.date} | ${r.address}`);
+  const D = (s) => parse(`Shop ${s} 2 okra`).date;
+  check(D("the twelfth of the eleventh twenty twenty six") === "2026-11-12" && D("12th November 2026") === "2026-11-12" && D("November 12th") === "2026-11-12" && D("12/11/2026") === "2026-11-12" && D("dated 3rd of March") === "2026-03-03", "other ways of saying a date (day first)");
+  check(parse("Shop 31st of the 2nd 2026 2 okra").date === null, "an impossible date (31 Feb) is not used");
 
   // Numbers and prices.
   const N = (s) => _test.readNumber(_test.tokenize(s), 0)?.value;
