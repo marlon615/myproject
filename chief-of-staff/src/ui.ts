@@ -306,29 +306,111 @@ export interface OwnerData {
   gmail: { connected: boolean; address: string };
   ai: boolean;
   pin: boolean;
+  paused: boolean;
+  killPhrase: string;
   waiting: number;
   repliesSent7: number;
   talks7: number;
   blocked: string[];
-  lastCheck: string;
+  lastCheck: { when: string; note: string } | null;
   recent: { at: string; text: string }[];
 }
 
+const OWNER_CSS = `
+.wrap{max-width:760px}
+.oc-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.oc-brand{display:flex;align-items:center;gap:12px}
+.oc-mark{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:linear-gradient(160deg,#f3cf8c,#b8822f);color:#1a1205;font:800 19px/1 ui-serif,Georgia,serif;box-shadow:0 0 0 1px rgba(255,255,255,.12) inset}
+.oc-title{font-size:1.05rem;font-weight:700;letter-spacing:-.01em;line-height:1.2}
+.oc-sub{font-size:.78rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+.oc-pill{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;font-size:.8rem;font-weight:700;border:1px solid}
+.oc-pill i{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 22%,transparent)}
+.oc-on{color:var(--yes);border-color:color-mix(in srgb,var(--yes) 35%,transparent);background:color-mix(in srgb,var(--yes) 9%,transparent)}
+.oc-off{color:var(--no);border-color:color-mix(in srgb,var(--no) 35%,transparent);background:color-mix(in srgb,var(--no) 9%,transparent)}
+.oc-check{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.84rem;color:var(--muted);padding:12px 2px 0}
+.oc-check b{color:var(--text);font-weight:600}
+.oc-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden;margin-top:20px}
+.oc-kpi{background:var(--surface);padding:16px 16px 14px}
+.oc-kpi .v{font-size:2rem;font-weight:750;letter-spacing:-.03em;line-height:1.1;font-variant-numeric:tabular-nums}
+.oc-kpi .l{font-size:.78rem;color:var(--muted);margin-top:4px;line-height:1.3}
+.oc-kpi.hot .v{color:var(--gold)}
+@media (max-width:560px){.oc-kpis{grid-template-columns:1fr 1fr}}
+.oc-sec{margin-top:28px}
+.oc-h{display:flex;align-items:baseline;justify-content:space-between;margin:0 2px 10px}
+.oc-h h3{margin:0;font-size:.74rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.oc-h span{font-size:.78rem;color:var(--muted)}
+.oc-panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.oc-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;border-top:1px solid var(--line)}
+.oc-row:first-child{border-top:0}
+.oc-row .k{font-weight:600}.oc-row .d{font-size:.82rem;color:var(--muted);margin-top:1px}
+.oc-badge{flex:none;font-size:.74rem;font-weight:700;padding:4px 10px;border-radius:8px;letter-spacing:.02em}
+.oc-badge.ok{color:var(--yes);background:color-mix(in srgb,var(--yes) 12%,transparent)}
+.oc-badge.no{color:#f3cf8c;background:rgba(233,184,100,.12)}
+.oc-feed{list-style:none;margin:0;padding:6px 0}
+.oc-feed li{display:grid;grid-template-columns:18px 1fr auto;gap:10px;align-items:baseline;padding:9px 16px;font-size:.94rem}
+.oc-feed .who{font-weight:600}
+.oc-feed .dot{width:8px;height:8px;border-radius:50%;margin-top:2px;justify-self:center;background:var(--muted)}
+.oc-feed .t-replied{background:var(--yes)}.oc-feed .t-blocked{background:var(--no)}.oc-feed .t-skipped{background:#6c6a66}.oc-feed .t-read{background:var(--gold)}
+.oc-feed time{font-size:.8rem;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.oc-empty{padding:18px 16px;color:var(--muted);font-size:.92rem}
+.oc-form{padding:18px 16px 16px}
+.oc-form label:first-of-type{margin-top:0}
+.oc-hint{font-size:.78rem;color:var(--muted);margin-top:6px}
+.oc-link{background:none;border:0;color:var(--gold);font:inherit;font-size:.86rem;font-weight:600;cursor:pointer;padding:6px 0}
+.oc-foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;margin-top:32px;padding-top:16px;border-top:1px solid var(--line);font-size:.82rem;color:var(--muted)}
+.oc-foot a{color:var(--muted)}.oc-foot a:hover{color:var(--text)}
+.flash{margin:16px 0 0}
+`;
+
 export function ownerPage(d: OwnerData) {
-  const ok = (b: boolean) => (b ? `<span style="color:var(--yes)">●</span>` : `<span style="color:var(--no)">●</span>`);
-  const tile = (label: string, v: string | number) => `<div class="card" style="margin:0"><div class="muted small">${label}</div><div style="font-size:1.8rem;font-weight:800">${esc(v)}</div></div>`;
-  return shell("Owner · Chief", `${d.flash ? `<div class="flash">${esc(d.flash)}</div>` : ""}
-<div style="font-size:1.9rem;font-weight:800;letter-spacing:-.02em;margin:6px 0 2px">Owner</div>
-<div class="muted small">Private. Not linked anywhere in the app. ${esc(d.lastCheck)}</div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">${tile("Important waiting", d.waiting)}${tile("Replies sent · 7 days", d.repliesSent7)}${tile("Conversations · 7 days", d.talks7)}${tile("Blocked senders", d.blocked.length)}</div>
-<h2>Recent</h2><div class="card">${d.recent.length ? d.recent.map((r) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(r.text)}</span><span class="muted small" style="white-space:nowrap">${esc(r.at)}</span></div>`).join("") : `<span class="muted">Nothing yet.</span>`}</div>
-<h2>Connections</h2>
-<div class="card small" style="line-height:2">${ok(d.gmail.connected)} Gmail ${d.gmail.address ? `· ${esc(d.gmail.address)}` : ""}<br>${ok(d.ai)} Anthropic key (understands plain words, writes and rewrites replies)<br>${ok(d.pin)} Passcode</div>
-<form method="post" action="/owner/connect" class="card">
-<div style="font-weight:700">Connect, once</div><div class="muted small">Only fill in what's missing. Everything is stored encrypted.</div>
-<label>Anthropic API key</label><input name="anthropic" type="password" autocomplete="off" placeholder="${d.ai ? "Saved · paste to replace" : "sk-ant-…"}">
-<label>Gmail app password${d.gmail.address ? "" : " (and address)"}</label>${d.gmail.address ? "" : `<input name="gmailAddress" type="email" placeholder="you@gmail.com" style="margin-bottom:8px">`}<input name="gmailPassword" type="password" autocomplete="off" placeholder="${d.gmail.connected ? "Saved · paste to replace" : "16 letters"}">
-<button class="btn" style="width:100%;margin-top:16px">Save and connect</button></form>
-${d.blocked.length ? `<h2>Blocked senders</h2><div class="card small">${d.blocked.map((b) => `<form method="post" action="/owner/unblock" style="display:flex;justify-content:space-between;align-items:center;padding:4px 0"><span>${esc(b)}</span><input type="hidden" name="email" value="${esc(b)}"><button style="background:none;border:0;color:var(--gold);font:inherit;cursor:pointer">Unblock</button></form>`).join("")}</div>` : ""}
-<div class="center small" style="margin-top:20px"><a href="/" class="muted">Back to Chief</a> · <a href="/passcode" class="muted">${d.pin ? "Change" : "Create"} passcode</a></div>`);
+  const badge = (ok: boolean, yes = "Connected", no = "Not set") => `<span class="oc-badge ${ok ? "ok" : "no"}">${ok ? yes : no}</span>`;
+  const kind = (t: string) => (/^Replied/.test(t) ? "replied" : /^Blocked/.test(t) ? "blocked" : /^Skipped/.test(t) ? "skipped" : "read");
+  const kpi = (v: number, l: string, hot = false) => `<div class="oc-kpi${hot && v ? " hot" : ""}"><div class="v">${esc(v)}</div><div class="l">${l}</div></div>`;
+  const ready = [d.gmail.connected, d.ai, d.pin].filter(Boolean).length;
+  return shell("Owner · Chief", `<style>${OWNER_CSS}</style>
+<header class="oc-top">
+  <div class="oc-brand"><div class="oc-mark" aria-hidden="true">C</div><div><div class="oc-sub">Owner console</div><div class="oc-title">Chief of Staff</div></div></div>
+  <span class="oc-pill ${d.paused ? "oc-off" : "oc-on"}"><i></i>${d.paused ? "Stood down" : "Autopilot on"}</span>
+</header>
+<div class="oc-check">${d.lastCheck ? `<span>Last Gmail check <b>${esc(d.lastCheck.when)}</b></span><span>${esc(d.lastCheck.note)}</span>` : `<span>No Gmail check yet</span>`}<span>Checks every 5 minutes</span></div>
+${d.flash ? `<div class="flash" role="status">${esc(d.flash)}</div>` : ""}
+
+<section class="oc-kpis" aria-label="This week">
+${kpi(d.waiting, "Important emails waiting", true)}${kpi(d.repliesSent7, "Replies sent, last 7 days")}${kpi(d.talks7, "Conversations, last 7 days")}${kpi(d.blocked.length, "Blocked senders")}
+</section>
+
+<section class="oc-sec">
+  <div class="oc-h"><h3>Recent activity</h3><span>Latest ${d.recent.length || ""}</span></div>
+  <div class="oc-panel">${d.recent.length ? `<ul class="oc-feed">${d.recent.map((r) => `<li><span class="dot t-${kind(r.text)}"></span><span>${esc(r.text.replace(/^(Read email from|Replied to|Skipped reply to|Blocked) .*/, "$1"))} <span class="who">${esc(r.text.replace(/^(Read email from|Replied to|Skipped reply to|Blocked) /, ""))}</span></span><time>${esc(r.at)}</time></li>`).join("")}</ul>` : `<div class="oc-empty">Nothing yet. Activity shows here as Chief reads, replies and blocks.</div>`}</div>
+</section>
+
+<section class="oc-sec">
+  <div class="oc-h"><h3>Connections</h3><span>${ready} of 3 ready</span></div>
+  <div class="oc-panel">
+    <div class="oc-row"><div><div class="k">Gmail</div><div class="d">${d.gmail.address ? esc(d.gmail.address) : "Reads important email and sends approved replies"}</div></div>${badge(d.gmail.connected)}</div>
+    <div class="oc-row"><div><div class="k">Anthropic key</div><div class="d">${d.ai ? "Full assistant: plain words, writes and rewrites replies" : "Basic mode until a key is added"}</div></div>${badge(d.ai, "Connected", "Basic mode")}</div>
+    <div class="oc-row"><div><div class="k">Passcode</div><div class="d">Locks Chief on this device · <a href="/passcode">${d.pin ? "Change" : "Create"}</a></div></div>${badge(d.pin, "On", "Not set")}</div>
+    <div class="oc-row"><div><div class="k">Kill phrase</div><div class="d">Say “${esc(d.killPhrase)}” to stop everything. “Chief, resume” to restart.</div></div>${badge(!d.paused, "Armed", "Active")}</div>
+  </div>
+</section>
+
+<section class="oc-sec">
+  <div class="oc-h"><h3>Connect</h3><span>Stored encrypted</span></div>
+  <form method="post" action="/owner/connect" class="oc-panel oc-form">
+    <label for="ak">Anthropic API key</label>
+    <input id="ak" name="anthropic" type="password" autocomplete="off" placeholder="${d.ai ? "Saved · paste a new one to replace" : "sk-ant-…"}">
+    <div class="oc-hint">Only fill in what's missing. Saved keys are never shown again.</div>
+    ${d.gmail.address ? "" : `<label for="ga">Gmail address</label><input id="ga" name="gmailAddress" type="email" placeholder="you@gmail.com">`}
+    <label for="gp">Gmail app password</label>
+    <input id="gp" name="gmailPassword" type="password" autocomplete="off" placeholder="${d.gmail.connected ? "Saved · paste a new one to replace" : "16 letters"}">
+    <button class="btn" style="width:100%;margin-top:18px">Save and connect</button>
+  </form>
+</section>
+
+${d.blocked.length ? `<section class="oc-sec">
+  <div class="oc-h"><h3>Blocked senders</h3><span>${d.blocked.length}</span></div>
+  <div class="oc-panel">${d.blocked.map((b) => `<form method="post" action="/owner/unblock" class="oc-row"><span>${esc(b)}</span><input type="hidden" name="email" value="${esc(b)}"><button class="oc-link">Unblock</button></form>`).join("")}</div>
+</section>` : ""}
+
+<footer class="oc-foot"><span>Private · not linked anywhere in the app</span><a href="/">Back to Chief →</a></footer>`);
 }

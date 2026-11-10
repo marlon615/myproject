@@ -159,8 +159,8 @@ async function ownerData(env: Env, flash: string | null) {
   const tz = env.APP_TIMEZONE || "America/Chicago";
   const fmt = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: tz, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   const week = new Date(Date.now() - 7 * 86400_000).toISOString();
-  const [s, gmail, ai, pin, waiting, sent7, talks7, blocked, last, recent] = await Promise.all([
-    getSettings(env), hasSecret(env, "gmail"), hasSecret(env, "anthropic"), hasPin(env),
+  const [s, gmail, ai, pin, paused, waiting, sent7, talks7, blocked, last, recent] = await Promise.all([
+    getSettings(env), hasSecret(env, "gmail"), hasSecret(env, "anthropic"), hasPin(env), isPaused(env),
     env.DB.prepare(IMPORTANT_COUNT).first<{ n: number }>(),
     env.DB.prepare("select count(*) as n from replies where status = 'sent' and sent_at > ?").bind(week).first<{ n: number }>(),
     env.DB.prepare("select count(*) as n from calls where updated_at > ?").bind(week).first<{ n: number }>(),
@@ -176,10 +176,10 @@ async function ownerData(env: Env, flash: string | null) {
   return {
     flash: flash ?? undefined,
     gmail: { connected: gmail, address: s.gmailAddress },
-    ai, pin,
+    ai, pin, paused, killPhrase: s.killPhrase,
     waiting: waiting?.n ?? 0, repliesSent7: sent7?.n ?? 0, talks7: talks7?.n ?? 0,
     blocked: blocked.results.map((b) => b.email),
-    lastCheck: lt ? `Last Gmail check ${fmt(lt.at)}: ${lt.note}.` : "",
+    lastCheck: lt ? { when: fmt(lt.at), note: lt.note.charAt(0).toUpperCase() + lt.note.slice(1) } : null,
     recent: recent.results.map((r) => ({ at: fmt(r.at), text: r.text })),
   };
 }
