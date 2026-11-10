@@ -1,7 +1,16 @@
-/* Startup splash: "Marlon" large and centered with "Delivery Invoices" beneath, on a clean background.
+/* Startup splash: the "Marlon" wordmark (custom flourished "M", clean "arlon") large and centered, with
+   "Delivery Invoices" small beneath it. Always dark, whatever the phone's light/dark setting.
    Shown for five seconds from launch, then it fades smoothly into the main page (timing in js/splash.js).
-   Load after base.css (uses its tokens). Markup lives at the top of <body> in index.html. */
+   Load after base.css. Markup lives at the top of <body> in index.html. */
 
+#splash {
+  --splash-bg: #0f1411;      /* deep green-black */
+  --splash-ink: #f3efe4;     /* warm ivory for the name */
+  --splash-accent: #6cc495;  /* soft green for "Delivery Invoices" (8.8:1 contrast) */
+}
+
+/* Paint the very first frame dark too, and stop the page behind from scrolling while the splash shows. */
+html.splash-active { background: #0f1411; }
 html.splash-active,
 html.splash-active body { overflow: hidden; }
 
@@ -12,8 +21,9 @@ html.splash-active body { overflow: hidden; }
   display: grid;
   place-items: center;
   padding: calc(24px + var(--safe-top)) 24px calc(24px + var(--safe-bottom));
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--splash-bg);
+  color: var(--splash-ink);
+  color-scheme: dark;
   opacity: 1;
   transition: opacity .8s cubic-bezier(.4, 0, .2, 1), visibility 0s linear .8s;
 }
@@ -32,8 +42,20 @@ html.splash-active body { overflow: hidden; }
   transform: translateY(-3vh);
 }
 
+/* The name: an inline SVG wordmark (paths only, fill: currentColor). */
 .splash-name {
   margin: 0;
+  line-height: 0;
+  color: var(--splash-ink);
+}
+.splash-name svg {
+  display: block;
+  width: min(80vw, 340px);
+  height: auto;
+  overflow: visible;
+}
+/* Fallback if the wordmark is plain text. */
+.splash-name:not(:has(svg)) {
   font-family: var(--font-display);
   font-weight: 700;
   font-size: clamp(60px, 20vw, 112px);
@@ -48,7 +70,7 @@ html.splash-active body { overflow: hidden; }
   font-size: 16px;
   line-height: 1.2;
   letter-spacing: .08em;
-  color: var(--brand);
+  color: var(--splash-accent);
 }
 
 /* Reduced motion: keep a short, gentle cross-fade (opacity only, no movement).

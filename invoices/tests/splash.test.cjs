@@ -38,8 +38,16 @@ async function state(page) {
       await page.waitForTimeout(800);
       let s = await state(page);
       check(s.present && s.opacity === 1 && s.inert && s.htmlLocked, "splash visible at launch, page behind is inert", JSON.stringify({ opacity: s.opacity, inert: s.inert }));
-      const text = await page.locator("#splash").innerText();
-      check(/^Marlon\s+Delivery Invoices$/i.test(text.trim()), "splash text is 'Marlon' + 'Delivery Invoices'", JSON.stringify(text));
+      const name = await page.evaluate(() => {
+        const n = document.querySelector("#splash .splash-name");
+        const svg = n && n.querySelector("svg");
+        return svg ? svg.getAttribute("aria-label") : n && n.textContent.trim();
+      });
+      const tag = (await page.locator("#splash .splash-tag").innerText()).trim();
+      check(name === "Marlon", "name reads 'Marlon'", JSON.stringify(name));
+      check(tag === "Delivery Invoices", "tagline is exactly 'Delivery Invoices'", JSON.stringify(tag));
+      const theme = await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content);
+      check(theme === "#0f1411", "status bar colour is dark during the splash", theme);
       const box = await page.locator(".splash-name").boundingBox();
       const vw = 390, vh = 844;
       const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
@@ -59,20 +67,26 @@ async function state(page) {
       await page.waitForFunction(() => !document.getElementById("splash"), null, { timeout: 3000 });
       s = await state(page);
       check(!s.present && !s.htmlLocked && s.doneAt !== null && s.doneAt < 6600, "splash removed after the fade", `done at ${s.doneAt?.toFixed(0)}ms`);
+      const themeAfter = await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content);
+      check(themeAfter === "#17633f", "status bar colour restored afterwards", themeAfter);
       await page.click("#b", { timeout: 1000 });
       check(true, "main page clickable afterwards");
       check(errors.length === 0, "no console errors", errors.join(" | "));
       await ctx.close();
     }
-    // 2) Dark mode look.
-    {
-      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: "dark" });
+    // 2) Always dark: same dark background whether the phone is in light or dark mode.
+    for (const scheme of ["light", "dark"]) {
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: scheme });
       const page = await ctx.newPage();
       await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=0`);
       await page.waitForTimeout(500);
-      const bg = await page.evaluate(() => getComputedStyle(document.getElementById("splash")).backgroundColor);
-      check(bg !== "rgb(255, 255, 255)", "dark mode uses a dark clean background", bg);
-      await page.screenshot({ path: path.join(out, "splash-dark.png") });
+      const c = await page.evaluate(() => ({
+        bg: getComputedStyle(document.getElementById("splash")).backgroundColor,
+        root: getComputedStyle(document.documentElement).backgroundColor,
+        ink: getComputedStyle(document.querySelector("#splash .splash-name")).color,
+      }));
+      check(c.bg === "rgb(15, 20, 17)" && c.root === "rgb(15, 20, 17)", `always dark (${scheme} mode phone)`, JSON.stringify(c));
+      if (scheme === "dark") await page.screenshot({ path: path.join(out, "splash-dark.png") });
       await ctx.close();
     }
     // 3) App not ready at 5 s → waits for app:ready (never fades into a blank page).

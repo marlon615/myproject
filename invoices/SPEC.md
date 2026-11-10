@@ -53,6 +53,7 @@ public/
   css/view.css          C  viewer styles (+ print styles)
   css/splash.css        LEAD (exists) startup splash styles — precache it
   js/splash.js          LEAD (exists) startup splash timing (classic deferred script) — precache it
+  splash/*.png          LEAD  dark iOS launch images (apple-touch-startup-image) — NOT precached (iOS fetches them at install)
   js/util.js            SHARED (exists) money/dates/ids/text/DOM helpers — do not edit; report needs
   js/db.js              SHARED (exists) IndexedDB storage — do not edit; report needs
   js/ui.js              SHARED (exists) toast(), choiceSheet(), confirmSheet(), alertSheet()
@@ -209,7 +210,7 @@ Capacity: a worst-case invoice must still fit, and each mode has a test. The wor
 - `manifest.webmanifest`:
   - name "Marlon Williams Invoices", short_name "Invoices", id "/", start_url "/", scope "/".
   - display "standalone", orientation "portrait".
-  - background_color "#ffffff" (matches the startup splash, so Android's launch screen hands over seamlessly), theme_color "#17633f".
+  - background_color "#0f1411" (the dark startup splash colour, so Android's launch screen hands over seamlessly; the splash is always dark), theme_color "#17633f".
   - Icons 192, 512 and maskable 512, with purpose set correctly.
 - `sw.js`:
   - Precache every file in `public/` that the app uses (the list above). On Cloudflare, `/index.html` redirects to `/` and `/v.html` to `/v`, so precache the **URLs `/` and `/v`**, not the `.html` names.
@@ -313,7 +314,9 @@ export class SignaturePad {
 ```
 
 ### Startup splash (owner request, LEAD owns the files)
-On every launch of the main app (`index.html` only, never the viewer) a splash shows **"Marlon"** large and centered with a small line **"Delivery Invoices"** beneath it, on a clean background, for **five seconds**, then fades smoothly (0.8 s) into the main page.
+On every launch of the main app (`index.html` only, never the viewer) a splash shows **"Marlon"** large and centered with a small line **"Delivery Invoices"** beneath it, for **five seconds**, then fades smoothly (0.8 s) into the main page.
+- The splash is **always dark** (#0f1411), never white, whatever the phone's light/dark setting.
+- The "M" is a custom, subtly flourished letterform; the rest of the word stays clean. The name is an inline SVG wordmark.
 - Files: `css/splash.css` and `js/splash.js` (a classic deferred script, independent of the app modules). Both must be in the service-worker precache.
 - index.html wiring:
   - `<html lang="en" class="splash-active">`.
