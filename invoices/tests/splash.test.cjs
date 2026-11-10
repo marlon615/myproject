@@ -124,6 +124,61 @@ async function state(page) {
       check(t >= 5000 && t <= 5800, "reduced motion: gone shortly after 5 s", `${t?.toFixed(0)}ms`);
       await ctx.close();
     }
+    // 6b) Tap anywhere skips straight to the main page — and the tap never presses what's underneath.
+    for (const how of ["touch", "mouse"]) {
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: how === "touch", hasTouch: how === "touch" });
+      const page = await ctx.newPage();
+      await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=0`);
+      await page.waitForTimeout(1200);
+      const b = await page.locator("#b").boundingBox();          // tap exactly over the hidden button
+      const x = b.x + b.width / 2, y = b.y + b.height / 2;
+      const tapAt = await page.evaluate(() => performance.now());
+      if (how === "touch") await page.touchscreen.tap(x, y); else await page.mouse.click(x, y);
+      await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-leaving") ?? true, null, { timeout: 2000 });
+      const leaveAt = await page.evaluate(() => performance.now());
+      check(leaveAt - tapAt < 250, `${how} tap starts the fade at once`, `${(leaveAt - tapAt).toFixed(0)}ms after the tap (t=${leaveAt.toFixed(0)}ms)`);
+      await page.waitForFunction(() => !document.getElementById("splash"), null, { timeout: 2000 });
+      const r = await page.evaluate(() => ({ clicks: window.__bClicks, doneAt: window.__splashDoneAt, inert: document.getElementById("app").inert }));
+      check(r.doneAt < tapAt + 1300 && !r.inert, `${how} tap: gone after one smooth fade, page usable`, `gone at ${r.doneAt.toFixed(0)}ms`);
+      check(r.clicks === 0, `${how} tap does not press the button underneath`, `clicks=${r.clicks}`);
+      await page.waitForTimeout(400);
+      check(await page.evaluate(() => window.__bClicks) === 0, `${how} tap: still no stray click afterwards`);
+      await ctx.close();
+    }
+    // 6c) A key press skips too (desktop / keyboard users).
+    {
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const page = await ctx.newPage();
+      await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=0`);
+      await page.waitForTimeout(900);
+      await page.keyboard.press("Space");
+      await page.waitForFunction(() => !document.getElementById("splash"), null, { timeout: 2000 });
+      const t = await page.evaluate(() => window.__splashDoneAt);
+      check(t < 2200, "a key press skips too", `gone at ${t.toFixed(0)}ms`);
+      await ctx.close();
+    }
+    // 6d) Tap while the app is still loading: waits for it, but no more than 1.5 s after the tap.
+    {
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+      const page = await ctx.newPage();
+      await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=1400`);
+      await page.waitForTimeout(500);
+      await page.touchscreen.tap(195, 600);
+      await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-leaving") ?? true, null, { timeout: 3000 });
+      const t1 = await page.evaluate(() => performance.now());
+      check(t1 >= 1350 && t1 <= 1700, "tap before the app is ready: fades the moment it is ready", `${t1.toFixed(0)}ms`);
+      await ctx.close();
+      const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+      const page2 = await ctx2.newPage();
+      await page2.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=never`);
+      await page2.waitForTimeout(500);
+      const tapAt = await page2.evaluate(() => performance.now());
+      await page2.touchscreen.tap(195, 600);
+      await page2.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-leaving") ?? true, null, { timeout: 3000 });
+      const t2 = await page2.evaluate(() => performance.now());
+      check(t2 - tapAt >= 1400 && t2 - tapAt <= 1800, "tap with a stuck app: fades after at most 1.5 s", `${(t2 - tapAt).toFixed(0)}ms after the tap`);
+      await ctx2.close();
+    }
     // 6) Automated browsers skip it unless ?splash is given (keeps the other test suites fast).
     {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });

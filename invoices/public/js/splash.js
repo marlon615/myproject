@@ -8,6 +8,9 @@
  *   the splash waits for it, but never longer than MAX_MS in total, so you don't fade into a blank page.
  * - While the splash shows, the page behind it is inert (no accidental taps or keyboard focus), and the
  *   browser/status-bar colour (meta theme-color) matches the dark splash; both are restored afterwards.
+ * - A tap anywhere (or any key) skips the wait and fades straight to the main page. It listens for "click",
+ *   which fires when the finger lifts, so the tap is fully used up by the splash and can't fall through
+ *   and press something on the page underneath.
  * - Automated browsers (navigator.webdriver) skip it so tests run fast; add "?splash" to the URL to force it.
  */
 (() => {
@@ -15,6 +18,7 @@
   const SHOW_MS = 5000;  // how long the splash stays fully visible
   const FADE_MS = 800;   // must match the transition in splash.css
   const MAX_MS = 10000;  // never hold the app back longer than this
+  const TAP_GRACE_MS = 1500; // after a tap, wait at most this long for a slow app before fading anyway
 
   const root = document.documentElement;
   const splash = document.getElementById("splash");
@@ -54,9 +58,23 @@
   setTimeout(() => { appReady = true; maybeLeave(); }, Math.max(0, MAX_MS - elapsed));
   document.addEventListener("app:ready", () => { appReady = true; maybeLeave(); }, { once: true });
 
+  // Tap anywhere (or press any key) to skip straight to the main page.
+  const listeners = new AbortController();
+  let tapped = false;
+  const skip = () => {
+    if (leaving || tapped) return;
+    tapped = true;
+    timeUp = true;
+    setTimeout(() => { appReady = true; maybeLeave(); }, TAP_GRACE_MS);
+    maybeLeave();
+  };
+  splash.addEventListener("click", skip, { signal: listeners.signal });
+  document.addEventListener("keydown", skip, { signal: listeners.signal });
+
   function maybeLeave() {
     if (leaving || !timeUp || !appReady) return;
     leaving = true;
+    listeners.abort();
     for (const el of madeInert) el.inert = false;   // the page is usable as soon as the fade begins
     restoreTheme();
     splash.classList.add("is-leaving");

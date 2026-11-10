@@ -316,6 +316,7 @@ export class SignaturePad {
 ### Startup splash (owner request, LEAD owns the files)
 On every launch of the main app (`index.html` only, never the viewer) a splash shows **"Marlon"** large and centered with a small line **"Delivery Invoices"** beneath it, for **five seconds**, then fades smoothly (0.8 s) into the main page.
 - The splash is **always dark** (#0f1411), never white, whatever the phone's light/dark setting.
+- **A tap anywhere skips it.** Any key press does too. It fades straight to the main page and never presses what's underneath, because the splash consumes the whole tap.
 - The "M" is a custom, subtly flourished letterform; the rest of the word stays clean. The name is an inline SVG wordmark.
 - Files: `css/splash.css` and `js/splash.js` (a classic deferred script, independent of the app modules). Both must be in the service-worker precache.
 - index.html wiring:

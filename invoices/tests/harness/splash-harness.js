@@ -4,3 +4,5 @@ const send = () => { window.__appReady = true; document.dispatchEvent(new Event(
 if (p !== "never") setTimeout(send, Number(p) || 0);
 window.__t0 = performance.now();
 document.addEventListener("splash:done", () => { window.__splashDoneAt = performance.now(); });
+window.__bClicks = 0;
+document.getElementById("b").addEventListener("click", () => { window.__bClicks++; });
