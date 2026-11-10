@@ -51,6 +51,8 @@ public/
   css/app.css           A  invoice screen styles
   css/dashboard.css     B  dashboard styles
   css/view.css          C  viewer styles (+ print styles)
+  css/splash.css        LEAD (exists) startup splash styles — precache it
+  js/splash.js          LEAD (exists) startup splash timing (classic deferred script) — precache it
   js/util.js            SHARED (exists) money/dates/ids/text/DOM helpers — do not edit; report needs
   js/db.js              SHARED (exists) IndexedDB storage — do not edit; report needs
   js/ui.js              SHARED (exists) toast(), choiceSheet(), confirmSheet(), alertSheet()
@@ -207,7 +209,7 @@ Capacity: a worst-case invoice must still fit, and each mode has a test. The wor
 - `manifest.webmanifest`:
   - name "Marlon Williams Invoices", short_name "Invoices", id "/", start_url "/", scope "/".
   - display "standalone", orientation "portrait".
-  - background_color "#f3f0e8", theme_color "#17633f".
+  - background_color "#ffffff" (matches the startup splash, so Android's launch screen hands over seamlessly), theme_color "#17633f".
   - Icons 192, 512 and maskable 512, with purpose set correctly.
 - `sw.js`:
   - Precache every file in `public/` that the app uses (the list above). On Cloudflare, `/index.html` redirects to `/` and `/v.html` to `/v`, so precache the **URLs `/` and `/v`**, not the `.html` names.
@@ -309,6 +311,18 @@ export class SignaturePad {
   clear(); isEmpty(); toDataURL() /* PNG, black on transparent, ~900×300 */; async fromDataURL(url); setDisabled(bool)
 }
 ```
+
+### Startup splash (owner request, LEAD owns the files)
+On every launch of the main app (`index.html` only, never the viewer) a splash shows **"Marlon"** large and centered with a small line **"Delivery Invoices"** beneath it, on a clean background, for **five seconds**, then fades smoothly (0.8 s) into the main page.
+- Files: `css/splash.css` and `js/splash.js` (a classic deferred script, independent of the app modules). Both must be in the service-worker precache.
+- index.html wiring:
+  - `<html lang="en" class="splash-active">`.
+  - `<link rel="stylesheet" href="/css/splash.css">` after base.css.
+  - `<script src="/js/splash.js" defer></script>` before the app module.
+  - This as the **first child of `<body>`**:
+    `<div id="splash" aria-hidden="true"><div class="splash-mark"><p class="splash-name">Marlon</p><p class="splash-tag">Delivery Invoices</p></div></div>`
+- app.js: after the first screen has rendered, run `window.__appReady = true; document.dispatchEvent(new Event("app:ready"));`. The splash never fades into a blank page; it waits for this signal, capped at 10 s in total.
+- Tests: automated browsers (`navigator.webdriver`) skip the splash so other tests aren't slowed down. Load `/?splash` to force it in a splash test.
 
 ### A: `js/app.js` (main screen)
 - Startup: `await db.init()`. Register `/sw.js` (scope `/`). Open `settings.currentId` if it still exists; otherwise start a new draft.

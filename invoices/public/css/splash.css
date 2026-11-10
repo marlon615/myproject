@@ -1,0 +1,58 @@
+/* Startup splash: "Marlon" large and centered with "Delivery Invoices" beneath, on a clean background.
+   Shown for five seconds from launch, then it fades smoothly into the main page (timing in js/splash.js).
+   Load after base.css (uses its tokens). Markup lives at the top of <body> in index.html. */
+
+html.splash-active,
+html.splash-active body { overflow: hidden; }
+
+#splash {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: grid;
+  place-items: center;
+  padding: calc(24px + var(--safe-top)) 24px calc(24px + var(--safe-bottom));
+  background: var(--paper);
+  color: var(--ink);
+  opacity: 1;
+  transition: opacity .8s cubic-bezier(.4, 0, .2, 1), visibility 0s linear .8s;
+}
+
+#splash.is-leaving {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.splash-mark {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  /* Sit a touch above the optical centre, the way printed title pages do. */
+  transform: translateY(-3vh);
+}
+
+.splash-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(60px, 20vw, 112px);
+  line-height: 1;
+  letter-spacing: -.02em;
+}
+
+.splash-tag {
+  margin: 16px 0 0;
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 1.2;
+  letter-spacing: .08em;
+  color: var(--brand);
+}
+
+/* Reduced motion: keep a short, gentle cross-fade (opacity only, no movement).
+   The id selector outranks base.css's global "transition: none !important". */
+@media (prefers-reduced-motion: reduce) {
+  #splash { transition: opacity .25s linear, visibility 0s linear .25s !important; }
+}
