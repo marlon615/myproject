@@ -1,0 +1,198 @@
+/* Invoice screen. Tokens and base controls come from base.css. */
+
+#invoice-screen {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: calc(14px + var(--safe-top)) var(--gutter) calc(110px + var(--safe-bottom));
+}
+
+svg.icon {
+  width: 20px; height: 20px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.icon-inline { display: inline-block; width: 18px; height: 18px; vertical-align: -3px; }
+.btn-small { min-height: 38px; padding: 7px 14px; font-size: 14px; }
+.btn-tall { min-height: 56px; font-size: 17px; }
+.link-btn {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 8px 10px;
+  background: none; border: 0; color: var(--brand); font-weight: 650; font-size: 15px; cursor: pointer;
+  text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--brand) 35%, transparent); text-underline-offset: 3px;
+}
+.fatal { margin: 40px 8px; padding: 18px; border-radius: var(--radius); background: var(--danger-soft); color: var(--danger); font-weight: 600; }
+
+/* ── Masthead ── */
+.masthead {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 10px 2px 18px;
+}
+.masthead-name {
+  font-family: var(--font-display); font-weight: 700; font-size: 31px; line-height: 1.08; letter-spacing: -.01em;
+}
+.masthead-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+  margin: 6px 0 0; font-size: 14.5px; color: var(--ink-2);
+}
+.masthead-signed {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px 2px 6px; border-radius: 999px;
+  background: var(--brand-soft); color: var(--brand); font-weight: 700; font-size: 12.5px;
+}
+.masthead-signed .icon { width: 15px; height: 15px; stroke-width: 2.6; }
+.owner-link { color: var(--ink-2); background: var(--paper); border-color: var(--line); box-shadow: var(--shadow); text-decoration: none; }
+
+/* ── Update banner ── */
+.update-banner {
+  position: fixed; z-index: 50; left: 50%; top: calc(10px + var(--safe-top)); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100vw - 24px);
+  padding: 8px 8px 8px 16px; border-radius: 999px; background: var(--ink); color: var(--paper); box-shadow: var(--shadow-lg);
+}
+.update-banner p { margin: 0; font-weight: 600; font-size: 14.5px; }
+.update-banner .btn { min-height: 36px; padding: 6px 14px; font-size: 14px; }
+
+/* ── Install card ── */
+.install-card {
+  display: flex; align-items: flex-start; gap: 12px; margin: 0 0 18px; padding: 14px 8px 14px 14px;
+  background: var(--brand-soft); border-color: color-mix(in srgb, var(--brand) 25%, transparent); box-shadow: none;
+}
+.install-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--brand); color: var(--brand-ink); flex: none; }
+.install-body { flex: 1; display: grid; gap: 10px; align-content: center; min-height: 36px; }
+.install-text { margin: 0; font-size: 15px; line-height: 1.4; color: var(--ink); }
+.install-body .btn { justify-self: start; }
+.install-close { width: 40px; min-height: 40px; color: var(--ink-2); }
+
+/* ── Sections ── */
+.block { margin-top: 22px; }
+.block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0 4px 10px; }
+.block-head .section-title { margin: 0; }
+.block-hint, .sign-status { margin: 0; font-size: 13px; color: var(--muted); }
+.sign-status { font-weight: 650; }
+.card.fields { display: grid; gap: 14px; padding: 16px; }
+.card.fields input[type="date"] { min-width: 0; }
+
+/* ── Products ── */
+.card.products { overflow: hidden; }
+.prod-list { list-style: none; margin: 0; padding: 0; }
+.prod-row {
+  padding: 4px 14px 4px 12px; border-top: 1px solid var(--line);
+  opacity: .45; transition: opacity .15s ease, background-color .15s ease;
+}
+.prod-row:first-child { border-top: 0; }
+.prod-row.is-on { opacity: 1; background: color-mix(in srgb, var(--brand-soft) 55%, transparent); }
+.prod-check {
+  position: relative; display: flex; align-items: center; gap: 12px; min-height: 52px; cursor: pointer;
+  -webkit-user-select: none; user-select: none;
+}
+.prod-cb { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.prod-box {
+  display: grid; place-items: center; width: 27px; height: 27px; flex: none;
+  border: 2px solid var(--line-strong); border-radius: 8px; background: var(--paper);
+  transition: background-color .15s ease, border-color .15s ease;
+}
+.prod-box .icon { width: 19px; height: 19px; stroke: var(--brand-ink); stroke-width: 3; opacity: 0; transform: scale(.6); transition: opacity .12s ease, transform .12s ease; }
+.prod-cb:checked + .prod-box { background: var(--brand); border-color: var(--brand); }
+.prod-cb:checked + .prod-box .icon { opacity: 1; transform: none; }
+.prod-cb:focus-visible + .prod-box { outline: 3px solid var(--focus); outline-offset: 2px; }
+.prod-name { font-size: 17px; line-height: 1.25; }
+.is-on .prod-name { font-weight: 650; }
+.prod-removed { display: block; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+
+.prod-detail {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+  padding: 2px 0 12px 39px;
+}
+.qty { display: inline-flex; align-items: stretch; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--paper); overflow: hidden; }
+.qty-btn {
+  width: 40px; min-height: 44px; border: 0; background: var(--paper-2); color: var(--ink);
+  font-size: 22px; font-weight: 500; line-height: 1; cursor: pointer; touch-action: manipulation;
+}
+.qty-btn:active { background: var(--line); }
+.qty .qty-input {
+  width: 54px; min-height: 44px; padding: 6px 2px; border: 0; border-radius: 0; text-align: center;
+  font-size: 17px; font-weight: 650; box-shadow: none; background: var(--paper);
+}
+.times { color: var(--muted); font-size: 16px; }
+.price {
+  display: inline-flex; align-items: center; flex: 1 1 104px; min-width: 104px; max-width: 150px;
+  border: 1px solid var(--line-strong); border-radius: 12px; background: var(--paper); padding-left: 11px;
+}
+.price:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent); }
+.price-cur { color: var(--muted); font-weight: 600; }
+.price .price-input {
+  width: 100%; min-height: 44px; padding: 6px 10px 6px 4px; border: 0; box-shadow: none; background: transparent;
+  font-size: 17px; font-weight: 650;
+}
+.needs-price .price { border-color: var(--accent); background: var(--accent-soft); }
+.needs-price .price-input::placeholder { color: var(--accent); opacity: 1; font-weight: 600; }
+.line-total { margin-left: auto; min-width: 88px; text-align: right; font-weight: 750; font-size: 17px; }
+.needs-price .line-total { color: var(--muted); }
+
+.prod-add {
+  display: flex; gap: 8px; padding: 12px 14px; border-top: 1px dashed var(--line-strong); background: var(--paper);
+}
+.prod-add input { flex: 1; min-width: 0; }
+.prod-add .btn { flex: none; padding: 10px 16px; }
+
+.grand-total {
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 18px 16px 18px 20px; border-top: 1px solid var(--line-strong); background: var(--paper-2);
+}
+.grand-total::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 4px; border-radius: 0 4px 4px 0; background: var(--accent); }
+.grand-label { display: grid; gap: 2px; }
+.grand-title { font-size: 13px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); }
+.grand-count { font-size: 13.5px; color: var(--muted); }
+.grand-amount { font-family: var(--font-display); font-size: 32px; line-height: 1.05; font-weight: 700; letter-spacing: -.01em; text-align: right; }
+
+/* ── Signature ── */
+.sign-card { padding: 12px; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.sign-pad {
+  position: relative; height: 172px; border: 1.5px dashed var(--line-strong); border-radius: 12px; background: var(--paper-2);
+  overflow: hidden;
+}
+.sign-guide {
+  position: absolute; left: 18px; right: 18px; bottom: 38px; display: flex; justify-content: space-between; align-items: flex-end;
+  padding-bottom: 6px; border-bottom: 1.5px solid var(--line-strong); color: var(--muted); pointer-events: none;
+}
+.sign-x { font-size: 22px; line-height: 1; }
+.sign-here { font-size: 13px; font-weight: 600; letter-spacing: .04em; }
+.sign-card.is-signed .sign-here { visibility: hidden; }
+.sign-card.is-signed .sign-pad { border-style: solid; border-color: color-mix(in srgb, var(--brand) 45%, var(--line-strong)); }
+.sign-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.sign-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; min-height: 38px; }
+.sign-tip { margin: 0 4px; font-size: 13.5px; color: var(--muted); }
+@media (prefers-color-scheme: dark) {
+  /* Ink is black (it prints black), so the pad stays light for the customer to see their signature. */
+  .sign-pad { background: #f4f2ec; border-color: #8e9488; }
+  .sign-guide { color: #6f756b; border-bottom-color: #b7b2a4; }
+}
+
+/* ── QR ── */
+.qr-card { padding: 18px 16px 10px; text-align: center; }
+.qr-box { display: grid; place-items: center; min-height: 230px; }
+.qr-box canvas { border-radius: 12px; background: #fff; box-shadow: 0 0 0 1px var(--line); }
+.qr-box.is-empty { min-height: 120px; border: 1.5px dashed var(--line-strong); border-radius: 12px; background: var(--paper-2); }
+.qr-empty { margin: 0; padding: 18px; color: var(--muted); font-size: 15px; }
+.qr-caption { margin: 14px 8px 2px; font-size: 14.5px; color: var(--ink-2); }
+
+/* ── Actions ── */
+.actions { display: grid; gap: 10px; }
+.actions .link-btn { justify-self: center; }
+.btn[aria-busy="true"] { opacity: .65; pointer-events: none; }
+.new-block { display: grid; gap: 8px; margin-top: 12px; }
+.save-status { margin: 0; text-align: center; font-size: 13px; color: var(--muted); }
+
+/* ── Sticky total bar ── */
+.total-bar {
+  position: fixed; z-index: 20; left: 50%; bottom: 0; width: min(560px, 100%);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 20px calc(12px + var(--safe-bottom));
+  background: var(--ink); color: var(--paper); border-radius: 18px 18px 0 0; box-shadow: var(--shadow-lg);
+  cursor: pointer; transform: translate(-50%, 110%); transition: transform .2s ease;
+}
+.total-bar.has-items:not(.is-near) { transform: translate(-50%, 0); }
+.total-bar-count { font-size: 14px; opacity: .8; }
+.total-bar-sum { font-size: 15px; }
+.total-bar-sum strong { margin-left: 6px; font-family: var(--font-display); font-size: 21px; }
+#invoice-screen[hidden] ~ .total-bar, [hidden] .total-bar { display: none; }
+
+@media (min-width: 600px) {
+  #invoice-screen { padding-top: calc(28px + var(--safe-top)); }
+}

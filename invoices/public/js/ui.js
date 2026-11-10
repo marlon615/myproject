@@ -34,7 +34,7 @@ export function choiceSheet({ title, message = "", choices, input = null }) {
     if (input) {
       box = h("input", { type: input.type || "text", placeholder: input.placeholder || "", inputmode: input.inputmode || null, autocomplete: "off", "aria-label": input.label || title });
     }
-    dlg.append(
+    dlg.append(...[ // (append() would turn a null into the text "null", so empty parts are dropped)
       h("h2", { id: "sheet-title" }, title),
       body,
       input ? h("div", { class: "field" }, input.label ? h("label", {}, input.label) : null, box) : null,
@@ -45,7 +45,7 @@ export function choiceSheet({ title, message = "", choices, input = null }) {
           onclick: () => finish(c.value),
         }, c.label)),
       ),
-    );
+    ].filter(Boolean));
     dlg.addEventListener("cancel", (e) => { e.preventDefault(); finish(null); });
     dlg.addEventListener("click", (e) => { if (e.target === dlg) finish(null); }); // tap outside
     document.body.append(dlg);

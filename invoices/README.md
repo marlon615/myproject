@@ -24,9 +24,16 @@ An offline delivery-invoice app that installs on a phone's home screen. It's pla
 ## Develop
 
 ```bash
-node tests/serve.cjs 8790        # local server that mimics Cloudflare (open http://localhost:8790)
+node tests/serve.cjs 8790        # local server that mimics the live site (open http://localhost:8790)
 npm test                         # every tests/*.test.cjs (Playwright + Node)
-npm run deploy                   # stamps the service-worker version, then deploys with wrangler
+npm run deploy                   # stamps the service-worker version, packs public/ into the Worker, deploys
 ```
+
+Hosting: a tiny Cloudflare Worker (`worker/index.js`) serves the files from `public/`, which `scripts/build-worker.cjs` packs in at deploy time. It applies `public/_headers`, maps `/` to index.html and `/v` to v.html, and uses ETags.
+
+Design assets are regenerated with scripts:
+- `scripts/make-wordmark.cjs`: the "Marlon" splash wordmark (Bodoni Moda, SIL OFL 1.1, with the custom flourished M).
+- `scripts/make-startup-images.cjs`: dark iPhone launch images.
+- `scripts/make-icons.cjs`: app icons.
 
 See `SPEC.md` for the module contracts, the QR payload format and the testing approach.

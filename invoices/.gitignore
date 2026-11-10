@@ -1,3 +1,4 @@
 node_modules/
 .wrangler/
 tests/output/
+worker/assets.generated.js
