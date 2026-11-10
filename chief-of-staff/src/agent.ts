@@ -103,8 +103,22 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
 const IMPORTANT = `select * from inbox where status = 'new' and (needs_reply = 1 or priority = 'high')
   order by case when needs_reply = 1 and priority = 'high' then 0 when needs_reply = 1 then 1 else 2 end, coalesce(received_at, created_at) desc limit 15`;
 
+/** Turns HTML leftovers like &amp; and &#39; back into normal characters. */
+export function decodeEntities(s: string) {
+  const named: Record<string, string> = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " ", rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"', mdash: "—", ndash: "–", hellip: "…", copy: "©", reg: "®", trade: "™" };
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (all, e: string) => {
+    if (e[0] === "#") { const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10); return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : ""; }
+    return named[e.toLowerCase()] ?? all;
+  });
+}
+
+/** Where marketing and notification footers usually start; nothing after this is worth reading aloud. */
+const FOOTER = /^(unsubscribe|manage (your )?(preferences|notifications|email)|view (this email )?in (your )?browser|privacy policy|terms of (service|use)|you('re| are) receiving this|this (email|message) was sent|©|copyright|all rights reserved|go to my account|download the app|follow us)\b/i;
+
 function cleanBody(m: InboxRow) {
-  const lines = (m.body_text || m.summary || "").split(/\r?\n/).map((l) => l.trim());
+  const lines = decodeEntities(m.body_text || m.summary || "").split(/\r?\n/).map((l) => l.trim());
+  const cut = lines.findIndex((l, i) => i > 0 && FOOTER.test(l));
+  if (cut > 0) lines.length = cut;
   for (let i = lines.length - 1; i >= Math.max(1, lines.length - 10); i--) {
     if (/^(thanks|thank you|many thanks|best|best regards|regards|kind regards|warm regards|blessings|sincerely|cheers|warmly|in christ|god bless|talk soon|-- ?)[\s,!.]*$/i.test(lines[i])) { lines.length = i; break; }
   }
@@ -315,8 +329,10 @@ function readAloud(m: InboxRow, n: number, of: number) {
   const who = m.from_name || m.from_email;
   const lines = cleanBody(m).split("\n");
   if (lines.length > 1 && /^(hi|hello|hey|dear|good (morning|afternoon|evening))\b[^.!?]{0,40}[,!]?$/i.test(lines[0])) lines.shift();
-  let body = lines.join(" ").replace(/\s+/g, " ").trim();
-  if (body.length > 900) body = body.slice(0, 900).replace(/[^.!?]*$/, "") + " That's the main part.";
+  let body = lines.join(" ").replace(/\s+/g, " ").trim()
+    .replace(/^\d{1,4}\s+(?=[A-Z])/, "")                         // stray numbers left over from formatted emails
+    .replace(/\b(?:[0-9a-f]{1,4}:){3,}[0-9a-f:]+\b|\b\d{1,3}(?:\.\d{1,3}){3}\b/gi, "an IP address"); // don't read IP addresses digit by digit
+  if (body.length > 600) body = body.slice(0, 600).replace(/[^.!?]*$/, "") + " That's the main part.";
   const person = m.needs_reply && m.from_name && !ORG.test(m.from_name);
   const lead = of > 1 ? (n === 1 ? "First" : n === of ? "Last one" : `Email ${n} of ${of}`) : "Here it is";
   return `${lead}, from ${who}.${m.subject ? ` Subject: ${m.subject}.` : ""} ${person ? `${firstName(m.from_name)} says` : "It says"}: ${body || "There's no text in it."}`;
@@ -362,6 +378,8 @@ async function basicTurn(env: Env, id: string, text: string, kind: "message" | "
     return `${prefix} ${readAloud(m, c.basic!.idx + 1, c.basic!.queue.length)} What would you like to do?`.trim();
   };
 
+  // Typed before tapping to talk: line up the emails quietly, then answer what was asked.
+  if (kind === "message" && !c.basic) await loadQueue();
   if (kind === "start" || !c.basic) {
     await loadQueue();
     const n = c.basic!.queue.length;
@@ -419,7 +437,7 @@ async function basicTurn(env: Env, id: string, text: string, kind: "message" | "
   }
 
   if (!m) return finish(`You're all caught up. ${HELP}`);
-  if (/\b(repeat|again|read it|what did (he|she|they) say)\b/.test(t)) return finish(await readCurrent(""));
+  if (/\b(repeat|again|read|first one|top one|what did (he|she|they) say|what s (first|waiting|up)|my emails?)\b/.test(t)) return finish(await readCurrent(""));
   if (/\bunsubscribe\b/.test(t)) { const r = await tool("unsubscribe", { email_id: m.id }); return finish(await next(String(r.result ?? "Done."))); }
   if (/\bblock\b/.test(t)) { await tool("block_sender", { email_id: m.id }); return finish(await next(`Blocked. Emails from ${m.from_name || m.from_email} will go to Spam.`)); }
   if (/\b(don t reply|do not reply|dont reply|no reply|ignore|no need)\b/.test(t)) { await tool("dont_reply", { email_id: m.id }); return finish(await next("Okay, no reply.")); }

@@ -162,6 +162,7 @@ ${o.voiceJs}
   function stopListening(){ if (S.rec) { try { S.rec.abort(); } catch(e){} S.rec = null; } }
   function listen(){
     if (!S.on || S.paused) return;
+    if (S.micOff) { setMode("idle", "Type to Chief"); return; }
     if (!SR) { setMode("listening", "Type to Chief"); return; }
     stopListening(); setMode("listening");
     var r = new SR(), final = ""; S.rec = r;
@@ -171,11 +172,11 @@ ${o.voiceJs}
       for (var i = e.resultIndex; i < e.results.length; i++) { if (e.results[i].isFinal) final += e.results[i][0].transcript; else interim += e.results[i][0].transcript; }
       $("you").textContent = (final + interim).trim();
     };
-    r.onerror = function(e){ if (e.error === "not-allowed" || e.error === "service-not-allowed") { S.on = false; setMode("idle", "Microphone is off"); $("said").textContent = "Allow the microphone for Chief in your phone's settings, then tap to talk."; } };
+    r.onerror = function(e){ if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture") { S.micOff = true; setMode("idle", "Microphone is off · type to Chief"); $("you").textContent = "To talk instead of type, allow the microphone for Chief in your phone's settings."; } };
     r.onend = function(){
       if (S.rec !== r) return; S.rec = null;
       var t = final.trim();
-      if (!S.on || S.paused) return;
+      if (!S.on || S.paused || S.micOff) return;
       if (!t) return setTimeout(listen, 200); // nothing heard: keep listening (the mic is off while Chief talks, so it never hears itself)
       send(t);
     };

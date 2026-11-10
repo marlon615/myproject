@@ -59,7 +59,7 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (path === "/robots.txt") return new Response("User-agent: *\nDisallow: /\n", { headers: { "Content-Type": "text/plain" } });
   if (path === "/manifest.webmanifest") return new Response(MANIFEST, { headers: { "Content-Type": "application/manifest+json" } });
   if (path === "/sw.js") return new Response(SERVICE_WORKER, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache" } });
-  if (path === "/icon-192.png") return icon(192);
+  if (path === "/icon-192.png" || path === "/favicon.ico") return icon(192);
   if (path === "/icon-512.png") return icon(512);
 
   if (method === "POST" && !sameOrigin(req)) return html("Forbidden", 403);

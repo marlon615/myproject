@@ -179,7 +179,7 @@ export async function syncInbox(env: Env, max = 6): Promise<{ added: number; mor
         await env.DB.prepare("update inbox set uid = ? where message_id = ?").bind(uid, messageId).run();
         continue;
       }
-      const text = (mail.text || (mail.html ?? "").replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " "))
+      const text = (mail.text || (mail.html ?? "").replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">"))
         .replace(/\n(On .{5,200}wrote:|-----Original Message-----)[\s\S]*$/i, "") // drop quoted history
         .replace(/\n>.*$/gm, "")
         .trim();
