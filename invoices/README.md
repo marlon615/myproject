@@ -7,6 +7,8 @@ An offline delivery-invoice app that installs on a phone's home screen. It's pla
 
 ## What it does
 
+- A dark startup splash and a permanent dark brand bar at the top of the main screen. Both show the "Marlon" wordmark (a refined Bodoni serif) with "Delivery Invoices". The same brand opens every printed receipt, PDF and customer page.
+
 - Writes invoices with store name, address, date (today by default) and a tickable product list. Ticked products get a quantity, a typed unit price and an automatic line total. Unticked products fade out and don't print.
 - Adds new products at any time.
 - Shows the grand total, then a finger-signature box.
@@ -32,7 +34,7 @@ npm run deploy                   # stamps the service-worker version, packs publ
 Hosting: a tiny Cloudflare Worker (`worker/index.js`) serves the files from `public/`, which `scripts/build-worker.cjs` packs in at deploy time. It applies `public/_headers`, maps `/` to index.html and `/v` to v.html, and uses ETags.
 
 Design assets are regenerated with scripts:
-- `scripts/make-wordmark.cjs`: the "Marlon" splash wordmark (Bodoni Moda, SIL OFL 1.1, with the custom flourished M).
+- `scripts/make-wordmark.cjs`: the "Marlon" wordmark (Bodoni Moda, SIL OFL 1.1) for the splash, the brand bar, receipts and the customer page.
 - `scripts/make-startup-images.cjs`: dark iPhone launch images.
 - `scripts/make-icons.cjs`: app icons.
 

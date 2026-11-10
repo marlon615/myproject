@@ -49,6 +49,20 @@ async function qrText(page) {
     await page.waitForFunction(() => window.__appReady === true);
     await page.addScriptTag({ path: require.resolve("jsqr/dist/jsQR.js") });
 
+    // Permanent brand bar: fixed, dark, outside the invoice form, never covering it.
+    const bar = await page.evaluate(() => {
+      const b = document.getElementById("brand-bar"), r = b.getBoundingClientRect(), cs = getComputedStyle(b);
+      const svg = b.querySelector("svg"), tag = b.querySelector(".brand-tag");
+      const form = document.getElementById("invoice-screen");
+      return { pos: cs.position, top: r.top, h: r.height, bg: cs.backgroundColor, label: svg && svg.getAttribute("aria-label"),
+        tag: tag && tag.textContent.trim(), tagColor: tag && getComputedStyle(tag).color, inForm: form.contains(b),
+        firstContentTop: document.querySelector(".masthead").getBoundingClientRect().top, svgH: svg && svg.getBoundingClientRect().height };
+    });
+    check(bar.pos === "fixed" && bar.top === 0 && bar.h <= 64 && bar.bg === "rgb(15, 20, 17)", "slim dark brand bar fixed at the top", JSON.stringify({ h: bar.h, bg: bar.bg }));
+    check(bar.label === "Marlon" && bar.svgH >= 18 && bar.tag === "Delivery Invoices" && bar.tagColor === "rgb(108, 196, 149)", "bar shows the Marlon wordmark and the green 'Delivery Invoices' line");
+    check(!bar.inForm && bar.firstContentTop >= bar.h, "bar sits outside the invoice form and never covers it", `content starts at ${bar.firstContentTop}px, bar ${bar.h}px`);
+    check(await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content) === "#0f1411", "browser/status bar colour matches the dark bar");
+
     // A fresh invoice.
     check(await page.textContent(".masthead-name") === "Marlon Williams", "header shows Marlon Williams");
     check(await page.inputValue("#date") === today, "date fills in today automatically", await page.inputValue("#date"));
@@ -58,6 +72,10 @@ async function qrText(page) {
     check(await page.textContent("#invoice-no") === "No. 0001" && await page.locator("#qr-box .qr-empty").count() === 1, "new invoice No. 0001 with a QR placeholder");
     for (const w of [390, 360]) { await page.setViewportSize({ width: w, height: 844 }); check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `no sideways scroll at ${w}px`); }
     await page.setViewportSize({ width: 390, height: 844 });
+
+    await page.mouse.wheel(0, 1400); await page.waitForTimeout(300);
+    check(await page.evaluate(() => document.getElementById("brand-bar").getBoundingClientRect().top === 0 && window.scrollY > 500), "brand bar stays in place while the invoice scrolls");
+    await page.evaluate(() => window.scrollTo(0, 0));
 
     // Date can be changed.
     await page.fill("#date", "2026-11-09");
@@ -160,7 +178,7 @@ async function qrText(page) {
     // Owner dashboard: PIN, totals, history, open.
     await page.click("#owner-link");
     await page.waitForSelector(".dash-key");
-    check(await page.locator("#invoice-screen").isHidden(), "dashboard replaces the invoice screen");
+    check(await page.locator("#invoice-screen").isHidden() && await page.locator("#brand-bar").isHidden(), "dashboard replaces the invoice screen (it keeps its own header)");
     const pin = async (digits) => { for (const d of digits) await page.locator(`.dash-key[aria-label="${d}"]`).click(); await page.waitForTimeout(150); };
     await pin("2468");
     await page.getByRole("button", { name: "Continue" }).click();
@@ -180,6 +198,7 @@ async function qrText(page) {
     await page.waitForFunction(() => !document.getElementById("invoice-screen").hidden);
     await page.waitForTimeout(300);
     check(await page.textContent("#invoice-no") === "No. 0001" && /^Signed/.test(await page.textContent("#sign-status")), "'Open and edit' loads that invoice");
+    check(await page.locator("#brand-bar").isVisible(), "brand bar is back on the invoice screen");
 
     // Customer viewer from the QR link.
     const url = await page.evaluate(async () => { const c = await import("/js/codec.js"); const db = await import("/js/db.js"); return c.invoiceToUrl(await db.invoices.get(await db.settings.get("currentId"))); });
@@ -188,6 +207,7 @@ async function qrText(page) {
     await v.goto(url);
     await v.waitForSelector(".sheet .seller");
     const vt = (await v.textContent(".sheet")).replace(/\s+/g, " ");
+    check(await v.locator('.brand svg[aria-label="Marlon"]').count() === 1 && (await v.textContent(".brand-tag")) === "Delivery Invoices", "customer page opens with the Marlon brand");
     check(/Marlon Williams/.test(vt) && /Invoice No\. 0001/.test(vt) && /Rose Hall Grocery/.test(vt) && /\$4,791\.00/.test(vt) && /Signed by the customer/.test(vt), "customer sees the full invoice from the QR link", vt.slice(0, 120));
     await v.screenshot({ path: path.join(OUT, "app-viewer.png"), fullPage: true });
     await v.goto(`${srv.url}/v#nonsense`);

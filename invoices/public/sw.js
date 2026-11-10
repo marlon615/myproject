@@ -3,7 +3,7 @@
  * Updates: a new version installs in the background and waits; the app shows "A new version is ready",
  * and "Refresh" posts {type: "SKIP_WAITING"} so it takes over. VERSION is stamped by scripts/stamp-sw.cjs.
  */
-const VERSION = "be90a2888499";
+const VERSION = "b5e089ff1627";
 const CACHE = `mw-invoices-${VERSION}`;
 
 // On Cloudflare "/index.html" redirects to "/" and "/v.html" to "/v", so the pages are cached by those URLs.
@@ -31,6 +31,7 @@ const PRECACHE = [
   "/js/pdf.js",
   "/js/share.js",
   "/js/printer.js",
+  "/js/wordmark.js",
   "/js/vendor/qrcode.js",
   "/icons/icon.svg",
   "/icons/icon-192.png",

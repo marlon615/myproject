@@ -26,7 +26,7 @@ const el = {
   print: $("print-btn"), sharePdf: $("share-pdf-btn"), shareImage: $("share-image-btn"),
   newBtn: $("new-btn"), saveStatus: $("save-status"),
   bar: $("total-bar"), barCount: $("bar-count"), barAmount: $("bar-amount"),
-  update: $("update-banner"), updateBtn: $("update-btn"),
+  update: $("update-banner"), updateBtn: $("update-btn"), brandBar: $("brand-bar"),
   install: $("install-card"), installIos: $("install-ios"), installAndroid: $("install-android"),
   installBtn: $("install-btn"), installDismiss: $("install-dismiss"),
 };
@@ -572,6 +572,7 @@ function go(hash) {
 async function route() {
   const owner = location.hash === "#/owner";
   el.main.hidden = owner;
+  el.brandBar.hidden = owner;
   if (owner) {
     await flushSave();
     showDashboard();

@@ -8,8 +8,10 @@ html, body { background: #ebe8df; color: #1a1c19; color-scheme: light; }
   border-top: 5px solid #17633f;
 }
 .sheet-head { text-align: center; padding-bottom: 18px; border-bottom: 1px dashed #cfc8b8; }
-.kicker { margin: 0; font-size: 12px; font-weight: 750; letter-spacing: .16em; text-transform: uppercase; color: #17633f; }
-.seller { margin: 6px 0 4px; font-family: var(--font-display); font-size: 32px; font-weight: 700; letter-spacing: -.01em; }
+.brand { display: grid; justify-items: center; padding: 2px 0 14px; }
+.brand-wordmark { display: block; width: min(62%, 250px); height: auto; color: #1a1c19; }
+.brand-tag { margin: 8px 0 0; font-size: 13px; font-weight: 650; letter-spacing: .1em; color: #17633f; }
+.seller { margin: 4px 0 4px; font-size: 18px; font-weight: 700; }
 .meta { margin: 0; color: #454a43; font-size: 15px; }
 .billed { padding: 16px 0 14px; border-bottom: 1px dashed #cfc8b8; }
 .label { margin: 0 0 4px; font-size: 12px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; color: #73796f; }

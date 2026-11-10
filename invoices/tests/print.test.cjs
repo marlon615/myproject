@@ -115,7 +115,8 @@ const SHARE_MOCK = `
       check(bytes[0] === 0x1b && bytes[1] === 0x40, `ESC/POS ${paper}mm starts with ESC @`);
       check(lines.every((l) => l.length <= cols), `ESC/POS ${paper}mm: every line fits ${cols} columns`, String(Math.max(...lines.map((l) => l.length))));
       const text = lines.join("\n");
-      check(/MARLON/.test(text) && /No\. 0007/.test(text) && /10 Nov 2026/.test(text) && /Rose Hall Grocery/.test(text) && /Montego Bay/.test(text), `ESC/POS ${paper}mm header fields present`);
+      check(/Marlon/.test(text) && /Delivery Invoices/.test(text) && /No\. 0007/.test(text) && /10 Nov 2026/.test(text) && /Seller: Marlon Williams/.test(text) && /Rose Hall Grocery/.test(text) && /Montego Bay/.test(text), `ESC/POS ${paper}mm brand + header fields present`);
+      check(text.indexOf("Delivery Invoices") < text.indexOf("No. 0007"), `ESC/POS ${paper}mm brand comes first`);
       check(/Coconut Water Cafe/.test(text) && !/Café/.test(text), `ESC/POS ${paper}mm folds accents to ASCII`);
       check(/TOTAL\s+\$[\d,]+\.\d\d/.test(text) && /5 items/.test(text) && /Not signed/.test(text), `ESC/POS ${paper}mm total, count, unsigned line`);
       check(!/Large Bammy/.test(text), `ESC/POS ${paper}mm leaves unticked products out`);
@@ -135,7 +136,16 @@ const SHARE_MOCK = `
     const qrData = qrImg && decodeRaster(qrImg).data;
     const url4 = await page.evaluate(() => T.url(4));
     check(qrData === url4, "printed QR (from the byte stream) decodes to the invoice link", qrData ? qrData.slice(0, 50) + "…" : "none");
-    check(imgs.length === 2, "signature and QR printed as images", `${imgs.length} images`);
+    check(imgs.length === 3, "brand, signature and QR printed as images", `${imgs.length} images`);
+    const firstImageAt = all.findIndex((b, i) => b === 0x1d && all[i + 1] === 0x76 && all[i + 2] === 0x30);
+    const noAt = Buffer.from(all).indexOf(Buffer.from("No. 0007"));
+    check(firstImageAt >= 0 && firstImageAt < noAt && imgs[0].bytesPerRow * 8 <= 384, "the brand image prints first, at the top of the receipt", `image at ${firstImageAt}, "No." at ${noAt}`);
+    // Save the printed brand as a picture to check the hairlines survived (PBM P4 is exactly this 1-bit format).
+    const brand = imgs[0], pbm = path.join(OUT, "print-brand-raster.pbm");
+    fs.writeFileSync(pbm, Buffer.concat([Buffer.from(`P4\n${brand.bytesPerRow * 8} ${brand.rows}\n`), brand.data]));
+    execFileSync("python3", ["-c", "import sys;from PIL import Image;Image.open(sys.argv[1]).convert('L').resize((Image.open(sys.argv[1]).width*3,Image.open(sys.argv[1]).height*3)).save(sys.argv[2])", pbm, pbm.replace(".pbm", ".png")]);
+    const ink = brand.data.reduce((n, b) => n + (b.toString(2).split("1").length - 1), 0) / (brand.bytesPerRow * 8 * brand.rows);
+    check(ink > 0.08 && ink < 0.6, "printed brand image has a sensible amount of ink", `${(ink * 100).toFixed(1)}%`);
     check(await page.evaluate(() => T.savedPrinterName()) === "PT-210", "printer remembered for next time");
     // Second print reuses the remembered printer without the chooser.
     await page.evaluate(() => { window.__ble.chunks = []; });

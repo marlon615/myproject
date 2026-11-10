@@ -1,9 +1,11 @@
 /**
  * The paper receipt: one layout model (used by the Bluetooth printer) and a canvas renderer (used for the
- * PDF and the picture). Only ticked products (inv.items) appear.
+ * PDF and the picture). Every receipt opens with the brand: the "Marlon" wordmark and "Delivery Invoices".
+ * Only ticked products (inv.items) appear.
  */
 import { invoiceToUrl } from "./codec.js";
 import { makeQr } from "./qr.js";
+import { WORDMARK } from "./wordmark.js";
 import { SELLER, invoiceNo, loadImage, money, prettyDate, qtyText, tidy, withTotals } from "./util.js";
 
 /** Everything the receipt shows, as ready-to-print text. */
@@ -32,7 +34,23 @@ export function receiptModel(inv) {
 
 export const itemCountText = (n) => `${n} item${n === 1 ? "" : "s"}`;
 
-const SERIF = 'ui-serif, "Iowan Old Style", Georgia, "Times New Roman", serif';
+export const BRAND_TAGLINE = "Delivery Invoices";
+
+/** Draws the "Marlon" wordmark with its top-left corner at (x, y), `width` wide, in the current fill colour. */
+export function drawWordmark(ctx, x, y, width) {
+  const [vx, vy, vw] = WORDMARK.viewBox;
+  const k = width / vw;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(k, k);
+  ctx.translate(-vx, -vy);
+  ctx.fill(new Path2D(WORDMARK.d));
+  ctx.restore();
+}
+
+/** Height of the wordmark when drawn `width` wide. */
+export const wordmarkHeight = (width) => width * WORDMARK.viewBox[3] / WORDMARK.viewBox[2];
+
 const SANS = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif';
 const INK = "#000";
 const SOFT = "#3a3a3a";
@@ -48,8 +66,7 @@ export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQ
   const inner = W - pad * 2;
   const s = scale;
   const font = {
-    title: { css: `700 ${31 * s}px ${SERIF}`, px: 31 * s },
-    sub: { css: `500 ${16 * s}px ${SANS}`, px: 16 * s },
+    tag: { css: `600 ${16 * s}px ${SANS}`, px: 16 * s },
     body: { css: `400 ${19 * s}px ${SANS}`, px: 19 * s },
     bold: { css: `700 ${19 * s}px ${SANS}`, px: 19 * s },
     small: { css: `400 ${15.5 * s}px ${SANS}`, px: 15.5 * s },
@@ -109,13 +126,16 @@ export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQ
   const gap = (px) => { y += Math.round(px * s); };
   const rule = (dashed = true) => { gap(7); ops.push({ kind: "rule", y: Math.round(y) + 0.5 * s, dashed }); gap(9); };
 
-  // Header
-  text(m.seller.toUpperCase(), font.title, { align: "center" });
-  gap(1);
-  text("Delivery invoice", font.sub, { align: "center", color: SOFT });
-  gap(12);
+  // Brand: the "Marlon" wordmark with "Delivery Invoices" beneath it.
+  const markW = Math.round(inner * 0.6), markH = Math.round(wordmarkHeight(markW));
+  ops.push({ kind: "wordmark", x: Math.round((W - markW) / 2), y: Math.round(y), w: markW });
+  y += markH;
+  gap(5);
+  text(BRAND_TAGLINE, font.tag, { align: "center", color: SOFT });
+  rule(false);
   lr(`No. ${m.number}`, m.dateText, font.bold);
   gap(4);
+  text(`Seller: ${m.seller}`, font.body);
   if (m.store) text(`Store: ${m.store}`, font.body);
   if (m.address) text(m.address, font.body, { color: SOFT });
   rule();
@@ -194,6 +214,9 @@ export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQ
       ctx.moveTo(op.x1, op.y);
       ctx.lineTo(op.x2, op.y);
       ctx.stroke();
+    } else if (op.kind === "wordmark") {
+      ctx.fillStyle = INK;
+      drawWordmark(ctx, op.x, op.y, op.w);
     } else if (op.kind === "image") {
       ctx.drawImage(op.img, op.x, op.y, op.w, op.h);
     } else if (op.kind === "qr") {

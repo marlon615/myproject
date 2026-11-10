@@ -1,11 +1,12 @@
 /**
  * Printing to Bluetooth thermal receipt printers (58 mm / 80 mm) with Web Bluetooth and ESC/POS commands.
+ * Every receipt opens with the brand ("Marlon" wordmark + "Delivery Invoices"), printed as an image.
  * Works in Chrome on Android (and in the Bluefy browser on iPhone). iPhone Safari has no Web Bluetooth, so
  * printInvoice() explains that and offers Share PDF instead.
  */
 import { settings } from "./db.js";
 import { makeQr, qrRaster } from "./qr.js";
-import { itemCountText, receiptModel } from "./receipt.js";
+import { BRAND_TAGLINE, drawWordmark, itemCountText, receiptModel, wordmarkHeight } from "./receipt.js";
 import { shareInvoicePdf } from "./share.js";
 import { choiceSheet, toast } from "./ui.js";
 import { asciiFold, h, loadImage } from "./util.js";
@@ -220,6 +221,7 @@ async function send(ch, bytes) {
 async function buildReceiptBytes(inv, paper) {
   const model = receiptModel(inv);
   const dots = paper === 80 ? 576 : 384;
+  const brandRaster = brandToRaster(Math.floor((dots * 0.74) / 8) * 8);
   const signatureRaster = model.signature ? await signatureToRaster(model.signature, Math.floor(dots * 0.7)) : null;
   let qr = null;
   try {
@@ -229,7 +231,41 @@ async function buildReceiptBytes(inv, paper) {
     if (scale >= 3) qr = qrRaster(code, { scale, margin: 4 });
     else if (Math.floor(dots / modules) >= 2) qr = qrRaster(code, { scale: Math.floor(dots / modules), margin: 4 });
   } catch { qr = null; }
-  return buildEscPos(model, { paper, signatureRaster, qrRaster: qr });
+  return buildEscPos(model, { paper, brandRaster, signatureRaster, qrRaster: qr });
+}
+
+/** The brand ("Marlon" wordmark + "Delivery Invoices") as a 1-bit raster `width` dots wide. */
+function brandToRaster(width) {
+  try {
+    const markW = Math.round(width * 0.94), markH = Math.round(wordmarkHeight(markW));
+    const tagPx = Math.max(14, Math.round(width * 0.078));
+    const height = markH + Math.round(tagPx * 0.55) + tagPx + 4;
+    const c = document.createElement("canvas");
+    c.width = width;
+    c.height = height;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "#000";
+    drawWordmark(ctx, Math.round((width - markW) / 2), 0, markW);
+    ctx.font = `600 ${tagPx}px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(BRAND_TAGLINE, width / 2, height - 4);
+    // Generous threshold so the Bodoni hairlines survive at 203 dpi.
+    const px = ctx.getImageData(0, 0, width, height).data;
+    const bytesPerRow = width / 8;
+    const data = new Uint8Array(bytesPerRow * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        if (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114 < 200) data[y * bytesPerRow + (x >> 3)] |= 0x80 >> (x & 7);
+      }
+    }
+    return { width, height, bytesPerRow, data };
+  } catch {
+    return null; // the text header is printed instead
+  }
 }
 
 /** Signature PNG → 1-bit raster (black where the ink is), trimmed top and bottom. */
@@ -272,7 +308,7 @@ async function signatureToRaster(dataUrl, targetWidth) {
  * The ESC/POS byte stream for a receipt model (pure: no DOM, so it can be tested anywhere).
  * Text is folded to ASCII and wrapped to 32 (58 mm) or 48 (80 mm) columns.
  */
-export function buildEscPos(model, { paper = 58, signatureRaster = null, qrRaster = null } = {}) {
+export function buildEscPos(model, { paper = 58, brandRaster = null, signatureRaster = null, qrRaster = null } = {}) {
   const cols = paper === 80 ? 48 : 32;
   const maxDots = paper === 80 ? 576 : 384;
   const out = [];
@@ -319,16 +355,22 @@ export function buildEscPos(model, { paper = 58, signatureRaster = null, qrRaste
 
   bytes(ESC, 0x40);           // initialise
   bytes(ESC, 0x74, 0x00);     // code page PC437
+  // Brand: the "Marlon" wordmark and "Delivery Invoices" (as an image, or as text if no image was made).
   align(1);
-  bold(true);
-  size(0x11);
-  for (const l of wrap(model.seller.toUpperCase(), Math.floor(cols / 2))) line(l);
-  size(0x00);
-  bold(false);
-  line("Delivery invoice");
+  if (brandRaster) {
+    raster(brandRaster);
+  } else {
+    bold(true);
+    size(0x11);
+    line("Marlon");
+    size(0x00);
+    bold(false);
+    line("Delivery Invoices");
+  }
   align(0);
-  line();
+  rule("=");
   lr(`No. ${model.number}`, model.dateText);
+  for (const l of wrap(`Seller: ${model.seller}`)) line(l);
   if (model.store) for (const l of wrap(`Store: ${model.store}`)) line(l);
   if (model.address) for (const l of wrap(model.address)) line(l);
   rule();

@@ -4,8 +4,24 @@
  */
 import { parseInvoiceHash } from "./codec.js";
 import { h, invoiceNo, money, prettyDate, qtyText } from "./util.js";
+import { WORDMARK } from "./wordmark.js";
 
 const root = document.getElementById("view");
+
+/** The "Marlon" wordmark as an inline SVG (same outlines as the app's splash and brand bar). */
+function wordmark() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", WORDMARK.viewBox.join(" "));
+  svg.setAttribute("class", "brand-wordmark");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Marlon");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", WORDMARK.d);
+  path.setAttribute("fill", "currentColor");
+  svg.append(path);
+  return svg;
+}
 
 function render() {
   const inv = parseInvoiceHash(location.hash);
@@ -22,7 +38,7 @@ function render() {
   root.replaceChildren(
     h("article", { class: "sheet" },
       h("header", { class: "sheet-head" },
-        h("p", { class: "kicker" }, "Delivery invoice"),
+        h("div", { class: "brand" }, wordmark(), h("p", { class: "brand-tag" }, "Delivery Invoices")),
         h("h1", { class: "seller" }, inv.seller),
         h("p", { class: "meta num" }, `Invoice No. ${invoiceNo(inv.number)}`, h("span", { "aria-hidden": "true" }, " · "), prettyDate(inv.date))),
       h("section", { class: "billed", "aria-label": "Delivered to" },

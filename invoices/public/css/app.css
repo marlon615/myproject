@@ -1,9 +1,26 @@
 /* Invoice screen. Tokens and base controls come from base.css. */
 
+/* ── Brand bar: permanent, fixed above the invoice (outside the form), dark like the splash ── */
+:root { --brand-bar-h: 56px; }
+.brand-bar {
+  position: fixed; z-index: 40; top: 0; left: 0; right: 0;
+  padding: var(--safe-top) 16px 0;
+  background: #0f1411; color: #f3efe4; color-scheme: dark;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .05), 0 4px 18px rgba(8, 10, 8, .22);
+}
+.brand-mark {
+  height: var(--brand-bar-h); margin: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+}
+.brand-name { display: block; line-height: 0; color: #f3efe4; }
+.brand-name svg { display: block; height: 23px; width: auto; }
+.brand-tag { font: 600 10.5px/1 var(--font); letter-spacing: .1em; color: #6cc495; }
+.brand-bar[hidden] { display: none; }
+
 #invoice-screen {
   max-width: 560px;
   margin: 0 auto;
-  padding: calc(14px + var(--safe-top)) var(--gutter) calc(110px + var(--safe-bottom));
+  padding: calc(var(--brand-bar-h) + 14px + var(--safe-top)) var(--gutter) calc(110px + var(--safe-bottom));
 }
 
 svg.icon {
@@ -41,7 +58,7 @@ svg.icon {
 
 /* ── Update banner ── */
 .update-banner {
-  position: fixed; z-index: 50; left: 50%; top: calc(10px + var(--safe-top)); transform: translateX(-50%);
+  position: fixed; z-index: 50; left: 50%; top: calc(var(--brand-bar-h) + 10px + var(--safe-top)); transform: translateX(-50%);
   display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100vw - 24px);
   padding: 8px 8px 8px 16px; border-radius: 999px; background: var(--ink); color: var(--paper); box-shadow: var(--shadow-lg);
 }
@@ -194,5 +211,5 @@ svg.icon {
 #invoice-screen[hidden] ~ .total-bar, [hidden] .total-bar { display: none; }
 
 @media (min-width: 600px) {
-  #invoice-screen { padding-top: calc(28px + var(--safe-top)); }
+  #invoice-screen { padding-top: calc(var(--brand-bar-h) + 28px + var(--safe-top)); }
 }
