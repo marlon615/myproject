@@ -1,0 +1,11 @@
+# Static, offline-first web app. No server code: everything runs on the phone.
+name = "marlon-invoices"
+compatibility_date = "2026-10-01"
+account_id = "30f2c89d75621ddef8b783383296410f"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "./public"
+html_handling = "auto-trailing-slash"
+not_found_handling = "404-page"
