@@ -9,6 +9,7 @@ An offline delivery-invoice app that installs on a phone's home screen. It's pla
 
 - A dark startup splash and a permanent dark brand bar at the top of the main screen. Both show the "Marlon" wordmark (a refined Bodoni serif) with "Delivery Invoices". The same brand opens every printed receipt, PDF and customer page.
 
+- Voice entry: tap "Speak the invoice", say the store, address and products ("two dozen beetroot juice … fifty pounds okra at two fifty"), then tap again. A review screen highlights anything unclear before the customer signs. It runs on the phone's own speech recognition, or the keyboard microphone when that's the best available.
 - Writes invoices with store name, address, date (today by default) and a tickable product list. Ticked products get a quantity, a typed unit price and an automatic line total. Unticked products fade out and don't print.
 - Adds new products at any time.
 - Shows the grand total, then a finger-signature box.

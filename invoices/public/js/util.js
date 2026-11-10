@@ -93,6 +93,36 @@ export function priceInputText(n) {
   return Number.isInteger(p) ? String(p) : p.toFixed(2);
 }
 
+// ── Units ────────────────────────────────────────────────────────────────
+
+/** How a line is counted: by the piece (default), by the dozen, by the bag, or by weight in pounds. */
+export const UNITS = Object.freeze(["each", "dozen", "bag", "lb"]);
+export const UNIT_NAMES = Object.freeze({ each: "each", dozen: "dozen", bag: "bag", lb: "lb" });
+export const normalizeUnit = (u) => (UNITS.includes(u) ? u : "each");
+
+/** Products sold by weight (pounds) unless another unit is chosen. */
+export const WEIGHT_PRODUCTS = Object.freeze(["Okra", "Hot Pepper"]);
+export const defaultUnitFor = (product) => normalizeUnit(product?.unit || (WEIGHT_PRODUCTS.includes(product?.name) ? "lb" : "each"));
+
+/** The owner's last price for a product in a unit (never converted between units), or null. */
+export function lastPriceFor(product, unit) {
+  const u = normalizeUnit(unit);
+  const p = product?.lastPrices?.[u];
+  if (typeof p === "number") return p;
+  return u === defaultUnitFor(product) && typeof product?.lastPrice === "number" ? product.lastPrice : null;
+}
+
+/** Quantity with its unit for receipts: "12" (each), "2 dozen", "1 bag", "3 bags", "50 lb". */
+export function qtyWithUnit(qty, unit) {
+  const q = qtyText(qty) || "0";
+  switch (normalizeUnit(unit)) {
+    case "dozen": return `${q} dozen`;
+    case "bag": return `${q} ${parseAmount(qty) === 1 ? "bag" : "bags"}`;
+    case "lb": return `${q} lb`;
+    default: return q;
+  }
+}
+
 // ── Invoices ─────────────────────────────────────────────────────────────
 
 /** 7 → "0007" */
@@ -107,6 +137,7 @@ export function withTotals(inv) {
     productId: it.productId ?? null,
     name: String(it.name ?? ""),
     qty: parseAmount(it.qty),
+    unit: normalizeUnit(it.unit),
     price: parseAmount(it.price),
     total: lineTotal(it.qty, it.price),
   }));

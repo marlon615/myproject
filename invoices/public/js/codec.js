@@ -4,12 +4,13 @@
  * Link QR (payload v1): `${origin}/v#` + payload. Everything travels after "#", which browsers never send to a
  * server, so the customer's phone shows the invoice from the link alone. Grammar (see SPEC.md):
  *   payload = "1" ~ seller ~ number ~ YYYYMMDD ~ store ~ address ~ items ~ total ~ flags
- *   items   = item *( "*" item ),  item = ( "@" index | text ) "," qty "," price
+ *   items   = item *( "*" item ),  item = ( "@" index | text ) "," qty [unit] "," price
+ *   unit    = "d" (dozen) | "b" (bag) | "p" (pounds); none = each (so links made before units still read)
  *   flags   = "" | "s" (signed by the customer)
  * Built-in products travel as "@index" into DEFAULT_PRODUCTS (only on an exact name match), which keeps
  * the QR small. Text QR: invoiceToText() — a plain-text invoice for phones with no internet.
  */
-import { DEFAULT_PRODUCTS, SELLER, invoiceNo, lineTotal, money, parseISODate, prettyDate, qtyText, sumTotals, withTotals } from "./util.js";
+import { DEFAULT_PRODUCTS, SELLER, invoiceNo, lineTotal, money, normalizeUnit, parseISODate, prettyDate, qtyWithUnit, sumTotals, withTotals } from "./util.js";
 
 export const PAYLOAD_VERSION = "1";
 
@@ -39,13 +40,16 @@ function num(n) {
 
 /** A strictly formatted non-negative decimal, or undefined if malformed. */
 const strictNum = (s) => (/^\d{1,12}(\.\d{1,4})?$/.test(s) ? Number(s) : undefined);
+const UNIT_CODE = { dozen: "d", bag: "b", lb: "p" };
+const CODE_UNIT = { d: "dozen", b: "bag", p: "lb" };
 
 /** The payload part of the link (after "#"). */
 export function encodePayload(inv) {
   const t = withTotals(inv);
   const items = t.items.map((it) => {
     const i = DEFAULT_PRODUCTS.indexOf(it.name);
-    return `${i >= 0 ? "@" + i : enc(it.name)},${num(it.qty)},${num(it.price)}`;
+    const unit = it.qty === null ? "" : UNIT_CODE[normalizeUnit(it.unit)] || "";
+    return `${i >= 0 ? "@" + i : enc(it.name)},${num(it.qty)}${unit},${num(it.price)}`;
   }).join("*");
   return [
     PAYLOAD_VERSION,
@@ -102,10 +106,13 @@ export function parseInvoiceHash(hash) {
         } else {
           name = dec(q[0]);
         }
-        const qty = q[1] === "" ? null : strictNum(q[1]);
+        const qm = /^(\d{1,12}(?:\.\d{1,4})?)([dbp]?)$/.exec(q[1]);
+        if (q[1] !== "" && !qm) return null;
+        const qty = qm ? Number(qm[1]) : null;
+        const unit = qm ? CODE_UNIT[qm[2]] || "each" : "each";
         const price = q[2] === "" ? null : strictNum(q[2]);
-        if (qty === undefined || price === undefined) return null;
-        items.push({ name, qty, price, total: lineTotal(qty, price) });
+        if (price === undefined) return null;
+        items.push({ name, qty, unit, price, total: lineTotal(qty, price) });
       }
     }
     const total = strictNum(f[7]);
@@ -127,7 +134,7 @@ export function invoiceToText(inv) {
   if (address) lines.push(`Address: ${address}`);
   lines.push(rule);
   for (const it of t.items) {
-    lines.push(it.name, `  ${qtyText(it.qty) || "0"} x ${it.price === null ? "(no price)" : money(it.price)} = ${money(it.total)}`);
+    lines.push(it.name, `  ${qtyWithUnit(it.qty, it.unit)} x ${it.price === null ? "(no price)" : money(it.price)} = ${money(it.total)}`);
   }
   if (!t.items.length) lines.push("(no items)");
   lines.push(rule, `TOTAL: ${money(t.total)}`);

@@ -69,6 +69,22 @@
       </a>
     </header>
 
+    <!-- Voice entry: one tap starts listening, the next tap stops. -->
+    <button type="button" class="btn btn-block mic-btn" id="mic-btn" aria-pressed="false">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a3 3 0 0 0-3 3v5.5a3 3 0 0 0 6 0V6.5a3 3 0 0 0-3-3zM6 11.5a6 6 0 0 0 12 0M12 17.5v3M9 20.5h6"/></svg>
+      <span class="mic-label" id="mic-label">Speak the invoice</span>
+    </button>
+
+    <section class="voice-panel card" id="voice-panel" aria-live="polite" hidden>
+      <div class="voice-head">
+        <span class="voice-dot" aria-hidden="true"></span>
+        <strong class="voice-state" id="voice-state">Listening…</strong>
+        <span class="voice-mode" id="voice-mode"></span>
+      </div>
+      <p class="voice-text" id="voice-text"></p>
+      <p class="voice-tip" id="voice-tip">Tap the mic again when you're done.</p>
+    </section>
+
     <aside class="install-card card" id="install-card" aria-label="Install this app" hidden>
       <span class="install-icon" aria-hidden="true">
         <svg class="icon" viewBox="0 0 24 24"><path d="M12 4v10.5M7.5 10 12 14.5 16.5 10M5 19.5h14"/></svg>

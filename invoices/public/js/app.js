@@ -4,16 +4,19 @@
  */
 import { init as initDb, invoices, products, settings } from "./db.js";
 import {
-  SELLER, debounce, h, invoiceNo, itemsMissingPrice, lineTotal, money, parseAmount, priceInputText, qtyText,
-  storeKey, sumTotals, todayISO, uid, withTotals,
+  SELLER, UNITS, UNIT_NAMES, debounce, defaultUnitFor, h, invoiceNo, itemsMissingPrice, lastPriceFor, lineTotal, money,
+  normalizeUnit, parseAmount, priceInputText, qtyText, storeKey, sumTotals, todayISO, uid, withTotals,
 } from "./util.js";
-import { confirmSheet, toast } from "./ui.js";
+import { choiceSheet, confirmSheet, toast } from "./ui.js";
 import { SignaturePad } from "./signature.js";
 import { invoiceToText, invoiceToUrl } from "./codec.js";
 import { qrCanvas } from "./qr.js";
 import { printInvoice } from "./printer.js";
 import { shareInvoiceImage, shareInvoicePdf } from "./share.js";
 import { hideDashboard, initDashboard, showDashboard } from "./dashboard.js";
+import { Listener, canListen, dictate } from "./voice.js";
+import { bestParse } from "./voice-parse.js";
+import { reviewSpokenInvoice } from "./voice-review.js";
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -27,6 +30,8 @@ const el = {
   newBtn: $("new-btn"), saveStatus: $("save-status"),
   bar: $("total-bar"), barCount: $("bar-count"), barAmount: $("bar-amount"),
   update: $("update-banner"), updateBtn: $("update-btn"), brandBar: $("brand-bar"),
+  mic: $("mic-btn"), micLabel: $("mic-label"), voicePanel: $("voice-panel"), voiceState: $("voice-state"),
+  voiceMode: $("voice-mode"), voiceText: $("voice-text"), voiceTip: $("voice-tip"),
   install: $("install-card"), installIos: $("install-ios"), installAndroid: $("install-android"),
   installBtn: $("install-btn"), installDismiss: $("install-dismiss"),
 };
@@ -122,7 +127,7 @@ function addLineFromItem(it) {
     id = id && !state.extra.some((x) => x.id === id) ? id : uid("x_");
     state.extra.push({ id, name: it.name });
   }
-  state.lines.set(id, { on: true, qty: qtyText(it.qty) || "1", price: priceInputText(it.price), name: it.name });
+  state.lines.set(id, { on: true, qty: qtyText(it.qty) || "1", unit: normalizeUnit(it.unit), price: priceInputText(it.price), name: it.name });
 }
 
 /** Ticked items in list order, with the names they had when ticked. */
@@ -130,7 +135,7 @@ function currentItems() {
   const items = [];
   for (const p of [...state.products, ...state.extra]) {
     const l = state.lines.get(p.id);
-    if (l?.on) items.push({ productId: p.id, name: state.products.includes(p) ? p.name : l.name || p.name, qty: parseAmount(l.qty), price: parseAmount(l.price) });
+    if (l?.on) items.push({ productId: p.id, name: state.products.includes(p) ? p.name : l.name || p.name, qty: parseAmount(l.qty), unit: normalizeUnit(l.unit || defaultUnitFor(p)), price: parseAmount(l.price) });
   }
   return items;
 }
@@ -164,9 +169,14 @@ async function saveNow() {
     state.savedAt = new Date(saved.updatedAt);
     await settings.set("currentId", saved.id);
     const prices = {};
-    for (const it of saved.items) if (it.productId && it.price !== null && state.products.some((p) => p.id === it.productId)) prices[it.productId] = it.price;
+    for (const it of saved.items) if (it.productId && it.price !== null && state.products.some((p) => p.id === it.productId)) prices[it.productId] = { price: it.price, unit: it.unit };
     await products.rememberPrices(prices);
-    for (const p of state.products) if (p.id in prices) p.lastPrice = prices[p.id];
+    for (const p of state.products) {
+      const v = prices[p.id];
+      if (!v) continue;
+      p.lastPrices = { ...(p.lastPrices || {}), [v.unit]: v.price };
+      if (v.unit === defaultUnitFor(p)) p.lastPrice = v.price;
+    }
     renderNumber();
     renderSaveStatus();
   } catch (e) {
@@ -243,16 +253,22 @@ function buildRow(p) {
   cb.checked = Boolean(l?.on);
   const qty = h("input", { type: "text", class: "qty-input num", inputmode: "decimal", autocomplete: "off", enterkeyhint: "next", "aria-label": `Quantity of ${p.name}` });
   const price = h("input", { type: "text", class: "price-input num", inputmode: "decimal", autocomplete: "off", enterkeyhint: "done", placeholder: "Add price", "aria-label": `Unit price of ${p.name}` });
+  const unitNow = l?.unit || defaultUnitFor(p);
+  const unit = h("select", { class: "unit-select", "aria-label": `Unit for ${p.name}` },
+    UNITS.map((u) => h("option", { value: u }, UNIT_NAMES[u])));
+  unit.value = unitNow;
   qty.value = l?.qty ?? "1";
-  price.value = l?.price ?? priceInputText(p.lastPrice);
+  price.value = l?.price ?? priceInputText(lastPriceFor(p, unitNow));
   const total = h("output", { class: "line-total num", id: `${id}-total` });
   const detail = h("div", { class: "prod-detail" },
     h("div", { class: "qty" },
       h("button", { type: "button", class: "qty-btn", dataset: { step: "-1" }, "aria-label": `One less ${p.name}` }, "−"),
       qty,
       h("button", { type: "button", class: "qty-btn", dataset: { step: "1" }, "aria-label": `One more ${p.name}` }, "+")),
-    h("span", { class: "times", "aria-hidden": "true" }, "×"),
-    h("label", { class: "price" }, h("span", { class: "price-cur", "aria-hidden": "true" }, "$"), price),
+    unit,
+    h("span", { class: "price-wrap" },
+      h("span", { class: "times", "aria-hidden": "true" }, "×"),
+      h("label", { class: "price" }, h("span", { class: "price-cur", "aria-hidden": "true" }, "$"), price)),
     total);
   const li = h("li", { class: "prod-row", dataset: { id: p.id } },
     h("label", { class: "prod-check", for: `${id}-cb` },
@@ -260,7 +276,7 @@ function buildRow(p) {
       h("span", { class: "prod-box", "aria-hidden": "true" }, svgIcon(CHECK_PATH)),
       h("span", { class: "prod-name" }, p.name, p.removed ? h("span", { class: "prod-removed" }, "removed from list") : null)),
     detail);
-  rows.set(p.id, { li, cb, qty, price, total, detail, product: p });
+  rows.set(p.id, { li, cb, qty, unit, price, total, detail, product: p });
   updateRow(p.id);
   return li;
 }
@@ -274,6 +290,7 @@ function updateRow(pid) {
   r.cb.checked = on;
   r.detail.hidden = !on;
   if (!on) return;
+  r.unit.value = l.unit || defaultUnitFor(r.product);
   const hasPrice = parseAmount(l.price) !== null;
   r.total.textContent = hasPrice ? money(lineTotal(l.qty, l.price)) : "—";
   r.li.classList.toggle("needs-price", !hasPrice);
@@ -283,7 +300,7 @@ function lineFor(pid) {
   let l = state.lines.get(pid);
   if (!l) {
     const r = rows.get(pid);
-    l = { on: false, qty: r?.qty.value || "1", price: r?.price.value ?? "", name: r?.product.name || "" };
+    l = { on: false, qty: r?.qty.value || "1", unit: r?.unit.value || "each", price: r?.price.value ?? "", name: r?.product.name || "" };
     state.lines.set(pid, l);
   }
   return l;
@@ -294,7 +311,9 @@ function setOn(pid, on) {
   const l = lineFor(pid);
   l.on = on;
   l.name = r.product.name;
+  l.unit = l.unit || defaultUnitFor(r.product);
   if (on && !(parseAmount(l.qty) > 0)) l.qty = "1";
+  if (on && !l.price) l.price = priceInputText(lastPriceFor(r.product, l.unit));
   r.qty.value = l.qty;
   r.price.value = l.price;
   updateRow(pid);
@@ -384,7 +403,7 @@ function wireEvents() {
   // Signed-invoice guard for typing: ask before the first keystroke can land.
   el.main.addEventListener("focusin", (e) => {
     const t = e.target;
-    if (!state.inv.signature || !t.matches("input, textarea") || t === el.addName) return; // adding is guarded on submit
+    if (!state.inv.signature || !t.matches("input, textarea, select") || t === el.addName) return; // adding is guarded on submit
     if (t.closest(".sign-card")) return;
     t.blur();
     allowChange().then((ok) => { if (ok) t.focus(); });
@@ -410,6 +429,18 @@ function wireEvents() {
     if (stepBtn) step(pid, Number(stepBtn.dataset.step));
   });
   el.list.addEventListener("change", (e) => {
+    if (e.target.matches(".unit-select")) {
+      const pid = e.target.closest(".prod-row").dataset.id;
+      const r = rows.get(pid), l = lineFor(pid);
+      l.unit = normalizeUnit(e.target.value);
+      // A price is per unit: offer the last price used for this unit, never a converted one.
+      const remembered = lastPriceFor(r.product, l.unit);
+      l.price = remembered !== null ? priceInputText(remembered) : "";
+      r.price.value = l.price;
+      updateRow(pid);
+      changed();
+      return;
+    }
     if (!e.target.matches(".prod-cb")) return;
     setOn(e.target.closest(".prod-row").dataset.id, e.target.checked);
   });
@@ -474,6 +505,9 @@ function wireEvents() {
   // Signature.
   el.signClear.addEventListener("click", clearSignature);
 
+  // Voice entry: one tap starts listening, the next tap stops.
+  el.mic.addEventListener("click", onMic);
+
   // QR mode.
   el.qrToggle.addEventListener("click", () => {
     state.qrMode = state.qrMode === "text" ? "link" : "text";
@@ -495,7 +529,11 @@ function wireEvents() {
   });
 
   // Never lose typing when the app is closed or switched away from.
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushSave(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "hidden") return;
+    flushSave();
+    if (voice.listener?.active) finishListening(); // phone locked or app switched: keep what was heard
+  });
   window.addEventListener("pagehide", () => { flushSave(); });
 }
 
@@ -517,6 +555,125 @@ async function output(button, action) {
   button.setAttribute("aria-busy", "true");
   flushSave();
   try { await run; } finally { button.removeAttribute("aria-busy"); }
+}
+
+// ── Voice entry: tap the mic, say the whole invoice, tap again, check, done ─
+
+const voice = { listener: null, busy: false };
+
+function showListening(on) {
+  el.mic.classList.toggle("is-listening", on);
+  el.mic.setAttribute("aria-pressed", String(on));
+  el.micLabel.textContent = on ? "Stop listening" : "Speak the invoice";
+}
+
+function onMic() {
+  if (voice.listener?.active) { finishListening(); return; }
+  if (voice.busy) return;
+  if (!canListen()) { typedInvoice("unsupported", ""); return; }
+  startListening();
+}
+
+function startListening() {
+  const listener = new Listener({
+    onText: (text) => { el.voiceText.textContent = text || "…"; el.voiceText.classList.toggle("is-hint", !text); },
+    onFail: (code, text) => { if (voice.listener === listener) voice.listener = null; showListening(false); el.voicePanel.hidden = true; typedInvoice(code, text); },
+  });
+  voice.listener = listener;
+  el.voiceState.textContent = "Listening…";
+  el.voiceMode.textContent = "";
+  el.voiceText.textContent = "Say the store, the address, then each product with its amount and price.";
+  el.voiceText.classList.add("is-hint");
+  el.voiceTip.textContent = "Tap the mic again when you're done.";
+  el.voicePanel.hidden = false;
+  el.voicePanel.classList.remove("is-working");
+  showListening(true);
+  listener.start().then(({ mode, downloading }) => {
+    if (mode === "on-device") el.voiceMode.textContent = "On this phone · works offline";
+    else if (downloading) el.voiceMode.textContent = "Offline speech is downloading for next time";
+  }).catch((e) => {
+    if (voice.listener === listener) voice.listener = null;
+    showListening(false);
+    el.voicePanel.hidden = true;
+    typedInvoice(e?.code || "error", "");
+  });
+}
+
+async function finishListening() {
+  const listener = voice.listener;
+  voice.listener = null;
+  voice.busy = true;
+  showListening(false);
+  el.voiceState.textContent = "Working it out…";
+  el.voiceTip.textContent = "";
+  el.voicePanel.classList.add("is-working");
+  try {
+    const { text, candidates } = await listener.stop();
+    el.voicePanel.hidden = true;
+    if (!text) { toast("I didn't hear anything. Tap the mic and try again."); return; }
+    await reviewAndApply(candidates);
+  } finally {
+    voice.busy = false;
+    el.voicePanel.hidden = true;
+  }
+}
+
+/** The fallback when listening isn't possible: the keyboard's microphone (or typing). */
+async function typedInvoice(reason, text) {
+  voice.busy = true;
+  try {
+    const said = await dictate({ reason, text });
+    if (said) await reviewAndApply([said]);
+  } finally {
+    voice.busy = false;
+  }
+}
+
+async function reviewAndApply(candidates) {
+  const parsed = bestParse(candidates, { products: state.products, stores: state.stores });
+  const result = await reviewSpokenInvoice(parsed, {
+    products: state.products,
+    onSpeakAgain: () => { voice.busy = false; if (canListen()) startListening(); else typedInvoice("unsupported", ""); },
+  });
+  if (result) await applyVoice(result);
+}
+
+/** Puts the reviewed lines on the invoice: ticks the products and fills amount, unit and price. */
+async function applyVoice(result) {
+  if (!(await allowChange())) return;
+  const had = currentItems().length;
+  let mode = "replace";
+  if (had) {
+    mode = await choiceSheet({
+      title: "This invoice already has products",
+      message: `Replace the ${had} product${had === 1 ? "" : "s"} on it with what you said, or add to them?`,
+      choices: [{ label: "Cancel", value: null }, { label: "Add to them", value: "add" }, { label: "Replace", value: "replace", primary: true }],
+    });
+    if (!mode) return;
+  }
+  if (result.store) el.store.value = result.store;
+  if (result.address) el.address.value = result.address;
+  else {
+    const known = state.stores.find((x) => storeKey(x.name) === storeKey(el.store.value));
+    if (known?.address && !el.address.value.trim()) el.address.value = known.address;
+  }
+  if (mode === "replace") for (const l of state.lines.values()) l.on = false;
+  for (const line of result.lines) {
+    const p = state.products.find((x) => x.id === line.productId);
+    if (!p) continue;
+    const l = lineFor(p.id);
+    const sameUnit = normalizeUnit(l.unit || defaultUnitFor(p)) === line.unit;
+    l.qty = qtyText(mode === "add" && l.on && sameUnit ? (parseAmount(l.qty) || 0) + line.qty : line.qty);
+    l.on = true;
+    l.unit = line.unit;
+    l.name = p.name;
+    if (line.price !== null) l.price = priceInputText(line.price);
+    else if (!sameUnit) l.price = priceInputText(lastPriceFor(p, line.unit));
+  }
+  renderList();
+  changed();
+  el.list.closest(".block").scrollIntoView({ behavior: "smooth", block: "start" });
+  toast("Filled in from your voice. Check it, then ask the customer to sign.", { ms: 4200 });
 }
 
 // ── Stores ───────────────────────────────────────────────────────────────
@@ -571,6 +728,7 @@ function go(hash) {
 
 async function route() {
   const owner = location.hash === "#/owner";
+  if (owner && voice.listener) { voice.listener.abort(); voice.listener = null; showListening(false); el.voicePanel.hidden = true; }
   el.main.hidden = owner;
   el.brandBar.hidden = owner;
   if (owner) {

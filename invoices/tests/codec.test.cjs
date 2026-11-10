@@ -34,6 +34,17 @@
   let threw = ""; try { makeQr("x".repeat(4000)); } catch (e) { threw = e.message; }
   check(threw === "QR_TOO_LONG", "too-long text fails clearly");
 
+  // Units travel in the QR (a letter after the amount); links made before units still read as "each".
+  const withUnits = { number: 3, date: "2026-11-11", store: "Sarah Supermarket", address: "", items: [
+    { name: "Beetroot Juice", qty: 2, unit: "dozen", price: 3800 }, { name: "Okra", qty: 50, unit: "lb", price: 250 }, { name: "Limes", qty: 3, unit: "bag", price: 1200 }, { name: "Lemons", qty: 6, price: 50 }] };
+  const enc2 = encodePayload(withUnits);
+  check(enc2.includes("@0,2d,3800") && enc2.includes("@13,50p,250") && enc2.includes("@11,3b,1200") && enc2.includes("@10,6,50"), "units encoded compactly", enc2);
+  const back2 = parseInvoiceHash(enc2);
+  check(back2 && back2.items.map((i) => i.unit).join(",") === "dozen,lb,bag,each" && back2.total === 24000, "units read back", JSON.stringify(back2 && back2.items.map((i) => [i.qty, i.unit])));
+  check(parseInvoiceHash("#1~Marlon+Williams~7~20261110~Shop~~@0,12,350~4200~").items[0].unit === "each", "old links (no units) still read");
+  check(parseInvoiceHash("#1~a~1~20261110~~~@0,2x,1~2~") === null, "an unknown unit letter is rejected");
+  check(invoiceToText(withUnits).includes("  2 dozen x $3,800.00 = $7,600.00") && invoiceToText(withUnits).includes("  50 lb x $250.00") && invoiceToText(withUnits).includes("  3 bags x $1,200.00"), "plain-text QR shows units");
+
   const t = invoiceToText(inv);
   check(t.startsWith("INVOICE No. 0007\nMarlon Williams\nDate: 10 Nov 2026\nStore: Rose Hall Grocery\nAddress: 12 Main St, Montego Bay\n") && t.includes("  6 x (no price) = $0.00") && t.endsWith("TOTAL: $7,800.00\n3 items - Signed by customer: Yes"), "plain-text invoice layout");
   console.log(failures ? `\n${failures} check(s) failed` : "\nAll codec checks passed");

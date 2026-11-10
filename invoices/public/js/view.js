@@ -5,7 +5,7 @@
  * print sheet.
  */
 import { parseInvoiceHash } from "./codec.js";
-import { h, invoiceNo, money, prettyDate, qtyText } from "./util.js";
+import { h, invoiceNo, money, prettyDate, qtyWithUnit } from "./util.js";
 import { WORDMARK } from "./wordmark.js";
 import { deliverFile, makeReceiptFile } from "./share.js";
 import { toast } from "./ui.js";
@@ -52,7 +52,7 @@ function render() {
       h("ul", { class: "items", "aria-label": "Items" },
         n ? inv.items.map((it) => h("li", { class: "item" },
           h("span", { class: "item-name" }, it.name),
-          h("span", { class: "item-calc num" }, `${qtyText(it.qty) || "0"} × ${it.price === null ? "(no price)" : money(it.price)}`),
+          h("span", { class: "item-calc num" }, `${qtyWithUnit(it.qty, it.unit)} × ${it.price === null ? "(no price)" : money(it.price)}`),
           h("span", { class: "item-amt num" }, money(it.total))))
           : h("li", { class: "item item-none" }, "No items")),
       h("div", { class: "total" },
@@ -85,7 +85,7 @@ function icon(name) {
 /** The decoded invoice in the shape the receipt maker expects (customer copies carry the "signed" mark only). */
 const asInvoice = (inv) => ({
   seller: inv.seller, number: inv.number, date: inv.date, store: inv.store, address: inv.address,
-  items: inv.items.map(({ name, qty, price }) => ({ name, qty, price })), signature: null, signed: inv.signed,
+  items: inv.items.map(({ name, qty, unit, price }) => ({ name, qty, unit, price })), signature: null, signed: inv.signed,
 });
 
 async function savePdf(button, inv) {

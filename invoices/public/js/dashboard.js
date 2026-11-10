@@ -9,7 +9,7 @@ import {
   eraseEverything, exportBackup, importBackup, invoices, products, requestPersistence, settings, storageStatus,
 } from "./db.js";
 import {
-  SELLER, h, invoiceNo, money, monthLabel, parseISODate, prettyDate, qtyText, storeKey, tidy, toCents, todayISO,
+  SELLER, h, invoiceNo, money, monthLabel, normalizeUnit, parseISODate, prettyDate, qtyText, qtyWithUnit, storeKey, tidy, toCents, todayISO,
   weekStartISO, withTotals,
 } from "./util.js";
 import { choiceSheet, confirmSheet, toast } from "./ui.js";
@@ -573,7 +573,7 @@ function overviewView() {
     }),
     rankingSection({
       id: "dash-h-products", title: "Products sold", rangeKey: "productRange", allKey: "productsAll",
-      rows: productTotals, meta: (r) => `${qtyText(r.milli / 1000)} sold`,
+      rows: productTotals, meta: soldText,
     }));
   return out;
 }
@@ -678,6 +678,15 @@ function storeTotals(list) {
   return [...map.values()].sort((a, b) => b.cents - a.cents || b.count - a.count || a.name.localeCompare(b.name));
 }
 
+/** "36 sold", "50 lb sold", "24 sold · 3 bags" */
+function soldText(r) {
+  const parts = [];
+  if (r.milli) parts.push(qtyText(r.milli / 1000));
+  if (r.lbMilli) parts.push(`${qtyText(r.lbMilli / 1000)} lb`);
+  if (r.bagMilli) parts.push(qtyWithUnit(r.bagMilli / 1000, "bag"));
+  return `${parts.join(" · ") || "0"} sold`;
+}
+
 function productTotals(list) {
   const names = new Map(data.products.map((p) => [p.id, p.name]));
   const map = new Map();
@@ -685,13 +694,17 @@ function productTotals(list) {
     for (const it of inv.items) {
       // Known products are grouped by id (and shown with their current name); anything else by name.
       const key = names.has(it.productId) ? it.productId : `name:${foldText(it.name)}`;
-      const p = map.get(key) || { name: names.get(it.productId) || it.name || "Unnamed product", cents: 0, milli: 0 };
+      const p = map.get(key) || { name: names.get(it.productId) || it.name || "Unnamed product", cents: 0, milli: 0, lbMilli: 0, bagMilli: 0 };
       p.cents += toCents(it.total);
-      p.milli += Math.round((it.qty ?? 0) * 1000);
+      // Pieces (a dozen counts as 12), pounds and bags are added up separately.
+      const unit = normalizeUnit(it.unit), m = Math.round((it.qty ?? 0) * 1000);
+      if (unit === "lb") p.lbMilli += m;
+      else if (unit === "bag") p.bagMilli += m;
+      else p.milli += unit === "dozen" ? m * 12 : m;
       map.set(key, p);
     }
   }
-  return [...map.values()].sort((a, b) => b.cents - a.cents || b.milli - a.milli || a.name.localeCompare(b.name));
+  return [...map.values()].sort((a, b) => b.cents - a.cents || b.milli + b.lbMilli + b.bagMilli - (a.milli + a.lbMilli + a.bagMilli) || a.name.localeCompare(b.name));
 }
 
 function meterRow({ label, value, meta, share, dataset }) {
@@ -826,7 +839,7 @@ function detailView(inv) {
           ? h("ul", { class: "dash-items" }, inv.items.map((it) => h("li", { class: "dash-item" },
             h("span", { class: "dash-item-name" }, it.name || "Unnamed product"),
             h("span", { class: "dash-item-total num" }, it.price === null ? "—" : money(it.total)),
-            h("span", { class: "dash-item-calc num" }, `${qtyText(it.qty) || "0"} × ${it.price === null ? "no price yet" : money(it.price)}`))))
+            h("span", { class: "dash-item-calc num" }, `${qtyWithUnit(it.qty, it.unit)} × ${it.price === null ? "no price yet" : money(it.price)}`))))
           : h("p", { class: "dash-items-none" }, "No products ticked on this invoice."),
         h("div", { class: "dash-total" },
           h("span", { class: "dash-total-label" }, "Total", h("span", { class: "dash-total-count" }, plural(inv.items.length, "item"))),

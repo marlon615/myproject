@@ -6,7 +6,7 @@
  *   invoices  { id, number, seller, store, address, date, items[], total, signature, signedAt, createdAt, updatedAt }
  *   settings  { key, value }
  */
-import { DEFAULT_PRODUCTS, SELLER, defaultProductId, storeKey, tidy, uid, withTotals } from "./util.js";
+import { DEFAULT_PRODUCTS, SELLER, defaultProductId, defaultUnitFor, normalizeUnit, storeKey, tidy, uid, withTotals } from "./util.js";
 
 const DB_NAME = "marlon-invoices";
 const DB_VERSION = 1;
@@ -139,14 +139,24 @@ export const products = {
     [a.order, b.order] = [b.order, a.order];
     await run("products", "readwrite", async (s) => { await done(s.products.put(a)); await done(s.products.put(b)); });
   },
-  /** Remembers the last unit price used for each product: { productId: price }. */
+  /**
+   * Remembers the last price used for each product, per unit: { productId: price } (the product's usual unit)
+   * or { productId: { price, unit } }. Prices are never converted between units (a dozen isn't 12 × each).
+   */
   async rememberPrices(map) {
-    const entries = Object.entries(map || {}).filter(([, v]) => typeof v === "number" && Number.isFinite(v));
+    const entries = Object.entries(map || {})
+      .map(([id, v]) => [id, typeof v === "number" ? { price: v, unit: null } : v])
+      .filter(([, v]) => v && typeof v.price === "number" && Number.isFinite(v.price));
     if (!entries.length) return;
     await run("products", "readwrite", async (s) => {
-      for (const [id, price] of entries) {
+      for (const [id, { price, unit }] of entries) {
         const p = await done(s.products.get(id));
-        if (p && p.lastPrice !== price) { p.lastPrice = price; await done(s.products.put(p)); }
+        if (!p) continue;
+        const u = unit ? normalizeUnit(unit) : defaultUnitFor(p);
+        let changed = false;
+        if (p.lastPrices?.[u] !== price) { p.lastPrices = { ...(p.lastPrices || {}), [u]: price }; changed = true; }
+        if (u === defaultUnitFor(p) && p.lastPrice !== price) { p.lastPrice = price; changed = true; }
+        if (changed) await done(s.products.put(p));
       }
     });
   },

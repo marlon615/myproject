@@ -342,6 +342,30 @@ On every launch of the main app (`index.html` only, never the viewer) a splash s
   - Bluetooth prints it as a 1-bit image first, with a text fallback.
   - The customer page (`/v`) opens with the same brand.
 
+### Voice entry (owner request)
+- **Mic:** one full-width "Speak the invoice" button under the header. One tap starts listening; the next tap ("Stop listening") stops. There's no holding. Words appear live in a panel.
+- **Speaking:** the whole invoice in one go: store, address, then products with amount, unit and price ("two dozen beetroot juice … fifty pounds okra at two fifty").
+- **Engine (`js/voice.js`):**
+  - The browser's SpeechRecognition, on-device when available: Chrome's `available()`/`install()` and `processLocally`, while Safari uses Apple's recognition.
+  - Continuous, restarting itself after the browser pauses.
+  - **Fallback:** a text box for the keyboard's microphone (iPhone dictation is on-device and works offline), used when recognition is missing, blocked, refused (some iPhone home-screen apps) or offline without on-device speech. Words heard so far carry over.
+  - `_headers` allows `microphone=(self)`.
+- **Understanding (`js/voice-parse.js`, pure and Node-tested):**
+  - Numbers in words and digits, halves, dozens, bags and pounds, and spoken prices ("two fifty" means 250).
+  - Splits the store and address by pauses, the house number or business words.
+  - Matches products by sound, aliases included.
+  - Okra and Hot Pepper default to pounds.
+  - Last prices are used per unit only; a dozen is never priced as 12 × each.
+  - **Nothing unclear is guessed:** such lines carry an `issue`.
+- **Review (`js/voice-review.js`):** a full-screen "Check before the customer signs" screen.
+  - Tap any line to fix the product, amount, unit or price.
+  - Unclear lines are highlighted with one-tap product choices, and "Put on invoice" waits until they're fixed or removed.
+  - Applying respects the signed-invoice guard and asks before replacing existing products.
+- **Units:**
+  - Lines carry `unit` (each | dozen | bag | lb). Each ticked row has a unit picker.
+  - Units appear on receipts, PDFs, the customer page and the dashboard ("24 sold · 50 lb").
+  - In the QR, the unit is a letter after the amount (`2d`, `50p`, `3b`); old links read as "each".
+
 ### A: `js/app.js` (main screen)
 - Startup: `await db.init()`. Register `/sw.js` (scope `/`). Open `settings.currentId` if it still exists; otherwise start a new draft.
 - Routing:

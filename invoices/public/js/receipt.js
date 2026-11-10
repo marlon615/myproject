@@ -6,7 +6,7 @@
 import { invoiceToUrl } from "./codec.js";
 import { makeQr } from "./qr.js";
 import { WORDMARK } from "./wordmark.js";
-import { SELLER, invoiceNo, loadImage, money, prettyDate, qtyText, tidy, withTotals } from "./util.js";
+import { SELLER, invoiceNo, loadImage, money, prettyDate, qtyWithUnit, tidy, withTotals } from "./util.js";
 
 /** Everything the receipt shows, as ready-to-print text. */
 export function receiptModel(inv) {
@@ -19,7 +19,7 @@ export function receiptModel(inv) {
     address: tidy(t.address),
     items: t.items.map((it) => ({
       name: it.name,
-      qtyText: qtyText(it.qty) || "0",
+      qtyText: qtyWithUnit(it.qty, it.unit),
       priceText: it.price === null ? "(no price)" : money(it.price),
       totalText: money(it.total),
       hasPrice: it.price !== null,
