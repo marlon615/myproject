@@ -9,3 +9,6 @@ next-env.d.ts
 .vercel
 .DS_Store
 AGENTS.md
+
+# Playwright MCP output (screenshots, logs)
+.playwright-mcp/
