@@ -391,7 +391,7 @@ export function buildEscPos(model, { paper = 58, brandRaster = null, signatureRa
   line();
   line("Customer signature:");
   if (signatureRaster) { align(1); raster(signatureRaster); align(0); }
-  else line("Not signed");
+  else line(model.signed ? "Signed by the customer" : "Not signed");
   rule();
   if (qrRaster) {
     line();

@@ -13,7 +13,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-const ROOT = path.join(__dirname, "..", "public");
+let ROOT = path.join(__dirname, "..", "public");
 const HARNESS = path.join(__dirname, "harness");
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
@@ -51,7 +51,8 @@ function resolve(urlPath) {
   return null;
 }
 
-function start(port, { stubMissing = false } = {}) {
+function start(port, { stubMissing = false, root = null } = {}) {
+  if (root) ROOT = root;
   const server = http.createServer((req, res) => {
     const urlPath = new URL(req.url, "http://x").pathname;
     if (urlPath.startsWith("/__tests/")) {

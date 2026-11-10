@@ -634,26 +634,26 @@ function setupInstall() {
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
-  let updating = false;
+  const hadController = Boolean(navigator.serviceWorker.controller); // false on the very first visit
+  let reloading = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (!updating) return; // first install: nothing to reload
-    flushSave().finally(() => location.reload());
+    if (!hadController || reloading) return; // first install: this page already is the newest version
+    if (document.getElementById("splash")) {
+      // Still on the splash, so nothing is being typed: swap in the new version unseen (without a second splash).
+      reloading = true;
+      try { sessionStorage.setItem("skipSplashOnce", "1"); } catch { /* private mode */ }
+      location.reload();
+      return;
+    }
+    // Mid-work: offer it. The next launch uses the new version anyway.
+    el.update.hidden = false;
+    el.updateBtn.onclick = () => {
+      reloading = true;
+      el.updateBtn.disabled = true;
+      flushSave().finally(() => location.reload());
+    };
   });
   navigator.serviceWorker.register("/sw.js").then((reg) => {
-    const offer = (worker) => {
-      if (!worker || !navigator.serviceWorker.controller) return;
-      el.update.hidden = false;
-      el.updateBtn.onclick = () => {
-        updating = true;
-        el.updateBtn.disabled = true;
-        worker.postMessage({ type: "SKIP_WAITING" });
-      };
-    };
-    if (reg.waiting) offer(reg.waiting);
-    reg.addEventListener("updatefound", () => {
-      const worker = reg.installing;
-      worker?.addEventListener("statechange", () => { if (worker.state === "installed") offer(worker); });
-    });
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(() => {}); });
   }).catch((e) => console.warn("Offline mode isn't available:", e));
 }

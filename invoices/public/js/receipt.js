@@ -26,7 +26,7 @@ export function receiptModel(inv) {
     })),
     totalText: money(t.total),
     itemCount: t.items.length,
-    signed: Boolean(t.signature),
+    signed: Boolean(t.signature) || t.signed === true, // customer copies carry the "signed" mark, not the drawing
     signature: t.signature || null,
     qrUrl: invoiceToUrl(t),
   };
@@ -166,7 +166,7 @@ export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQ
     }
   } else {
     gap(6);
-    text("Not signed", font.body, { align: "center", color: SOFT });
+    text(m.signed ? "✓ Signed by the customer" : "Not signed", font.body, { align: "center", color: m.signed ? INK : SOFT });
   }
   ops.push({ kind: "line", x1: pad + inner * 0.1, x2: W - pad - inner * 0.1, y: Math.round(y) + 0.5 * s });
   gap(6);

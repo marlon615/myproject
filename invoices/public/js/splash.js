@@ -12,6 +12,7 @@
  *   which fires when the finger lifts, so the tap is fully used up by the splash and can't fall through
  *   and press something on the page underneath.
  * - Automated browsers (navigator.webdriver) skip it so tests run fast; add "?splash" to the URL to force it.
+ * - Right after the app reloads itself into a new version (sessionStorage "skipSplashOnce"), it isn't shown again.
  */
 (() => {
   const SPLASH_BG = "#0f1411"; // must match --splash-bg in splash.css
@@ -25,7 +26,10 @@
   if (!splash) { root.classList.remove("splash-active"); return; }
 
   const forced = /[?&]splash(?:[=&]|$)/.test(location.search);
-  if (navigator.webdriver === true && !forced) { finish(); return; }
+  // Just reloaded into a new version during the splash: don't show it a second time.
+  let skipOnce = false;
+  try { skipOnce = sessionStorage.getItem("skipSplashOnce") === "1"; sessionStorage.removeItem("skipSplashOnce"); } catch { /* private mode */ }
+  if (skipOnce || (navigator.webdriver === true && !forced)) { finish(); return; }
 
   // Dark status bar / browser chrome while the splash shows (restored when it leaves).
   let themeMetas = [...document.querySelectorAll('meta[name="theme-color"]')];

@@ -202,7 +202,9 @@ Capacity: a worst-case invoice must still fit, and each mode has a test. The wor
   - The grand total.
   - "Signed by the customer ✓" or "Not signed".
 - If the decoded line totals don't add up to `total`, show the encoded total plus a gentle note.
-- Add a **"Save or print"** button that calls `window.print()`, with print CSS for a clean page.
+- Two buttons (owner request):
+  - **"Save PDF"** makes the branded receipt PDF (80 mm) on the customer's phone and shares or downloads it. It stores nothing on their phone.
+  - **"Print"** calls `window.print()`, with print CSS for a clean page.
 - If the hash is missing or invalid, show a friendly message: "This link doesn't contain an invoice. Ask for a new QR code."
 - Don't link the manifest and don't register the service worker, so customers aren't prompted to install the owner's app. Import only `codec.js`, `util.js` and the CSS.
 
@@ -217,11 +219,10 @@ Capacity: a worst-case invoice must still fit, and each mode has a test. The wor
   - Navigation requests: serve the cached `/` for `/` and any unknown app path, serve the cached `/v` for `/v` (ignore the hash and search), and fall back to the network.
   - Other same-origin GETs: cache-first, then network, adding to the cache.
   - Versioned cache name `const VERSION = "…"`. Delete old caches on activate.
-  - **Update flow:**
-    - A new version installs and **waits**.
-    - The page shows "A new version is ready. Refresh" (owned by A).
-    - Refresh posts `{type: "SKIP_WAITING"}`.
-    - The SW calls `skipWaiting()`, and the page reloads on `controllerchange`.
+  - **Update flow** (revised):
+    - A new version installs and takes over at once (`skipWaiting()` after precaching), so the next launch is always the newest.
+    - If the open app is still on the splash, it reloads into the new version without showing the splash again (sessionStorage `skipSplashOnce`).
+    - Mid-work, it shows "A new version is ready. Refresh", which saves first, then reloads.
   - Never cache non-GET requests or other origins.
 - `scripts/stamp-sw.cjs`: hash all precached files and write the result into `VERSION` in sw.js. It must be idempotent. `npm run deploy` will call it first; the integrator wires that up.
 - Icons:

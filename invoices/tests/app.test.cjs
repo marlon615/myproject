@@ -19,7 +19,8 @@ const MOCKS = `
         async writeValueWithResponse(v) { window.__printed.push(v.byteLength); } }]; } }]; } }; }, disconnect() { this.connected = false; } } }; },
     async getDevices() { return []; } } });
   navigator.canShare = (d) => !!(d && d.files);
-  navigator.share = async (d) => { window.__shared.push({ name: d.files[0].name, type: d.files[0].type }); };
+  navigator.share = async (d) => { window.__shared.push({ name: d.files[0].name, type: d.files[0].type, size: d.files[0].size }); };
+  window.print = () => { window.__printCalls = (window.__printCalls || 0) + 1; };
 `;
 
 async function drawSignature(page) {
@@ -209,6 +210,23 @@ async function qrText(page) {
     const vt = (await v.textContent(".sheet")).replace(/\s+/g, " ");
     check(await v.locator('.brand svg[aria-label="Marlon"]').count() === 1 && (await v.textContent(".brand-tag")) === "Delivery Invoices", "customer page opens with the Marlon brand");
     check(/Marlon Williams/.test(vt) && /Invoice No\. 0001/.test(vt) && /Rose Hall Grocery/.test(vt) && /\$4,791\.00/.test(vt) && /Signed by the customer/.test(vt), "customer sees the full invoice from the QR link", vt.slice(0, 120));
+    const labels = (await v.locator(".view-actions button").allTextContents()).map((t) => t.trim());
+    check(labels.join("|") === "Save PDF|Print" && !(await v.textContent("main")).includes("Save or print"), "customer page has two buttons: Save PDF and Print", labels.join(" | "));
+    await v.getByRole("button", { name: "Save PDF" }).click();
+    await v.waitForFunction(() => window.__shared.length > 0, null, { timeout: 8000 });
+    const vs = await v.evaluate(() => window.__shared[0]);
+    check(vs.type === "application/pdf" && vs.name === "Invoice-0001-Rose-Hall-Grocery.pdf" && vs.size > 20000, "Save PDF makes the invoice PDF on the customer's phone", JSON.stringify(vs));
+    await v.getByRole("button", { name: "Print" }).click();
+    check(await v.evaluate(() => window.__printCalls) === 1, "Print opens the phone's print option");
+    // A separate browser = the customer's own phone: saving the PDF must not store anything there.
+    const cust = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+    await cust.addInitScript(MOCKS);
+    const cp = await cust.newPage();
+    await cp.goto(url);
+    await cp.getByRole("button", { name: "Save PDF" }).click();
+    await cp.waitForFunction(() => window.__shared.length > 0, null, { timeout: 8000 });
+    check(await cp.evaluate(async () => (await indexedDB.databases()).length) === 0, "the customer's phone stores nothing");
+    await cust.close();
     await v.screenshot({ path: path.join(OUT, "app-viewer.png"), fullPage: true });
     await v.goto(`${srv.url}/v#nonsense`);
     check(/doesn't contain an invoice/.test(await v.textContent("main")), "a broken link shows a friendly message");

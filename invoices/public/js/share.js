@@ -23,17 +23,22 @@ async function shareReceipt(inv, kind) {
   if (!t.items.length) { toast("Tick at least one product first."); return "failed"; }
   let file;
   try {
-    file = await makeFile(t, kind);
+    file = await makeReceiptFile(t, { kind });
   } catch (e) {
     console.error(e);
     toast("Couldn't make the file. Please try again.");
     return "failed";
   }
-  return deliver(file, t);
+  return deliverFile(file, `Invoice ${invoiceNo(t.number)}${t.store ? " · " + t.store : ""}`);
 }
 
-async function makeFile(t, kind) {
-  const paper = Number(await settings.get("paper", 58)) === 80 ? 80 : 58;
+/**
+ * The receipt as a File: kind "pdf" or "png"; paper 58 | 80 (defaults to the owner's paper setting).
+ * Named like Invoice-0007-Rose-Hall-Grocery.pdf.
+ */
+export async function makeReceiptFile(inv, { kind = "pdf", paper } = {}) {
+  const t = withTotals(inv);
+  paper = paper === 58 || paper === 80 ? paper : Number(await settings.get("paper", 58)) === 80 ? 80 : 58;
   const canvas = await renderReceiptCanvas(t, { paper, scale: 2 });
   const name = `Invoice-${invoiceNo(t.number)}-${fileSafe(t.store || "invoice")}`;
   if (kind === "pdf") {
@@ -44,8 +49,8 @@ async function makeFile(t, kind) {
   return new File([blob], `${name}.png`, { type: "image/png" });
 }
 
-async function deliver(file, t) {
-  const title = `Invoice ${invoiceNo(t.number)}${t.store ? " · " + t.store : ""}`;
+/** Hands a file to the phone's share sheet (Save to Files, WhatsApp, a printer app…), or downloads it. */
+export async function deliverFile(file, title) {
   if (navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title });

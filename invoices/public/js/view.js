@@ -1,10 +1,14 @@
 /**
  * Customer viewer (/v#…): shows an invoice decoded entirely from the link the customer scanned.
  * Nothing is loaded from any server except this page itself; the invoice is in the part after "#".
+ * "Save PDF" makes the branded receipt PDF right here on the customer's phone; "Print" opens the phone's
+ * print sheet.
  */
 import { parseInvoiceHash } from "./codec.js";
 import { h, invoiceNo, money, prettyDate, qtyText } from "./util.js";
 import { WORDMARK } from "./wordmark.js";
+import { deliverFile, makeReceiptFile } from "./share.js";
+import { toast } from "./ui.js";
 
 const root = document.getElementById("view");
 
@@ -58,7 +62,44 @@ function render() {
       h("p", { class: `signed ${inv.signed ? "is-yes" : "is-no"}` }, inv.signed ? "✓ Signed by the customer" : "Not signed"),
       h("footer", { class: "sheet-foot" }, `Shared by QR code by ${inv.seller}. The details come from the code itself and are never sent to a server.`)),
     h("div", { class: "view-actions" },
-      h("button", { type: "button", class: "btn btn-primary", onclick: () => window.print() }, "Save or print")));
+      h("button", { type: "button", class: "btn btn-primary", onclick: (e) => savePdf(e.currentTarget, inv) }, icon("download"), "Save PDF"),
+      h("button", { type: "button", class: "btn", onclick: () => window.print() }, icon("printer"), "Print")));
+}
+
+const ICONS = {
+  download: "M12 3v12M7 10l5 5 5-5M5 21h14",
+  printer: "M7 9V3h10v6M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M7 14h10v7H7z",
+};
+function icon(name) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "view-icon");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", ICONS[name]);
+  svg.append(path);
+  return svg;
+}
+
+/** The decoded invoice in the shape the receipt maker expects (customer copies carry the "signed" mark only). */
+const asInvoice = (inv) => ({
+  seller: inv.seller, number: inv.number, date: inv.date, store: inv.store, address: inv.address,
+  items: inv.items.map(({ name, qty, price }) => ({ name, qty, price })), signature: null, signed: inv.signed,
+});
+
+async function savePdf(button, inv) {
+  if (button.getAttribute("aria-busy") === "true") return;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const file = await makeReceiptFile(asInvoice(inv), { kind: "pdf", paper: 80 });
+    await deliverFile(file, `Invoice ${invoiceNo(inv.number)} · ${inv.seller}`);
+  } catch (e) {
+    console.error(e);
+    toast("Couldn't make the PDF. Please try again.");
+  } finally {
+    button.removeAttribute("aria-busy");
+  }
 }
 
 window.addEventListener("hashchange", render);

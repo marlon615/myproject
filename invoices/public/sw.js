@@ -1,9 +1,10 @@
 /*
  * Offline support. Installs a copy of the whole app on the phone, then serves it with no network at all.
- * Updates: a new version installs in the background and waits; the app shows "A new version is ready",
- * and "Refresh" posts {type: "SKIP_WAITING"} so it takes over. VERSION is stamped by scripts/stamp-sw.cjs.
+ * Updates install in the background and take over at once (skipWaiting), so the next launch is always the
+ * newest version; the open app reloads itself if it's still on the splash, or offers "Refresh" otherwise.
+ * VERSION is stamped by scripts/stamp-sw.cjs.
  */
-const VERSION = "b5e089ff1627";
+const VERSION = "3b8180070825";
 const CACHE = `mw-invoices-${VERSION}`;
 
 // On Cloudflare "/index.html" redirects to "/" and "/v.html" to "/v", so the pages are cached by those URLs.
@@ -43,7 +44,11 @@ const PRECACHE = [
 
 self.addEventListener("install", (event) => {
   // addAll fails the whole install if any file is missing, so a broken deploy never replaces a working one.
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(PRECACHE.map((url) => new Request(url, { cache: "reload" })))));
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => cache.addAll(PRECACHE.map((url) => new Request(url, { cache: "reload" }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener("activate", (event) => {

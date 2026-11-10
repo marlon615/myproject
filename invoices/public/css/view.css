@@ -38,8 +38,11 @@ html, body { background: #ebe8df; color: #1a1c19; color-scheme: light; }
 .sheet-empty { text-align: center; border-top-color: #c2702a; }
 .sheet-empty h1 { font-family: var(--font-display); font-size: 26px; margin-bottom: 8px; }
 .sheet-empty p { margin: 0; color: #454a43; }
-.view-actions { display: flex; justify-content: center; margin-top: 18px; }
-.view-actions .btn-primary { background: #17633f; border-color: #17633f; color: #fff; min-width: 200px; }
+.view-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+.view-actions .btn { min-height: 52px; background: #fff; border-color: #cfc8b8; color: #1a1c19; }
+.view-actions .btn-primary { background: #17633f; border-color: #17633f; color: #fff; }
+.view-actions .btn[aria-busy="true"] { opacity: .65; pointer-events: none; }
+.view-icon { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 @media print {
   html, body { background: #fff; }
   .view { padding: 0; max-width: none; }
