@@ -1,0 +1,20 @@
+{
+  "name": "marlon-invoices",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Offline delivery invoices for Marlon Williams: a phone-installable web app.",
+  "scripts": {
+    "dev": "npm run build && ../chief-of-staff/node_modules/.bin/wrangler dev --port 8790",
+    "deploy": "npm run build && ../chief-of-staff/node_modules/.bin/wrangler deploy",
+    "test": "node tests/run-all.cjs",
+    "stamp": "node scripts/stamp-sw.cjs",
+    "startup-images": "node scripts/make-startup-images.cjs",
+    "build": "node scripts/stamp-sw.cjs && node scripts/build-worker.cjs"
+  },
+  "devDependencies": {
+    "@fontsource/bodoni-moda": "^5.3.0",
+    "jsqr": "1.4.0",
+    "opentype.js": "^1.3.4"
+  }
+}

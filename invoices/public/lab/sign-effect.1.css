@@ -1,0 +1,82 @@
+/* Signing-effect test page (not part of the app). Uses the app's base tokens from /css/base.css. */
+
+.lab {
+  max-width: 560px; margin: 0 auto;
+  padding: calc(22px + var(--safe-top)) var(--gutter) calc(40px + var(--safe-bottom));
+  display: grid; gap: 16px;
+}
+.lab-head h1 { text-wrap: balance; margin: 2px 0 8px; font-family: var(--font-display); font-size: clamp(26px, 7.2vw, 34px); line-height: 1.12; font-weight: 700; }
+.lab-kicker { margin: 0; font-size: 12.5px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; color: var(--brand); }
+.lab-lead { margin: 0; color: var(--ink-2); font-size: 15.5px; }
+
+.lab-card { padding: 14px 12px 12px; }
+.lab-pad-title { margin: 0 4px 10px; font-size: 12.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
+
+/* The pad: same size and paper as the app's signature box. */
+.lab-pad {
+  position: relative; height: 172px; overflow: hidden;
+  border: 1.5px dashed #b7b2a4; border-radius: 12px; background: #f4f2ec;
+  touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  transition: border-color .4s ease;
+}
+.lab-pad.is-sealed { border-style: solid; border-color: color-mix(in srgb, #17633f 45%, #b7b2a4); }
+.lab-pad canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.lab-sig { opacity: 0; }                       /* the real signature: recorded, not shown here */
+.lab-ink, .lab-fx { pointer-events: none; }
+.lab-ink {
+  transform-origin: 50% 40%;
+  filter: saturate(1.25) brightness(1.18);     /* fresh, wet ink while it's being written */
+  transition: transform .7s cubic-bezier(.2, .8, .2, 1), filter .9s ease;
+}
+.lab-pad.is-settling .lab-ink { transform: translateY(-6px) scale(.94); filter: none; }
+
+.lab-guide {
+  position: absolute; left: 18px; right: 18px; bottom: 38px; display: flex; justify-content: space-between; align-items: flex-end;
+  padding-bottom: 6px; border-bottom: 1.5px solid #b7b2a4; color: #6f756b; font-size: 13px; font-weight: 600; letter-spacing: .04em;
+  pointer-events: none; transition: opacity .35s ease;
+}
+.lab-x { font-size: 22px; line-height: 1; }
+.lab-pad.is-writing .lab-guide, .lab-pad.is-settling .lab-guide { opacity: 0; }
+
+/* Name and tick, settling in under the words. */
+.lab-sealed {
+  position: absolute; left: 0; right: 0; top: 112px;
+  display: flex; justify-content: center; align-items: center; gap: 9px; padding: 0 14px;
+  opacity: 0; transform: translateY(6px); transition: opacity .5s ease, transform .5s cubic-bezier(.2, .8, .2, 1);
+  pointer-events: none;
+}
+.lab-sealed.is-shown { opacity: 1; transform: none; }
+.lab-who {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-display); font-size: 16.5px; font-weight: 600; letter-spacing: .01em; color: #2b3830;
+}
+.lab-check { width: 26px; height: 26px; flex: none; overflow: visible; }
+.lab-check .disc { fill: #e4f1e8; transform-box: fill-box; transform-origin: center; transform: scale(0); }
+.lab-check .ring { fill: none; stroke: #17633f; stroke-width: 7; stroke-dasharray: 277; stroke-dashoffset: 277; }
+.lab-check .tick { fill: none; stroke: #17633f; stroke-width: 9; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 55; stroke-dashoffset: 55; }
+.lab-sealed.is-checked .disc { animation: lab-pop .45s cubic-bezier(.2, .9, .3, 1.3) forwards; }
+.lab-sealed.is-checked .ring { animation: lab-draw .5s cubic-bezier(.65, 0, .35, 1) forwards; }
+.lab-sealed.is-checked .tick { animation: lab-draw .32s cubic-bezier(.65, 0, .35, 1) .42s forwards; }
+@keyframes lab-draw { to { stroke-dashoffset: 0; } }
+@keyframes lab-pop { to { transform: scale(1); } }
+
+.lab-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; margin-top: 10px; }
+.lab-status { margin: 0 4px; font-size: 14px; color: var(--muted); }
+.lab-status.is-done { color: var(--brand); font-weight: 650; }
+.lab-again { min-height: 40px; padding: 8px 16px; font-size: 14.5px; flex: none; }
+
+.lab-toggle { display: flex; align-items: center; gap: 10px; padding: 2px 4px; font-size: 15px; color: var(--ink-2); cursor: pointer; }
+.lab-toggle input { width: 22px; height: 22px; accent-color: var(--brand); }
+
+.lab-saved { padding: 14px 12px; }
+.lab-saved-img { display: grid; place-items: center; padding: 10px; border-radius: 10px; background: #fff; border: 1px solid var(--line); }
+.lab-saved-img img { display: block; width: 100%; max-width: 420px; height: auto; aspect-ratio: 3 / 1; }
+.lab-note { margin: 10px 4px 0; font-size: 13.5px; color: var(--ink-2); }
+.lab-foot-note { margin: 4px 4px 0; font-size: 12px; color: var(--muted); }
+
+/* Reduced motion: no movement; the end state appears at once. */
+@media (prefers-reduced-motion: reduce) {
+  .lab-pad.is-settling .lab-ink { transform: none; }
+  .lab-sealed.is-checked .disc { transform: scale(1); }
+  .lab-sealed.is-checked .ring, .lab-sealed.is-checked .tick { stroke-dashoffset: 0; }
+}
