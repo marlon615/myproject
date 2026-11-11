@@ -4,7 +4,12 @@
  *    five dozen large bammy, fifty pounds okra at two fifty"
  *
  * parseSpokenInvoice(text, { products, stores, today }) →
- *   { store, address, addressFrom, date, dateHeard, lines, transcript }
+ *   { store, address, addressFrom, savedAddress, date, dateHeard, lines, transcript }
+ *
+ * Nothing is decided by position. A phrase with an amount, a dozen, a price or a product name is a product line and
+ * never goes in the address. The address is optional: it is filled only from a phrase that clearly is one (a house
+ * number and street, a street/road/avenue/lane, the town said right after a street, or a known place), otherwise it
+ * stays blank. A store used before offers its last address (savedAddress) but never fills it by itself.
  *   line: { key, productId, name, qty, unit, price, priceFrom ("said" | null), saidAs ("2 dozen" when converted), heard, issue }
  *
  * Products are matched loosely (case, plurals, extra words and close sounds don't matter); the one best match is used,
@@ -26,7 +31,7 @@ import { defaultUnitFor, normalizeUnit, todayISO } from "./util.js";
 const ONES = { zero: 0, oh: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
   eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
 const TENS = { twenty: 20, thirty: 30, forty: 40, fourty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
-const CONNECTORS = new Set(["and", "also", "plus", "then", "the", "some", "with", "um", "uh", "er", "ok", "okay", "next"]);
+const CONNECTORS = new Set(["and", "also", "plus", "then", "the", "some", "with", "um", "uh", "er", "ok", "okay", "next", "please", "thanks"]);
 const PRICE_WORDS = new Set(["at", "for", "@", "$", "price", "priced", "cost", "costs"]);
 /** Words that only ever describe a price ("per unit", "each") — never part of a product name. */
 const PER_WORDS = new Set(["per", "each", "apiece", "unit", "units", "item", "items"]);
@@ -180,6 +185,7 @@ function readQuantity(t, i) {
   let unit = null;
   const u = unitAt(t, j);
   if (u) { unit = u.unit; j = u.end; }
+  else if (t[j] && /^(doesnt|doesn|dozn|dosen|dozan|dozed)$/.test(t[j].w)) { unit = "dozen"; j++; } // "two doesn't beetroot"
   if (t[j]?.w === "of") j++;
   return { qty, unit, end: j };
 }
@@ -361,38 +367,118 @@ function formatAddress(tokens) {
   return parts.map(titleCase).filter(Boolean).join(", ");
 }
 
-function splitHeader(tokens, stores) {
-  if (!tokens.length) return { store: "", address: "" };
-  // 1) Said with pauses (commas): "Sarah Supermarket, 14 Wellington Street, Brownstone"
-  const chunks = [];
-  let cur = [];
-  for (const tok of tokens) { cur.push(tok); if (tok.pause) { chunks.push(cur); cur = []; } }
-  if (cur.length) chunks.push(cur);
-  let storeToks, addrToks;
-  if (chunks.length >= 2) {
-    storeToks = chunks[0];
-    addrToks = chunks.slice(1).flat();
-  } else {
-    // 2) The address starts at the house number…
-    const num = tokens.findIndex((tok, i) => i > 0 && (isDigits(tok.w) || (tok.w in ONES || tok.w in TENS)));
-    // 3) …or right after a business word (Supermarket, Store, Wholesale…)
-    let biz = -1;
-    tokens.forEach((tok, i) => { if (BUSINESS_WORDS.has(tok.w) && i < tokens.length - 1) biz = i; });
-    const cut = num > 0 ? num : biz >= 0 ? biz + 1 : -1;
-    storeToks = cut > 0 ? tokens.slice(0, cut) : tokens;
-    addrToks = cut > 0 ? tokens.slice(cut) : [];
+/** Street words that make a phrase an address even without a house number ("Wellington Street", "Hope Road"). */
+const STRONG_STREET = new Set(["street", "st", "road", "rd", "avenue", "ave", "lane", "ln", "drive", "dr", "boulevard", "blvd",
+  "crescent", "highway", "hwy", "terrace"]);
+
+/** Known places (Jamaica: parishes, towns, areas), so "Sarah Supermarket, Montego Bay" fills the address. */
+const PLACES = [
+  "kingston", "new kingston", "half way tree", "halfway tree", "constant spring", "liguanea", "papine", "stony hill", "cross roads",
+  "spanish town", "portmore", "old harbour", "linstead", "bog walk", "ewarton", "may pen", "hayes", "chapelton", "frankfield",
+  "mandeville", "christiana", "spaldings", "santa cruz", "black river", "junction", "montego bay", "mobay", "falmouth", "lucea",
+  "savanna la mar", "sav la mar", "negril", "whitehouse", "ocho rios", "st anns bay", "saint anns bay", "browns town", "runaway bay",
+  "discovery bay", "claremont", "port maria", "annotto bay", "highgate", "oracabessa", "port antonio", "buff bay", "morant bay",
+  "yallahs", "seaforth", "st andrew", "saint andrew", "st catherine", "saint catherine", "clarendon", "manchester", "st elizabeth",
+  "saint elizabeth", "westmoreland", "hanover", "st james", "saint james", "trelawny", "st ann", "saint ann", "st mary",
+  "saint mary", "portland", "st thomas", "saint thomas",
+].map((p) => p.split(" ")).sort((a, b) => b.length - a.length);
+
+/** A known place at t[i] ("Montego Bay", "Kingston 10") → end index | null. */
+function placeAt(t, i) {
+  for (const words of PLACES) {
+    if (words.every((w, k) => t[i + k]?.w === w)) {
+      let end = i + words.length;
+      // Kingston's postal districts: "Kingston 10," (the number then a pause, or nothing after it).
+      if (words[0] === "kingston" && t[end] && isDigits(t[end].w) && Number(t[end].w) <= 20 && (t[end].pause || end + 1 >= t.length)) end++;
+      return end;
+    }
   }
-  let store = titleCase(storeToks);
-  let address = formatAddress(addrToks);
-  let addressFrom = address ? "said" : null;
-  // A store used before: keep its spelling, and its address if none was said.
-  const key = compact(store);
-  const known = key && (stores || []).map((s) => ({ s, sim: similarity(key, compact(s.name)) })).sort((a, b) => b.sim - a.sim)[0];
-  if (known && known.sim >= 0.85) {
-    store = known.s.name;
-    if (!address && known.s.address) { address = known.s.address; addressFrom = "last time"; }
+  return null;
+}
+
+/** Words that can't be part of a street or town: amounts, prices, units, filler. */
+const notPlaceWord = (t, k) => {
+  const w = t[k].w;
+  return wordNumber(w) !== null || Boolean(unitAt(t, k)) || PRICE_WORDS.has(w) || PER_WORDS.has(w) || CONNECTORS.has(w)
+    || ["a", "an", "half", "to", "too", "of", "dozen"].includes(w);
+};
+
+/**
+ * The town said right after a street ("…, Brownstone"): a known place, or 1–3 other words that are not an amount,
+ * price, unit, product or store name, ending at a comma or before the next amount. → end index | null
+ */
+function townAt(t, k, matcher) {
+  if (k >= t.length) return null;
+  const place = placeAt(t, k);
+  if (place) return place;
+  let m = k;
+  while (m < t.length && m - k < 4) {
+    if (notPlaceWord(t, m) || BUSINESS_WORDS.has(t[m].w) || STREET_WORDS.has(t[m].w)) break;
+    if (matchAt(t, m, matcher, { strict: true })) return m > k ? m : null; // a product name is never part of the address
+    m++;
+    if (t[m - 1].pause) break;
   }
-  return { store, address, addressFrom };
+  if (m === k || m - k > 3) return null;
+  // More plain words before a comma (or a store name) means this isn't a town.
+  if (!t[m - 1].pause && m < t.length && !notPlaceWord(t, m) && !matchAt(t, m, matcher, { strict: true })) return null;
+  return m;
+}
+
+/**
+ * A phrase that clearly is an address, at t[i] → { start, end } | null:
+ *   "14 Wellington Street", "fourteen Red Hills Road", "at 6 Hope Road" — a house number and a street
+ *   "Wellington Street", "Red Hills Road" — a street (street, road, avenue, lane, drive…) without a number
+ *   "Montego Bay", "Kingston 10" — a known place
+ * A street can be followed by its town ("14 Wellington Street, Brownstone").
+ */
+function addressAt(t, i, matcher) {
+  let j = i;
+  if (t[j] && /^(at|on|in|address|located)$/.test(t[j].w) && t[j + 1]) j++;
+  const n = readNumber(t, j);
+  const house = Boolean(n && !unitAt(t, n.end) && !/^(doesnt|doesn|dozn)$/.test(t[n.end]?.w || ""));
+  const k = house ? n.end : j;
+  for (let m = k; m < Math.min(t.length, k + 5); m++) {
+    if (notPlaceWord(t, m)) break;
+    if (m > k && (house ? STREET_WORDS : STRONG_STREET).has(t[m].w)) {
+      let end = m + 1;
+      while (t[end] && STREET_WORDS.has(t[end].w) && !t[end - 1].pause) end++;   // "… Road East"
+      const town = townAt(t, end, matcher);
+      return { start: j, end: town || end };
+    }
+    if (t[m].pause) break;
+  }
+  if (house) return null;
+  const place = placeAt(t, j);
+  return place ? { start: j, end: place } : null;
+}
+
+/**
+ * The store's name at t[i] → { start, end } | null. It runs to its business word ("…Supermarket", "…Wholesale"),
+ * a comma, or the first amount. Without a business word only the first thing said can be the store, and never when
+ * it is a product line (an amount, a price, or nothing but a product's name) or an address.
+ */
+function storeAt(t, i, matcher, { first }) {
+  const run = [];
+  for (let k = i; k < t.length && run.length < 7; k++) {
+    const w = t[k].w;
+    if (wordNumber(w) !== null || PRICE_WORDS.has(w) || PER_WORDS.has(w)) break;
+    if (["a", "an", "half", "to", "too", "for"].includes(w) && unitAt(t, k + 1)) break;   // "a dozen …"
+    if (k > i && unitAt(t, k)) break;
+    run.push(k);
+    if (t[k].pause) break;
+  }
+  if (!run.length) return null;
+  let biz = -1;
+  for (const k of run) if (BUSINESS_WORDS.has(t[k].w) && !(t[k + 1] && STREET_WORDS.has(t[k + 1].w) && !t[k].pause)) biz = k;
+  if (biz >= 0) return { start: i, end: biz + 1 };
+  if (!first || addressAt(t, i, matcher)) return null;
+  const m = matchAt(t, i, matcher, { strict: true });
+  if (m && m.score >= 0.9 && m.end > run.at(-1)) return null; // nothing but a product's name: a product line
+  let end = run.at(-1) + 1;
+  // "Sarah, Supermarket," — a business word said after a pause still belongs to the name.
+  if (t[end - 1].pause && t[end] && BUSINESS_WORDS.has(t[end].w)) end++;
+  else if (t[end - 1].pause && t[end + 1] && BUSINESS_WORDS.has(t[end + 1].w) && !t[end].pause && !notPlaceWord(t, end)) end += 2;
+  return { start: i, end };
 }
 
 // ── Dates ────────────────────────────────────────────────────────────────
@@ -452,38 +538,19 @@ export function extractDate(text, today = todayISO()) {
     const rest = (text.slice(0, m.index) + ", " + text.slice(m.index + m[0].length)).replace(/\s*,\s*(,\s*)+/g, ", ");
     return { date, heard: m[0].trim(), rest };
   }
+  // "today", "yesterday", "tomorrow" (never the address)
+  const rel = /\b(?:(?:dated|date|for|on)\s+)?(today|tonight|this morning|this afternoon|yesterday|tomorrow)(?:'?s\s+date)?\b/i.exec(text);
+  if (rel) {
+    const shift = { yesterday: -1, tomorrow: 1 }[rel[1].toLowerCase()] || 0;
+    const base = new Date(`${today}T12:00:00Z`);
+    base.setUTCDate(base.getUTCDate() + shift);
+    const rest = (text.slice(0, rel.index) + ", " + text.slice(rel.index + rel[0].length)).replace(/\s*,\s*(,\s*)+/g, ", ");
+    return { date: base.toISOString().slice(0, 10), heard: rel[0].trim(), rest };
+  }
   return { date: null, heard: "", rest: text };
 }
 
 // ── The whole invoice ────────────────────────────────────────────────────
-
-/** Where the products start: the first amount followed by a product (or a unit), or a product followed by an amount. */
-function findItemsStart(t, matcher) {
-  // "14 Pepper Lane", "22 Lime Tree Road" are addresses.
-  const isStreet = (m) => {
-    if (!m) return false;
-    for (let k = m.end; k < Math.min(t.length, m.end + 3); k++) {
-      if (STREET_WORDS.has(t[k].w)) return true;
-      if (t[k].pause || wordNumber(t[k].w) !== null || PRICE_WORDS.has(t[k].w)) break;
-    }
-    return false;
-  };
-  for (let i = 0; i < t.length; i++) {
-    const q = readQuantity(t, i);
-    if (q) {
-      const m = matchAt(t, q.end, matcher); // an amount then a product, extra words allowed ("3 nice fresh beetroot")
-      if ((q.unit || m) && !isStreet(m)) return i;
-    }
-    const m = matchAt(t, i, matcher, { strict: true });
-    if (m && !isStreet(m)) {
-      const after = readQuantity(t, m.end);
-      if (after?.unit) return i;                                   // "okra fifty pounds"
-      if (t[m.end] && PRICE_WORDS.has(t[m.end].w)) return i;       // "beetroot juice at 350"
-      if (after && t[after.end] && PRICE_WORDS.has(t[after.end].w)) return i; // "fruit punch 24 at 375"
-    }
-  }
-  return t.length;
-}
 
 let keySeq = 0;
 const nextKey = () => `v${++keySeq}`;
@@ -493,10 +560,10 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
   const t = tokenize(spokenDate.rest);
   const matcher = buildMatcher(products);
   const byId = new Map(products.map((p) => [p.id, p]));
-  const start = findItemsStart(t, matcher);
-  const { store, address, addressFrom } = splitHeader(t.slice(0, start), stores);
   const lines = [];
-  let i = start;
+  let storeToks = null;
+  const addressParts = [];
+  let i = 0;
   const skip = () => { while (t[i] && (CONNECTORS.has(t[i].w) || t[i].w === "of")) i++; };
   const lineStartsAt = (k) => { const q = readQuantity(t, k); return Boolean(q && (q.unit || matchAt(t, q.end, matcher))); };
   // A number followed by a word is the next line's amount ("… a dozen lemons, 4 juice"), not this line's price.
@@ -511,6 +578,15 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
     skip();
     if (i >= t.length) break;
     const from = i;
+    // The store: the name said before the products.
+    if (!storeToks) {
+      const st = storeAt(t, i, matcher, { first: lines.length === 0 });
+      if (st) { storeToks = t.slice(st.start, st.end); i = st.end; continue; }
+    }
+    // An address, only from a phrase that clearly is one.
+    const addr = addressAt(t, i, matcher);
+    if (addr) { addressParts.push(t.slice(addr.start, addr.end)); i = addr.end; continue; }
+    // Otherwise: a product line (an amount, a product's name, a price) — or extra words, left out.
     let q = readQuantity(t, i);
     if (q) { i = q.end; skip(); }
     let m = matchAt(t, i, matcher);
@@ -528,14 +604,14 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
       // Words that aren't a product we know. With an amount before them they were meant as a product: ask.
       // Without one they're just extra words ("please", "okay then"): leave them out.
       const words = [];
-      while (t[i] && !PRICE_WORDS.has(t[i].w) && !PER_WORDS.has(t[i].w) && !readQuantity(t, i) && !CONNECTORS.has(t[i].w)) { words.push(t[i]); i++; if (t[i - 1].pause) break; }
+      while (t[i] && !PRICE_WORDS.has(t[i].w) && !PER_WORDS.has(t[i].w) && !readQuantity(t, i) && !CONNECTORS.has(t[i].w) && !addressAt(t, i, matcher)) { words.push(t[i]); i++; if (t[i - 1].pause) break; }
       if (!q) { i = Math.max(i, from + 1); continue; }
       line.heard = words.map((x) => x.raw).join(" ");
       line.issue = { kind: "product", message: words.length ? `Didn't catch the product (heard “${line.heard}”).` : "Didn't catch the product.", choices: suggest(words.map((x) => x.w), products) };
     }
     // Amount said after the product ("okra fifty pounds", "fruit punch 24 at 375") — unless that number is clearly the
     // amount of the next product ("… 2 dozen cucumber juice").
-    if (line.qty === null) {
+    if (line.qty === null && !addressAt(t, i, matcher)) {
       const after = readQuantity(t, i);
       if (after && (after.unit || !isConfident(matchAt(t, after.end, matcher)))) { line.qty = after.qty; line.unit = after.unit; i = after.end; }
     }
@@ -619,10 +695,22 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
     } else merged.push(line);
   }
 
+  // Store (a store used before keeps its spelling) and address (only what was clearly said as one).
+  let store = storeToks ? titleCase(storeToks) : "";
+  const address = addressParts.map(formatAddress).filter(Boolean).join(", ");
+  let savedAddress = "";
+  const key = compact(store);
+  const known = key && (stores || []).map((s) => ({ s, sim: similarity(key, compact(s.name)) })).sort((a, b) => b.sim - a.sim)[0];
+  if (known && known.sim >= 0.85) {
+    store = known.s.name;
+    if (!address && known.s.address) savedAddress = known.s.address; // offered on the review screen, never filled in by itself
+  }
+
   return {
     store,
     address,
-    addressFrom,
+    addressFrom: address ? "said" : null,
+    savedAddress,
     date: spokenDate.date,
     dateHeard: spokenDate.heard,
     storeIssue: store ? null : { kind: "store", message: "Didn't hear the store name." },

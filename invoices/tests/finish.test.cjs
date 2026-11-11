@@ -102,7 +102,7 @@ async function reloadOn(page, when) {
     check(/Thank you, Sarah Supermarket/.test(thanks) && /Invoice No\. 0001/.test(thanks) && /\$20,060\.00/.test(thanks), "thank-you shows 'Thank you, Sarah Supermarket', the invoice number and the total", thanks);
     check(await page.locator(".thanks svg.thanks-check .thanks-ring").count() === 1 && await page.locator(".thanks svg.thanks-check .thanks-tick").count() === 1, "with a checkmark (ring and tick)");
     check(await page.evaluate(() => getComputedStyle(document.querySelector(".thanks-tick")).stroke) === "rgb(23, 99, 63)", "the checkmark is green");
-    check(JSON.stringify(await page.evaluate(() => window.__buzz)) === "[[30,60,30]]", "a gentle buzz with it");
+    check(JSON.stringify(await page.evaluate(() => window.__buzz)) === "[35]", "a gentle haptic tap with it (one short tap)");
     const early = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".thanks-tick")).strokeDashoffset));
     await page.waitForTimeout(1200);
     const late = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".thanks-tick")).strokeDashoffset));

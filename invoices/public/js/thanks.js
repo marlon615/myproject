@@ -1,9 +1,9 @@
 /**
  * The customer's thank-you, after they sign and tap Done: a green checkmark that draws itself,
- * "Thank you, <store>", the invoice number and the total, for about two seconds with a gentle buzz.
+ * "Thank you, <store>", the invoice number and the total, for about two seconds with a gentle haptic tap.
  * A tap (or Esc) skips it. Then the invoice with its QR code is back.
  *
- * buzz()                               a short, gentle vibration; call it straight from the tap
+ * buzz()                               one short, gentle haptic tap; call it straight from the tap
  * showThanks({ store, number, total }) → Promise, resolves when it has gone
  */
 import { h, invoiceNo, money } from "./util.js";
@@ -12,10 +12,10 @@ const SHOW_MS = 2000;   // on screen this long (the drawing takes the first ~0.9
 const FADE_MS = 300;
 const NS = "http://www.w3.org/2000/svg";
 
-/** A gentle double buzz. Android: vibrate(). iPhone (Safari 18+, no vibrate()): a hidden switch toggle gives a light tick. */
+/** One gentle haptic tap. Android: vibrate(). iPhone (Safari 18+, no vibrate()): a hidden switch toggle gives a light tick. */
 export function buzz() {
   try {
-    if (typeof navigator.vibrate === "function" && navigator.vibrate([30, 60, 30])) return;
+    if (typeof navigator.vibrate === "function" && navigator.vibrate(35)) return;
   } catch { /* not allowed here */ }
   try {
     const label = document.createElement("label");

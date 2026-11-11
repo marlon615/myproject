@@ -340,6 +340,7 @@ dialog.review::backdrop { background: rgba(10, 12, 9, .5); }
 .review-field { display: grid; gap: 5px; }
 .review-field-label { font-size: .78rem; font-weight: 700; letter-spacing: .02em; color: var(--ink-2); }
 .review-input.needs-look { border-color: var(--accent); background: var(--accent-soft); }
+.review-use-address { justify-self: start; text-align: left; font-size: 14px; }
 .review-lines { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
 .review-line { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .review-line.needs-fix { border: 2px solid var(--accent); background: var(--accent-soft); }

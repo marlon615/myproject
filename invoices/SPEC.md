@@ -360,7 +360,8 @@ On every launch of the main app (`index.html` only, never the viewer) a splash s
   - `_headers` allows `microphone=(self)`.
 - **Understanding (`js/voice-parse.js`, pure and Node-tested):**
   - Numbers in words and digits, halves, dozens, bags and pounds, and spoken prices ("two fifty" means 250).
-  - Splits the store and address by pauses, the house number or business words.
+  - **Store and address, never by position:** a phrase with an amount, a dozen, a price or a product name is a product line and never goes in the address. The address is optional and is filled only from a phrase that clearly is one: a house number and street, a street/road/avenue/lane/drive…, the town said right after a street, or a known place (Jamaican parishes and towns, "Kingston 10"). Otherwise it stays blank. The store runs to its business word (Supermarket, Wholesale, Shop…) or a comma; without a business word only the first thing said can be the store, unless it is a product or an address. A store used before keeps its spelling, and its last address is offered on the review screen ("Use last address: …"), never filled in by itself.
+  - "today", "yesterday" and "tomorrow" set the date.
   - **Matches products loosely:** case, plurals, extra words and close sounds don't matter ("beet root", "beetroot juice", "cucumber", "large bammies", "kalaloo"); split or joined words are the same. The one best match is used, and fixes happen on the review screen. It asks "which product?" only when two products are equally close ("bammy": Mini or Large; "punch": Pumpkin or Fruit Punch). Extra words with no amount before them are left out.
   - **"Dozen" means 12:** "two dozen beetroot" is 24 Beetroot Juice (the review shows "24 (2 dozen)"). A price after dozens is per item unless "per dozen" / "a dozen" is said; a price per dozen becomes the price per item when it divides to the cent (otherwise the line stays in dozens).
   - Okra and Hot Pepper default to pounds.
@@ -379,7 +380,7 @@ On every launch of the main app (`index.html` only, never the viewer) a splash s
   - In the QR, the unit is a letter after the amount (`2d`, `50p`, `3b`); old links read as "each".
 
 ### After the customer signs (owner request)
-- **Done** (under the signature, once signed): a gentle buzz (`navigator.vibrate`; on iPhone a hidden switch toggle), then a full-screen thank-you (`js/thanks.js`): a green checkmark that draws itself, "Thank you, <store>" ("Thank you!" with no store), the invoice number and the total, for about two seconds (tap skips). Then back to the invoice with the QR code in view.
+- **Done** (under the signature, once signed): one gentle haptic tap (`navigator.vibrate(35)`; on iPhone a hidden switch toggle), then a full-screen thank-you (`js/thanks.js`): a green checkmark that draws itself, "Thank you, <store>" ("Thank you!" with no store), the invoice number and the total, for about two seconds (tap skips). Then back to the invoice with the QR code in view.
 - **Thank-you line:** "Thank you, <store>" is the last line of the customer page, the PDF, the picture and the paper receipt.
 - **Payment page** (`js/payment.js`, owner or sales rep only): "Finish invoice" (shown on a signed invoice with no payment recorded) opens a full-screen page: Cash (Paid now), 7 days or 14 days (Unpaid, due the invoice date + 7 or 14). Choosing saves it and starts a new invoice. "New invoice" on such an invoice opens it first ("Skip for now" records nothing).
 - **Each invoice stands alone**, with its own payment and due date; one store can have several open invoices. An unpaid invoice turns red on its due day and stays red; only "Payment received" on that invoice (dashboard) clears it.

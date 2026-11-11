@@ -698,12 +698,11 @@ async function applyVoice(result) {
     if (!mode) return;
   }
   if (result.date) el.date.value = result.date;
+  // The address is only ever what was said (or picked) on the review screen; it's optional, so it may stay blank.
+  // A different store than the one on the invoice takes its own address (or none), never the old store's.
+  const otherStore = result.store && storeKey(result.store) !== storeKey(el.store.value);
   if (result.store) el.store.value = result.store;
-  if (result.address) el.address.value = result.address;
-  else {
-    const known = state.stores.find((x) => storeKey(x.name) === storeKey(el.store.value));
-    if (known?.address && !el.address.value.trim()) el.address.value = known.address;
-  }
+  if (result.address || otherStore) el.address.value = result.address || "";
   if (mode === "replace") for (const l of state.lines.values()) l.on = false;
   for (const line of result.lines) {
     const p = state.products.find((x) => x.id === line.productId);

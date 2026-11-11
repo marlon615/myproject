@@ -38,7 +38,7 @@
 
   // Weight products default to pounds; amount after the product; "a pound".
   r = parse("Rose Hall Grocery okra 10 pounds at three hundred a pound hot pepper 4 pounds at 450");
-  check(r.store === "Rose Hall Grocery" && r.address === "12 Main Street, Montego Bay" && r.addressFrom === "last time", "known store fills its address", `${r.store} | ${r.address}`);
+  check(r.store === "Rose Hall Grocery" && r.address === "" && r.savedAddress === "12 Main Street, Montego Bay", "known store: no address said stays blank (its last address is only offered)", `${r.store} | ${r.address} | ${r.savedAddress}`);
   check(r.lines.map(brief).join(" / ") === "Okra|10|lb|300 / Hot Pepper|4|lb|450", "amount after the product, 'a pound'", r.lines.map(brief).join(" / "));
 
   // Mishearings that should still match; ambiguity that must not be guessed.
@@ -109,6 +109,28 @@
   check(r.lines.length === 2 && r.lines.every((l) => l.issue?.kind === "which" && l.issue.choices.length === 2), "asks only when two products are equally close (bammy: Mini/Large; punch: Pumpkin/Fruit Punch)", r.lines.map((l) => JSON.stringify(l.issue)).join(" "));
   check(!parse("Mega Mart, 2 okra, please, thanks, that's everything").lines.some((l) => l.issue && l.issue.kind !== "noPrice"), "extra words with no amount never make a red line");
   check(names("a dozen lemon, 4 juice") === "Lemons / ?product" && parse("Mega Mart, a dozen lemon, 4 juice").lines[0].price === null, "a number before a word is the next line's amount, not a price", names("a dozen lemon, 4 juice"));
+
+  // The address is optional and never decided by position: products (amount, dozen, price or product name) never go
+  // in it; it's filled only from a phrase that clearly is an address.
+  r = parse("Sarah Supermarket, today, two dozen beetroot, one dozen cucumber, thirteen green juice at 300");
+  check(r.store === "Sarah Supermarket" && r.address === "", "owner's test: store, and an empty address", `${r.store} | “${r.address}”`);
+  check(r.lines.map(brief).join(" / ") === "Beetroot Juice|24|each|null|!noPrice / Cucumber Juice|12|each|null|!noPrice / Green Juice|13|each|300",
+    "owner's test: three product lines (24 beetroot, 12 cucumber, 13 green juice at 300)", r.lines.map(brief).join(" / "));
+  check(r.date === "2026-11-10" && r.dateHeard === "today", "'today' sets the invoice date (and never goes in the address)", `${r.date} ${r.dateHeard}`);
+  const A = (s) => { const x = parse(s); return `${x.store} | ${x.address} | ${x.lines.map((l) => l.name || "?").join(", ")}`; };
+  check(A("sarah supermarket today two dozen beetroot one dozen cucumber thirteen green juice at 300") === "Sarah Supermarket |  | Beetroot Juice, Cucumber Juice, Green Juice", "same with no commas at all", A("sarah supermarket today two dozen beetroot one dozen cucumber thirteen green juice at 300"));
+  check(A("Sarah Supermarket. Today. 2 doesn't beetroot, one dozen cucumber, 13 green juice at 300") === "Sarah Supermarket |  | Beetroot Juice, Cucumber Juice, Green Juice", "'doesn't' heard for 'dozen' is still a product, not an address");
+  check(A("Sarah Supermarket, beetroot juice, cucumber juice, green juice at 300") === "Sarah Supermarket |  | Beetroot Juice, Cucumber Juice, Green Juice", "product names with no amount are product lines, never the address", A("Sarah Supermarket, beetroot juice, cucumber juice, green juice at 300"));
+  check(A("Sarah Supermarket, Brownstone, two dozen beetroot") === "Sarah Supermarket |  | Beetroot Juice", "a word that isn't clearly an address leaves it blank", A("Sarah Supermarket, Brownstone, two dozen beetroot"));
+  check(A("Sarah Supermarket, 14 Wellington Street, Brownstone, two dozen beetroot") === "Sarah Supermarket | 14 Wellington Street, Brownstone | Beetroot Juice", "a house number and street (and the town after it) is the address");
+  check(A("Sarah Supermarket Wellington Street two dozen beetroot") === "Sarah Supermarket | Wellington Street | Beetroot Juice", "a street without a number is an address");
+  check(A("Sarah Supermarket, Montego Bay, two dozen beetroot") === "Sarah Supermarket | Montego Bay | Beetroot Juice" && A("Sarah Supermarket, Kingston 10, 2 okra") === "Sarah Supermarket | Kingston 10 | Okra", "a known place is an address");
+  check(A("Sarah Supermarket at 14 Wellington Street two dozen beetroot at 315") === "Sarah Supermarket | 14 Wellington Street | Beetroot Juice", "'at 14 Wellington Street' is the address; 'at 315' is the price");
+  check(A("14 Wellington Street, Sarah Supermarket, two dozen beetroot") === "Sarah Supermarket | 14 Wellington Street | Beetroot Juice", "order doesn't matter: address before the store");
+  check(A("Sarah Supermarket, 14 Wellington Street, beetroot two dozen") === "Sarah Supermarket | 14 Wellington Street | Beetroot Juice", "a product after the street is never taken as the town");
+  check(A("Pepper Pot, 2 dozen beetroot") === "Pepper Pot |  | Beetroot Juice" && A("Joe's Place, 2 okra") === "Joe's Place |  | Okra" && A("Hope Road Pharmacy, 2 okra") === "Hope Road Pharmacy |  | Okra",
+    "store names that contain a product or street word stay the store");
+  check(A("Sarah, Supermarket, two dozen beetroot") === "Sarah Supermarket |  | Beetroot Juice", "a store name split by a comma is put back together");
 
   // Dates: set the invoice date, and stay out of the address.
   r = parse("Sarah Supermarket, 12th of the 11th 2026, 14 Wellington Street, Brownstone, 24 beetroot juice 315 per unit");

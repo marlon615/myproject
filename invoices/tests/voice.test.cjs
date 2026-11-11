@@ -8,6 +8,7 @@ const { start } = require("./serve.cjs");
 const path = require("path");
 
 const PORT = 8793, OUT = path.join(__dirname, "output");
+const TODAY = (() => { const d = new Date(); const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); })();
 let failures = 0;
 const check = (ok, name, extra = "") => { console.log(`${ok ? "PASS" : "FAIL"}  ${name}${extra ? "  — " + extra : ""}`); if (!ok) failures++; };
 
@@ -255,6 +256,32 @@ const NO_SPEECH = `Object.defineProperty(window, "SpeechRecognition", { value: u
     await p4.waitForTimeout(200);
     check(await p4.inputValue("#date") === "2026-11-12" && await p4.inputValue("#address") === "14 Wellington Street, Brownstone", "invoice date set from what was said");
     check(await p4.locator(".prod-row", { hasText: "Beetroot Juice" }).first().locator(".price-input").inputValue() === "", "the beetroot price box is empty on the new invoice");
+
+    // The owner's address test: store, "today", products, no address → three product lines and an empty address.
+    await p4.waitForTimeout(700);
+    await p4.click("#new-btn");
+    await p4.waitForTimeout(300);
+    await p4.evaluate(() => window.scrollTo(0, 0));
+    await p4.click("#mic-btn");
+    await p4.waitForFunction(() => window.__speech.started === 4);
+    await p4.evaluate(() => window.__say("Sarah Supermarket, today, two dozen beetroot, one dozen cucumber, thirteen green juice at 300"));
+    await p4.click("#mic-btn");
+    await p4.waitForSelector("dialog.review[open]");
+    const n6 = await p4.locator("dialog.review .review-line-name").allTextContents();
+    const c6 = await p4.locator("dialog.review .review-line-calc").allTextContents();
+    check(n6.join(" | ") === "Beetroot Juice | Cucumber Juice | Green Juice" && c6.join(" | ") === "24 (2 dozen) × no price | 12 (1 dozen) × no price | 13 × $300.00", "address test: exactly three product lines", `${n6.join(" | ")} — ${c6.join(" | ")}`);
+    check(await p4.inputValue("dialog.review textarea[aria-label='Store address']") === "" && await p4.inputValue("dialog.review input[aria-label='Store name']") === "Sarah Supermarket", "address test: the address field is empty");
+    check(await p4.inputValue("dialog.review input[aria-label='Invoice date']") === TODAY, "address test: 'today' sets today's date");
+    check(await p4.locator("dialog.review .review-use-address").isVisible() && /14 Wellington Street/.test(await p4.textContent("dialog.review .review-use-address")), "the store's last address is offered as one tap, not filled in");
+    check(await p4.locator("dialog.review .review-line.needs-fix, dialog.review .review-issue").count() === 0 && await p4.textContent("dialog.review .review-total-amt") === "$3,900.00", "address test: no red lines; 13 × $300 = $3,900 priced so far");
+    await p4.setViewportSize({ width: 390, height: 1100 });
+    await p4.waitForTimeout(250);
+    await p4.screenshot({ path: path.join(OUT, "voice-9-address-test-review.png") });
+    await p4.setViewportSize({ width: 390, height: 844 });
+    await p4.click("dialog.review .review-apply");
+    await p4.waitForSelector("dialog.review", { state: "detached" });
+    await p4.waitForTimeout(300);
+    check(await p4.inputValue("#store") === "Sarah Supermarket" && await p4.inputValue("#address") === "" && await p4.locator(".prod-row.is-on").count() === 3, "on the invoice: Sarah Supermarket, empty address, three products ticked");
     await c4.close();
     check(errors.length === 0, "no console errors (test sentence)", errors.join(" | "));
   } finally {

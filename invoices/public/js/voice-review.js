@@ -23,8 +23,16 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
     const dlg = h("dialog", { class: "review", "aria-labelledby": "review-title" });
     const store = h("input", { type: "text", class: "review-input", autocomplete: "off", autocapitalize: "words", "aria-label": "Store name", placeholder: "Store name" });
     store.value = parsed.store || "";
-    const address = h("textarea", { class: "review-input", rows: "2", autocapitalize: "words", "aria-label": "Store address", placeholder: "Store address" });
+    const address = h("textarea", { class: "review-input", rows: "2", autocapitalize: "words", "aria-label": "Store address", placeholder: "No address said" });
     address.value = parsed.address || "";
+    // A store used before: its last address is one tap away, but never filled in by itself.
+    const saved = String(parsed.savedAddress || "").trim();
+    const useSaved = saved ? h("button", { type: "button", class: "link-btn review-use-address", onclick: () => { address.value = saved; useSaved.hidden = true; } },
+      `Use last address: ${saved.replace(/\s*\n\s*/g, ", ")}`) : null;
+    if (useSaved) {
+      useSaved.hidden = Boolean(address.value.trim());
+      address.addEventListener("input", () => { useSaved.hidden = Boolean(address.value.trim()); });
+    }
     const date = h("input", { type: "date", class: "review-input", "aria-label": "Invoice date" });
     date.value = parsed.date || currentDate;
     const list = h("ul", { class: "review-lines", "aria-label": "Products heard" });
@@ -147,7 +155,9 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
       h("div", { class: "review-body" },
         h("section", { class: "review-card" },
           h("label", { class: "review-field" }, h("span", { class: "review-field-label" }, "Store"), store),
-          h("label", { class: "review-field" }, h("span", { class: "review-field-label" }, parsed.addressFrom === "last time" ? "Address (from last time)" : "Address"), address),
+          h("div", { class: "review-field" },
+            h("label", { class: "review-field" }, h("span", { class: "review-field-label" }, "Address (optional)"), address),
+            useSaved),
           h("label", { class: "review-field" }, h("span", { class: "review-field-label" }, parsed.date ? `Date (heard “${parsed.dateHeard}”)` : "Date"), date)),
         list,
         h("button", { type: "button", class: "btn btn-ghost review-add", onclick: () => {
