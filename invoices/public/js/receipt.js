@@ -1,12 +1,12 @@
 /**
  * The paper receipt: one layout model (used by the Bluetooth printer) and a canvas renderer (used for the
- * PDF and the picture). Every receipt opens with the brand: the "Marlon" wordmark and "Delivery Invoices".
- * Only ticked products (inv.items) appear.
+ * PDF and the picture). Every receipt opens with the brand: the "Marlon" wordmark and "Delivery Invoices", and ends
+ * with "Thank you, <store>". Only ticked products (inv.items) appear. Payment is never on a receipt.
  */
 import { invoiceToUrl } from "./codec.js";
 import { makeQr } from "./qr.js";
 import { WORDMARK } from "./wordmark.js";
-import { SELLER, invoiceNo, loadImage, money, prettyDate, qtyWithUnit, tidy, withTotals } from "./util.js";
+import { SELLER, invoiceNo, loadImage, money, prettyDate, qtyWithUnit, thankYouText, tidy, withTotals } from "./util.js";
 
 /** Everything the receipt shows, as ready-to-print text. */
 export function receiptModel(inv) {
@@ -29,6 +29,7 @@ export function receiptModel(inv) {
     signed: Boolean(t.signature) || t.signed === true, // customer copies carry the "signed" mark, not the drawing
     signature: t.signature || null,
     qrUrl: invoiceToUrl(t),
+    thanks: thankYouText(t.store),
   };
 }
 
@@ -71,6 +72,7 @@ export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQ
     bold: { css: `700 ${19 * s}px ${SANS}`, px: 19 * s },
     small: { css: `400 ${15.5 * s}px ${SANS}`, px: 15.5 * s },
     total: { css: `800 ${25 * s}px ${SANS}`, px: 25 * s },
+    thanks: { css: `700 ${21 * s}px ${SANS}`, px: 21 * s },
   };
 
   const measure = document.createElement("canvas").getContext("2d");
@@ -182,6 +184,10 @@ export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQ
     gap(4);
     text("Scan to see this invoice on your phone", font.small, { align: "center", color: SOFT });
   }
+
+  // Thank you, at the very bottom.
+  gap(20);
+  text(m.thanks, font.thanks, { align: "center" });
   y += pad;
 
   // Draw

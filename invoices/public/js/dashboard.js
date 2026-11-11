@@ -17,6 +17,7 @@ import { qrCanvas } from "./qr.js";
 import { invoiceToUrl } from "./codec.js";
 import { forgetPrinter, printInvoice, savedPrinterName } from "./printer.js";
 import { shareInvoicePdf } from "./share.js";
+import { byDueDate, dueText, markReceived, paymentPage, paymentState } from "./payment.js";
 
 const UNLOCK_MS = 5 * 60 * 1000;       // stays unlocked this long after the last dashboard activity
 const PIN_ITERATIONS = 210000;         // PBKDF2-SHA-256 rounds for new PINs
@@ -29,7 +30,7 @@ const MAX_MONTHS = 12;
 const NOTICE_SEEN_KEY = "dashboard.pinResetNoticeSeen";   // localStorage: the pinResetAt already acknowledged
 
 const TABS = [["overview", "Overview"], ["history", "History"], ["settings", "Settings"]];
-const FILTERS = [["all", "All"], ["month", "This month"], ["unsigned", "Not signed"]];
+const FILTERS = [["all", "All"], ["month", "This month"], ["unpaid", "Unpaid"], ["unsigned", "Not signed"]];
 const RANGES = [["month", "This month"], ["all", "All time"]];
 const KEYS = [["1", ""], ["2", "ABC"], ["3", "DEF"], ["4", "GHI"], ["5", "JKL"], ["6", "MNO"], ["7", "PQRS"], ["8", "TUV"], ["9", "WXYZ"]];
 
@@ -47,7 +48,7 @@ const pad = { mode: "unlock", purpose: "", entry: "", first: "", len: 0, note: "
 /** Where the owner is in the dashboard; kept while the app stays open. */
 const view = {
   tab: "overview", detailId: null, listScroll: 0, query: "", filter: "all", shown: HISTORY_PAGE,
-  storeRange: "month", productRange: "month", storesAll: false, productsAll: false,
+  storeRange: "month", productRange: "month", storesAll: false, productsAll: false, numbersMonth: "", detailFrom: "history",
   openProduct: null, renaming: null, removedOpen: false,
 };
 let data = { invoices: [], products: [], paper: 58, pinResetAt: null };
@@ -549,6 +550,8 @@ function overviewView() {
   const out = [];
   const notice = resetNotice();
   if (notice) out.push(notice);
+  const unpaid = unpaidSection();
+  if (unpaid) out.push(unpaid);
   out.push(h("section", { class: "dash-section", "aria-labelledby": "dash-h-totals" },
     h("h2", { class: "section-title", id: "dash-h-totals" }, "Totals"),
     h("div", { class: "dash-kpis" },
@@ -566,6 +569,7 @@ function overviewView() {
     return out;
   }
   out.push(
+    numbersSection(),
     monthlySection(),
     rankingSection({
       id: "dash-h-stores", title: "Top stores", rangeKey: "storeRange", allKey: "storesAll",
@@ -576,6 +580,97 @@ function overviewView() {
       rows: productTotals, meta: soldText,
     }));
   return out;
+}
+
+// ── Overview: unpaid invoices (each on its own, red from its due day until "Payment received") ──
+
+function unpaidSection() {
+  const today = todayISO();
+  const list = data.invoices.filter((inv) => inv.payment?.status === "unpaid").sort(byDueDate);
+  if (!list.length) return null;
+  const owed = list.reduce((c, inv) => c + toCents(inv.total), 0);
+  const due = list.filter((inv) => paymentState(inv, today).kind === "due").length;
+  return h("section", { class: "dash-section dash-unpaid", "aria-labelledby": "dash-h-unpaid" },
+    h("div", { class: "dash-section-head" },
+      h("h2", { class: "section-title", id: "dash-h-unpaid" }, "Unpaid invoices"),
+      h("p", { class: "dash-unpaid-sum num" }, `${moneyCents(owed)} owed`)),
+    due ? h("p", { class: "dash-due-note", role: "status" }, icon("alert"), `${plural(due, "invoice")} due now`) : null,
+    h("ul", { class: "card dash-rows" }, list.map((inv) => {
+      const st = paymentState(inv, today), no = invoiceNo(inv.number), store = inv.store || "No store name";
+      return h("li", {},
+        h("button", {
+          type: "button", class: `dash-row dash-unpaid-row is-${st.kind}`, dataset: { id: inv.id },
+          "aria-label": `${store}, invoice No. ${no}, ${money(inv.total)}, ${st.text}`,
+          onclick: () => openDetail(inv.id, { from: "overview" }),
+        },
+        h("span", { class: "dash-row-meta num" }, `No. ${no} · ${prettyDate(inv.date)}`),
+        h("span", { class: "dash-row-total num" }, money(inv.total)),
+        h("span", { class: "dash-row-store" }, store),
+        h("span", { class: "dash-row-badges" }, payChip(st))));
+    })));
+}
+
+/** The owner's payment chip: Paid · cash / Unpaid · due Wed 18 Nov / Due today / Overdue 3 days / No payment set. */
+function payChip(st) {
+  return h("span", { class: `dash-pay is-${st.kind}` }, st.kind === "paid" ? icon("check") : st.kind === "due" ? icon("alert") : null, st.short);
+}
+
+// ── Overview: your business in numbers (one month at a time) ─────────────
+
+function numbersSection() {
+  const thisMonth = todayISO().slice(0, 7);
+  if (!view.numbersMonth) view.numbersMonth = thisMonth;
+  const months = [...new Set(data.invoices.map((inv) => monthKey(inv.date)).filter(Boolean))].sort();
+  const body = h("div", { class: "dash-numbers" });
+  const label = h("p", { class: "dash-month-label", "aria-live": "polite" });
+  const prev = h("button", { type: "button", class: "btn btn-icon dash-month-btn", "aria-label": "Previous month", onclick: () => move(-1) }, icon("back"));
+  const next = h("button", { type: "button", class: "btn btn-icon dash-month-btn dash-month-next", "aria-label": "Next month", onclick: () => move(1) }, icon("back"));
+  function move(step) {
+    const [y, m] = view.numbersMonth.split("-").map(Number);
+    const d = new Date(Date.UTC(y, m - 1 + step, 1));
+    view.numbersMonth = d.toISOString().slice(0, 7);
+    draw();
+  }
+  function draw() {
+    const key = view.numbersMonth;
+    label.textContent = monthLabel(key);
+    prev.disabled = !months.length || key <= months[0];
+    next.disabled = key >= thisMonth;
+    const n = monthNumbers(data.invoices, key);
+    if (!n.count) {
+      body.replaceChildren(h("p", { class: "dash-empty-note" }, `No invoices in ${monthLabel(key)}.`));
+      return;
+    }
+    const tile = (k, title, value, sub) => h("div", { class: "dash-number", dataset: { number: k } },
+      h("p", { class: "dash-number-label" }, title),
+      h("p", { class: "dash-number-value" }, value),
+      h("p", { class: "dash-number-sub num" }, sub));
+    body.replaceChildren(
+      tile("billed", "Total billed", moneyCents(n.billedCents), plural(n.count, "invoice")),
+      tile("customer", "Best customer", n.best.name, `${moneyCents(n.best.cents)} · ${plural(n.best.count, "invoice")}`),
+      tile("day", "Busiest day", dueText(n.busiest.date), `${plural(n.busiest.count, "invoice")} · ${moneyCents(n.busiest.cents)}`));
+  }
+  draw();
+  return h("section", { class: "dash-section", "aria-labelledby": "dash-h-numbers" },
+    h("div", { class: "dash-section-head" },
+      h("h2", { class: "section-title", id: "dash-h-numbers" }, "Your business in numbers"),
+      h("div", { class: "dash-month-nav" }, prev, label, next)),
+    h("div", { class: "card dash-card" }, body));
+}
+
+/** One month: total billed, best customer (most billed), busiest day (most invoices; then the bigger amount). */
+function monthNumbers(list, month) {
+  const inMonth = list.filter((inv) => monthKey(inv.date) === month);
+  const billedCents = inMonth.reduce((c, inv) => c + toCents(inv.total), 0);
+  const days = new Map();
+  for (const inv of inMonth) {
+    const d = days.get(inv.date) || { date: inv.date, count: 0, cents: 0 };
+    d.count++;
+    d.cents += toCents(inv.total);
+    days.set(inv.date, d);
+  }
+  const busiest = [...days.values()].sort((a, b) => b.count - a.count || b.cents - a.cents || b.date.localeCompare(a.date))[0] || null;
+  return { count: inMonth.length, billedCents, best: storeTotals(inMonth)[0] || null, busiest };
 }
 
 function periodTotals(list, today) {
@@ -756,6 +851,7 @@ function filterHistory(list, query, filter, month) {
   return list.filter((inv) => {
     if (filter === "month" && monthKey(inv.date) !== month) return false;
     if (filter === "unsigned" && inv.signature) return false;
+    if (filter === "unpaid" && inv.payment?.status !== "unpaid") return false;
     if (!q) return true;
     return (number && Number(number[1]) === inv.number) || foldText(inv.store).includes(q);
   });
@@ -767,7 +863,7 @@ function renderHistory() {
   ui.historySummary.textContent = rows.length ? `${plural(rows.length, "invoice")} · ${moneyCents(cents)}` : "";
   if (!rows.length) {
     let text = "No invoices yet. Saved invoices will show here.";
-    if (data.invoices.length) text = view.query.trim() ? `No invoices match “${view.query.trim()}”.` : "No invoices to show here.";
+    if (data.invoices.length) text = view.query.trim() ? `No invoices match “${view.query.trim()}”.` : view.filter === "unpaid" ? "Nothing unpaid. Every invoice is paid." : "No invoices to show here.";
     ui.historyList.replaceChildren(h("p", { class: "card dash-empty-note" }, text));
     return;
   }
@@ -793,22 +889,28 @@ function renderHistory() {
 
 function historyRow(inv) {
   const no = invoiceNo(inv.number), signed = Boolean(inv.signature), store = inv.store || "No store name";
+  const st = paymentState(inv);
+  const showPay = signed || st.kind !== "none"; // drafts with nothing recorded don't need a payment chip
   return h("li", {},
     h("button", {
-      type: "button", class: "dash-row", dataset: { id: inv.id },
-      "aria-label": `${store}, invoice No. ${no}, ${prettyDate(inv.date)}, ${money(inv.total)}, ${signed ? "signed" : "not signed"}`,
+      type: "button", class: `dash-row${st.kind === "due" ? " is-due" : ""}`, dataset: { id: inv.id },
+      "aria-label": `${store}, invoice No. ${no}, ${prettyDate(inv.date)}, ${money(inv.total)}, ${signed ? "signed" : "not signed"}${showPay ? `, ${st.text}` : ""}`,
       onclick: () => openDetail(inv.id),
     },
     h("span", { class: "dash-row-meta num" }, `No. ${no} · ${prettyDate(inv.date)}`),
     h("span", { class: "dash-row-total num" }, money(inv.total)),
     h("span", { class: "dash-row-store" }, store),
-    signed ? h("span", { class: "dash-badge is-signed" }, icon("check"), "Signed") : h("span", { class: "dash-badge is-unsigned" }, "Not signed")));
+    h("span", { class: "dash-row-badges" },
+      showPay ? payChip(st) : null,
+      signed ? h("span", { class: "dash-badge is-signed" }, icon("check"), "Signed") : h("span", { class: "dash-badge is-unsigned" }, "Not signed"))));
 }
 
 // ── Invoice detail ───────────────────────────────────────────────────────
 
-function openDetail(id) {
+function openDetail(id, { from = "history" } = {}) {
   view.listScroll = window.scrollY;
+  view.detailFrom = from;
+  if (view.tab !== "history") { view.tab = "history"; syncTabs(); }
   view.detailId = id;
   renderPanel();
   scrollToPanel();
@@ -818,6 +920,14 @@ function openDetail(id) {
 function closeDetail() {
   const id = view.detailId;
   view.detailId = null;
+  if (view.detailFrom === "overview") {
+    view.tab = "overview";
+    syncTabs();
+    renderPanel();
+    window.scrollTo(0, view.listScroll);
+    ui.panel.querySelector(`.dash-row[data-id="${CSS.escape(id || "")}"]`)?.focus({ preventScroll: true });
+    return;
+  }
   renderPanel();
   window.scrollTo(0, view.listScroll);
   ui.panel.querySelector(`.dash-row[data-id="${CSS.escape(id || "")}"]`)?.focus({ preventScroll: true });
@@ -828,7 +938,7 @@ function detailView(inv) {
   const missing = inv.items.filter((it) => it.price === null).length;
   const signature = signatureSrc(inv.signature);
   return [
-    h("button", { type: "button", class: "btn btn-ghost dash-back dash-back-list", onclick: closeDetail }, icon("back"), "All invoices"),
+    h("button", { type: "button", class: "btn btn-ghost dash-back dash-back-list", onclick: closeDetail }, icon("back"), view.detailFrom === "overview" ? "Back" : "All invoices"),
     h("article", { class: "dash-detail", "aria-labelledby": "dash-detail-title" },
       h("div", { class: "card dash-sheet" },
         h("p", { class: "dash-kicker" }, `Invoice No. ${no}`),
@@ -848,6 +958,7 @@ function detailView(inv) {
         ? h("p", { class: "dash-warn" }, icon("alert"),
           `${plural(missing, "item")} ${missing === 1 ? "has" : "have"} no price yet. Tap Open and edit to add ${missing === 1 ? "it" : "them"}.`)
         : null,
+      paymentSection(inv),
       h("section", { class: "dash-section", "aria-labelledby": "dash-h-signature" },
         h("h3", { class: "section-title", id: "dash-h-signature" }, "Customer signature"),
         h("div", { class: "card dash-card" }, signature
@@ -862,6 +973,51 @@ function detailView(inv) {
           h("p", { class: "dash-help" }, "The customer can scan this with their phone camera to see the invoice."))),
       detailActions(inv)),
   ];
+}
+
+/** Owner only: this invoice's payment, with "Payment received" for an unpaid one (the only thing that clears it). */
+function paymentSection(inv) {
+  const st = paymentState(inv);
+  const body = [h("p", { class: "dash-pay-line" }, payChip(st)), h("p", { class: "dash-pay-text" }, st.text)];
+  if (st.kind === "unpaid" || st.kind === "due") {
+    body.push(h("button", { type: "button", class: "btn btn-primary btn-block dash-received", onclick: () => paymentReceived(inv) }, icon("check"), "Payment received"));
+  } else if (st.kind === "none") {
+    body.push(h("button", { type: "button", class: "btn btn-block", onclick: () => recordPayment(inv) }, "Record payment"));
+  }
+  return h("section", { class: "dash-section", "aria-labelledby": "dash-h-payment" },
+    h("h3", { class: "section-title", id: "dash-h-payment" }, "Payment"),
+    h("div", { class: `card dash-card dash-payment is-${st.kind}` }, body,
+      h("p", { class: "dash-help" }, "Only you see this. The customer's receipt, PDF and QR page never show payment.")));
+}
+
+async function paymentReceived(inv) {
+  const session = gate.session;
+  const no = invoiceNo(inv.number);
+  const ok = await confirmSheet({
+    title: `Payment received for No. ${no}?`,
+    message: `${inv.store || "No store name"} · ${money(inv.total)}. It moves to Paid.`,
+    okText: "Payment received",
+  });
+  if (!ok || session !== gate.session) return;
+  await savePayment(inv, markReceived(inv.payment), `No. ${no} is paid.`);
+}
+
+async function recordPayment(inv) {
+  const session = gate.session;
+  const payment = await paymentPage(inv);
+  if (!payment || session !== gate.session) return;
+  await savePayment(inv, payment, `Payment saved for No. ${invoiceNo(inv.number)}.`);
+}
+
+async function savePayment(inv, payment, message) {
+  try {
+    await invoices.setPayment(inv.id, payment);
+  } catch (err) {
+    toast(err.message || "Couldn't save that. Please try again.");
+    return;
+  }
+  toast(message);
+  await refresh();
 }
 
 function qrFor(inv) {

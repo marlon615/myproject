@@ -158,14 +158,17 @@
         </div>
         <div class="sign-foot">
           <p class="sign-tip" id="sign-tip">Ask the customer to sign here with a finger.</p>
-          <button type="button" class="btn btn-small" id="sign-clear" hidden>Clear</button>
+          <div class="sign-buttons">
+            <button type="button" class="btn btn-small" id="sign-clear" hidden>Clear</button>
+            <button type="button" class="btn btn-small btn-primary" id="sign-done" hidden>Done</button>
+          </div>
         </div>
       </div>
     </section>
 
     <section class="block" aria-labelledby="qr-title">
       <h2 class="section-title" id="qr-title">QR code for the customer</h2>
-      <div class="card qr-card">
+      <div class="card qr-card" id="qr-card">
         <div class="qr-box" id="qr-box"></div>
         <p class="qr-caption" id="qr-caption">Customer: scan with your phone camera to see this invoice.</p>
         <button type="button" class="link-btn" id="qr-toggle">Their phone has no internet? Use the text-only QR</button>
@@ -183,6 +186,9 @@
     </section>
 
     <section class="block new-block" aria-label="Next invoice">
+      <button type="button" class="btn btn-block btn-tall btn-finish" id="finish-btn" hidden>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5 10 17l8.5-9.5"/></svg>Finish invoice
+      </button>
       <button type="button" class="btn btn-block" id="new-btn">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.5v13M5.5 12h13"/></svg>New invoice
       </button>

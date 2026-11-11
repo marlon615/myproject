@@ -202,6 +202,12 @@ export const tidy = (s) => String(s ?? "").replace(/[ \t]+/g, " ").replace(/\s*\
 /** Case- and space-insensitive key for matching store names. */
 export const storeKey = (s) => tidy(s).toLowerCase();
 
+/** The last line of every customer copy: "Thank you, Sarah Supermarket" (or "Thank you!" with no store name). */
+export function thankYouText(store) {
+  const name = tidy(store).replace(/\n/g, " ");
+  return name ? `Thank you, ${name}` : "Thank you!";
+}
+
 /** Safe file-name fragment: "Rose Hall Grocery" → "Rose-Hall-Grocery". */
 export const fileSafe = (s) => asciiFold(s).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "invoice";
 

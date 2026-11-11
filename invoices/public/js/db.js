@@ -3,7 +3,10 @@
  *
  * Stores:
  *   products  { id, name, order, custom, hidden, createdAt }   (prices live on invoices only)
- *   invoices  { id, number, seller, store, address, date, items[], total, signature, signedAt, createdAt, updatedAt }
+ *   invoices  { id, number, seller, store, address, date, items[], total, signature, signedAt, createdAt, updatedAt, payment? }
+ *             payment (owner only, never on the customer's copies):
+ *             { status: "paid" | "unpaid", method: "cash" | "terms", termsDays: 0 | 7 | 14, dueDate: "YYYY-MM-DD" | null,
+ *               recordedAt, paidAt: ISO | null }
  *   settings  { key, value }
  */
 import { DEFAULT_PRODUCTS, SELLER, defaultProductId, storeKey, tidy, uid, withTotals } from "./util.js";
@@ -157,6 +160,7 @@ export const invoices = {
   /**
    * Saves an invoice (totals are recomputed). The first save of an invoice without a number
    * claims the next invoice number in the same transaction. Resolves with the saved invoice.
+   * A payment already recorded on the invoice is kept unless `inv` brings its own (the invoice screen never does).
    */
   async put(inv) {
     const clean = withTotals({ seller: SELLER, ...inv });
@@ -166,6 +170,10 @@ export const invoices = {
     clean.createdAt = clean.createdAt || clean.updatedAt;
     if (!clean.id) clean.id = uid("inv_");
     return run(["invoices", "settings"], "readwrite", async (s) => {
+      if (!("payment" in inv)) {
+        const old = await done(s.invoices.get(clean.id));
+        if (old?.payment) clean.payment = old.payment;
+      }
       if (!clean.number) {
         const row = await done(s.settings.get("nextNumber"));
         const n = Math.max(1, Number(row?.value) || 1);
@@ -178,6 +186,21 @@ export const invoices = {
   },
   async remove(id) {
     await run("invoices", "readwrite", (s) => done(s.invoices.delete(id)));
+  },
+  /**
+   * Records how this one invoice is being paid (each invoice is separate, with its own due date), or changes it,
+   * e.g. to paid when the money comes in. `payment` null removes it. Resolves with the saved invoice.
+   */
+  async setPayment(id, payment) {
+    return run("invoices", "readwrite", async (s) => {
+      const inv = await done(s.invoices.get(id));
+      if (!inv) throw new Error("That invoice no longer exists.");
+      if (payment) inv.payment = { ...payment };
+      else delete inv.payment;
+      inv.updatedAt = nowISO();
+      await done(s.invoices.put(inv));
+      return inv;
+    });
   },
   /** The number the next new invoice will get (for display before its first save). */
   async peekNextNumber() {

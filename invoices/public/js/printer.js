@@ -400,6 +400,13 @@ export function buildEscPos(model, { paper = 58, brandRaster = null, signatureRa
     for (const l of wrap("Scan to see this invoice on your phone")) line(l);
     align(0);
   }
+  // Thank you, at the very bottom.
+  line();
+  align(1);
+  bold(true);
+  for (const l of wrap(model.thanks || "Thank you!")) line(l);
+  bold(false);
+  align(0);
   bytes(ESC, 0x64, 4);        // feed 4 lines
   bytes(GS, 0x56, 0x42, 0x00); // cut (ignored by printers without a cutter)
   return Uint8Array.from(out);

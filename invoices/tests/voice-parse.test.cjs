@@ -20,8 +20,9 @@
   let r = parse("Sarah Supermarket, 14 Wellington Street, Brownstone, two dozen beetroot juice, one dozen cucumber juice, five dozen large bammy, fifty pounds okra at two fifty");
   check(r.store === "Sarah Supermarket", "store", r.store);
   check(r.address === "14 Wellington Street, Brownstone", "address", r.address);
-  check(r.lines.map(brief).join(" / ") === "Beetroot Juice|2|dozen|null|!noPrice / Cucumber Juice|1|dozen|null|!noPrice / Large Bammy|5|dozen|null|!noPrice / Okra|50|lb|250",
-    "lines: dozens, pounds, the spoken price; nothing filled in from earlier invoices", r.lines.map(brief).join(" / "));
+  check(r.lines.map(brief).join(" / ") === "Beetroot Juice|24|each|null|!noPrice / Cucumber Juice|12|each|null|!noPrice / Large Bammy|60|each|null|!noPrice / Okra|50|lb|250",
+    "lines: a dozen is 12, pounds, the spoken price; nothing filled in from earlier invoices", r.lines.map(brief).join(" / "));
+  check(r.lines.slice(0, 3).map((l) => l.saidAs).join(",") === "2 dozen,1 dozen,5 dozen", "what was said in dozens is kept as a hint", r.lines.map((l) => l.saidAs).join(","));
   check(r.lines[3].priceFrom === "said" && r.lines.every((l) => l.priceFrom === "said" || l.price === null), "prices only ever come from what was said");
 
   // Same thing as speech recognition often returns it: no punctuation at all.
@@ -29,11 +30,11 @@
   check(r.store === "Sarah Supermarket" && r.address === "14 Wellington Street, Brownstone" && r.lines.length === 4 && r.lines[3].price === 250, "no punctuation: same result", `${r.store} | ${r.address} | ${r.lines.map(brief).join(" / ")}`);
 
   // Number words in the address, "and", money forms, half, "a dozen", bags.
-  r = parse("Lime Tree Wholesale fourteen Red Hills Road Kingston a dozen limes at twelve hundred and half a dozen lemons for 600 and 3 bags of grapefruit at $1,250 and two and a half pounds hot pepper");
+  r = parse("Lime Tree Wholesale fourteen Red Hills Road Kingston a dozen limes at twelve hundred a dozen and half a dozen lemons for 60 and 3 bags of grapefruit at $1,250 and two and a half pounds hot pepper");
   check(r.store === "Lime Tree Wholesale", "store containing a product word (Lime) stays the store", r.store);
   check(r.address === "14 Red Hills Road, Kingston", "number words in the address become digits", r.address);
-  check(r.lines.map(brief).join(" / ") === "Limes|1|dozen|1200 / Lemons|0.5|dozen|600 / Grapefruit|3|bag|1250 / Hot Pepper|2.5|lb|null|!noPrice",
-    "a dozen, half a dozen, bags, $1,250, hot pepper by weight", r.lines.map(brief).join(" / "));
+  check(r.lines.map(brief).join(" / ") === "Limes|12|each|100 / Lemons|6|each|60 / Grapefruit|3|bag|1250 / Hot Pepper|2.5|lb|null|!noPrice",
+    "a dozen (price a dozen → per item), half a dozen, bags, $1,250, hot pepper by weight", r.lines.map(brief).join(" / "));
 
   // Weight products default to pounds; amount after the product; "a pound".
   r = parse("Rose Hall Grocery okra 10 pounds at three hundred a pound hot pepper 4 pounds at 450");
@@ -42,15 +43,15 @@
 
   // Mishearings that should still match; ambiguity that must not be guessed.
   r = parse("Halfway Tree Market, to dozen beet root juice, one dozen bammy, 6 kalaloo at 200, two dozen blorp");
-  check(r.lines[0].name === "Beetroot Juice" && r.lines[0].qty === 2 && r.lines[0].unit === "dozen" && r.lines[0].issue?.kind === "noPrice", "'to dozen beet root juice' → 2 dozen Beetroot Juice (no dozen price known, so it asks)", brief(r.lines[0]));
+  check(r.lines[0].name === "Beetroot Juice" && r.lines[0].qty === 24 && r.lines[0].unit === "each" && r.lines[0].issue?.kind === "noPrice", "'to dozen beet root juice' → 24 Beetroot Juice (no price said)", brief(r.lines[0]));
   check(r.lines[1].issue && (r.lines[1].issue.kind === "product" || r.lines[1].issue.kind === "which") && r.lines[1].issue.choices.length === 2 && r.lines[1].issue.choices.every((id) => ["p05", "p06"].includes(id)),
     "'bammy' alone is not guessed: Mini or Large?", JSON.stringify(r.lines[1].issue));
   check(r.lines[2].name === "Shredded Callaloo" && r.lines[2].qty === 6 && r.lines[2].price === 200 && !r.lines[2].issue, "'kalaloo' → Shredded Callaloo", brief(r.lines[2]));
-  check(r.lines[3].issue?.kind === "product" && /blorp/.test(r.lines[3].issue.message) && r.lines[3].qty === 2, "unknown word is highlighted, not guessed", JSON.stringify(r.lines[3]));
+  check(r.lines[3].issue?.kind === "product" && /blorp/.test(r.lines[3].issue.message) && r.lines[3].qty === 24, "an amount said for a word that matches no product is highlighted, not guessed", JSON.stringify(r.lines[3]));
 
   // Custom product, juicify names, price shorthands.
-  r = parse("Sunrise Mart 8 sorrel drink at one twenty, juicify fruit punch 24 at three seventy five, 12 grape at two oh five, 2 dozen pumpkin punch at 4200");
-  check(r.lines.map(brief).join(" / ") === "Sorrel Drink|8|each|120 / Juicify Drink Fruit Punch|24|each|375 / Juicify Drink Grape|12|each|205 / Pumpkin Punch|2|dozen|4200",
+  r = parse("Sunrise Mart 8 sorrel drink at one twenty, juicify fruit punch 24 at three seventy five, 12 grape at two oh five, 2 dozen pumpkin punch at 4200 a dozen");
+  check(r.lines.map(brief).join(" / ") === "Sorrel Drink|8|each|120 / Juicify Drink Fruit Punch|24|each|375 / Juicify Drink Grape|12|each|205 / Pumpkin Punch|24|each|350",
     "custom product, Juicify names, 'one twenty', 'three seventy five', 'two oh five'", r.lines.map(brief).join(" / "));
 
   // Missing amount, unreadable price, and the same product twice.
@@ -81,12 +82,33 @@
   check(one("24 beetroot, 315 per unit") === "Beetroot Juice|24|each|315", "'24 beetroot, 315 per unit'", one("24 beetroot, 315 per unit"));
   check(one("16 green juice at 230") === "Green Juice|16|each|230", "'16 green juice at 230'", one("16 green juice at 230"));
   check(one("12 pumpkin punch 250 each") === "Pumpkin Punch|12|each|250", "'250 each'", one("12 pumpkin punch 250 each"));
-  check(one("2 pumpkin punch 4200 per dozen") === "Pumpkin Punch|2|dozen|4200", "'4200 per dozen' makes it 2 dozen", one("2 pumpkin punch 4200 per dozen"));
+  check(one("2 dozen pumpkin punch 4200 per dozen") === "Pumpkin Punch|24|each|350", "'2 dozen … 4200 per dozen' = 24 at 350", one("2 dozen pumpkin punch 4200 per dozen"));
+  check(one("2 dozen pumpkin punch at 250") === "Pumpkin Punch|24|each|250", "a price after dozens is per item unless 'per dozen' is said", one("2 dozen pumpkin punch at 250"));
+  check(one("3 dozen lemons at 100 per dozen") === "Lemons|3|dozen|100", "a price per dozen that doesn't split to the cent keeps the line in dozens", one("3 dozen lemons at 100 per dozen"));
   check(one("5 okra 300 per pound") === "Okra|5|lb|300", "'300 per pound'", one("5 okra 300 per pound"));
   check(one("24 beetroot juice three fifteen per unit, 16 green juice at two thirty") === "Beetroot Juice|24|each|315 / Green Juice|16|each|230", "spoken-word prices with 'per unit' and 'at'", one("24 beetroot juice three fifteen per unit, 16 green juice at two thirty"));
   check(one("24 beetroot juice 315, 16 green juice 230") === "Beetroot Juice|24|each|315 / Green Juice|16|each|230", "a bare price after each product", one("24 beetroot juice 315, 16 green juice 230"));
   check(one("24 beetroot juice 16 green juice") === "Beetroot Juice|24|each|null|!noPrice / Green Juice|16|each|null|!noPrice", "the next product's amount is never taken as a price", one("24 beetroot juice 16 green juice"));
   check(one("24 beetroot juice at 315 per unit each") === "Beetroot Juice|24|each|315", "extra price words are absorbed, never a line", one("24 beetroot juice at 315 per unit each"));
+
+  // Loose matching (the owner's latest test): case, plurals, extra words, close sounds; "dozen" = 12.
+  r = parse("Sarah Supermarket, 14 Wellington Street, two dozen beetroot, one dozen cucumber, five dozen large bammy, fifty pounds okra at two fifty");
+  check(r.store === "Sarah Supermarket" && r.address === "14 Wellington Street", "latest test: store and address", `${r.store} | ${r.address}`);
+  check(r.lines.map(brief).join(" / ") === "Beetroot Juice|24|each|null|!noPrice / Cucumber Juice|12|each|null|!noPrice / Large Bammy|60|each|null|!noPrice / Okra|50|lb|250",
+    "latest test: 24 beetroot, 12 cucumber, 60 large bammy, 50 lb okra at 250", r.lines.map(brief).join(" / "));
+  check(!r.lines.some((l) => ["product", "which", "quantity", "price"].includes(l.issue?.kind)), "latest test: no red lines, no 'which product?'");
+  check(sumTotals(r.lines) === 12500, "latest test: priced so far = 50 × 250 = $12,500", String(sumTotals(r.lines)));
+  const names = (s) => parse(`Mega Mart, ${s}`).lines.map((l) => l.name || `?${l.issue?.kind}`).join(" / ");
+  check(names("4 BEET ROOT, 5 Beetroot Juices, 6 cucumbers, 7 Large Bammies, 8 callaloo, 9 kalaloo") === "Beetroot Juice / Cucumber Juice / Large Bammy / Shredded Callaloo",
+    "case, plurals, split words and close sounds all match (same product merged)", names("4 BEET ROOT, 5 Beetroot Juices, 6 cucumbers, 7 Large Bammies, 8 callaloo, 9 kalaloo"));
+  check(names("3 nice fresh beetroot juice please, 2 dozen of the large bammy okay, 5 grape fruit, 4 juicify grape, 6 scotch bonnets") === "Beetroot Juice / Large Bammy / Grapefruit / Juicify Drink Grape / Hot Pepper",
+    "extra words are ignored; 'grape fruit' is Grapefruit, not Juicify Grape", names("3 nice fresh beetroot juice please, 2 dozen of the large bammy okay, 5 grape fruit, 4 juicify grape, 6 scotch bonnets"));
+  check(names("3 beat root, 4 bambi large, 5 mini bammie, 6 oprah, 7 cue cumber") === "Beetroot Juice / Large Bammy / Mini Bammy / Okra / Cucumber Juice",
+    "common mishearings still match", names("3 beat root, 4 bambi large, 5 mini bammie, 6 oprah, 7 cue cumber"));
+  r = parse("Mega Mart, 3 bammy, 2 punch, okay thank you very much");
+  check(r.lines.length === 2 && r.lines.every((l) => l.issue?.kind === "which" && l.issue.choices.length === 2), "asks only when two products are equally close (bammy: Mini/Large; punch: Pumpkin/Fruit Punch)", r.lines.map((l) => JSON.stringify(l.issue)).join(" "));
+  check(!parse("Mega Mart, 2 okra, please, thanks, that's everything").lines.some((l) => l.issue && l.issue.kind !== "noPrice"), "extra words with no amount never make a red line");
+  check(names("a dozen lemon, 4 juice") === "Lemons / ?product" && parse("Mega Mart, a dozen lemon, 4 juice").lines[0].price === null, "a number before a word is the next line's amount, not a price", names("a dozen lemon, 4 juice"));
 
   // Dates: set the invoice date, and stay out of the address.
   r = parse("Sarah Supermarket, 12th of the 11th 2026, 14 Wellington Street, Brownstone, 24 beetroot juice 315 per unit");

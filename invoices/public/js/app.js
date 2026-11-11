@@ -17,6 +17,8 @@ import { hideDashboard, initDashboard, showDashboard } from "./dashboard.js";
 import { Listener, canListen, dictate } from "./voice.js";
 import { bestParse } from "./voice-parse.js";
 import { reviewSpokenInvoice } from "./voice-review.js";
+import { buzz, showThanks } from "./thanks.js";
+import { paymentPage } from "./payment.js";
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -25,7 +27,8 @@ const el = {
   list: $("prod-list"), addForm: $("prod-add"), addName: $("prod-add-name"),
   grandTotal: $("grand-total"), grandCount: $("grand-count"), grandAmount: $("grand-amount"),
   signCard: $("sign-card"), signCanvas: $("sign-canvas"), signStatus: $("sign-status"), signTip: $("sign-tip"), signClear: $("sign-clear"),
-  qrBox: $("qr-box"), qrCaption: $("qr-caption"), qrToggle: $("qr-toggle"),
+  signDone: $("sign-done"), finish: $("finish-btn"),
+  qrCard: $("qr-card"), qrBox: $("qr-box"), qrCaption: $("qr-caption"), qrToggle: $("qr-toggle"),
   print: $("print-btn"), sharePdf: $("share-pdf-btn"), shareImage: $("share-image-btn"),
   newBtn: $("new-btn"), saveStatus: $("save-status"),
   bar: $("total-bar"), barCount: $("bar-count"), barAmount: $("bar-amount"),
@@ -45,6 +48,7 @@ const state = {
   stores: [],
   qrMode: "link",
   savedAt: null,
+  paymentSet: false,  // this invoice's payment is recorded (owner only: it's never shown on this screen)
 };
 const rows = new Map(); // productId → { li, cb, qty, price, total, detail, product }
 let pad = null;
@@ -93,6 +97,7 @@ function signalReady() {
 /** Starts a fresh invoice, optionally copying store, address and items from another one. */
 async function newDraft(from = null) {
   state.inv = { signature: null, signedAt: null };
+  state.paymentSet = false;
   state.lines = new Map();
   state.extra = [];
   el.store.value = from?.store || "";
@@ -109,6 +114,7 @@ async function newDraft(from = null) {
 
 async function loadInvoice(inv) {
   state.inv = { id: inv.id, number: inv.number, createdAt: inv.createdAt, signature: inv.signature || null, signedAt: inv.signedAt || null };
+  state.paymentSet = Boolean(inv.payment);
   state.lines = new Map();
   state.extra = [];
   el.store.value = inv.store || "";
@@ -370,6 +376,8 @@ function renderSignState() {
   el.signCard.classList.toggle("is-signed", signed);
   el.signedBadge.hidden = !signed;
   el.signClear.hidden = !signed;
+  el.signDone.hidden = !signed;
+  el.finish.hidden = !signed || state.paymentSet;
   el.signStatus.textContent = signed ? `Signed ✓${state.inv.signedAt ? " " + timeText(new Date(state.inv.signedAt)) : ""}` : "Not signed yet";
   el.signTip.textContent = signed ? "Signed. Changing the invoice will ask first." : "Ask the customer to sign here with a finger.";
 }
@@ -488,8 +496,10 @@ function wireEvents() {
     }
   });
 
-  // Signature.
+  // Signature. Done: the customer's thank-you, then back to the invoice and its QR code.
   el.signClear.addEventListener("click", clearSignature);
+  el.signDone.addEventListener("click", onDone);
+  el.finish.addEventListener("click", () => finishInvoice());
 
   // Voice entry: one tap starts listening, the next tap stops.
   el.mic.addEventListener("click", onMic);
@@ -506,12 +516,10 @@ function wireEvents() {
   el.sharePdf.addEventListener("click", (e) => output(e.currentTarget, shareInvoicePdf));
   el.shareImage.addEventListener("click", (e) => output(e.currentTarget, shareInvoiceImage));
 
-  el.newBtn.addEventListener("click", async () => {
-    await flushSave();
-    await newDraft();
-    refreshStores();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    toast(`New invoice No. ${invoiceNo(state.nextNumber)}`);
+  // A signed invoice with no payment recorded goes through the payment page first (it can be skipped).
+  el.newBtn.addEventListener("click", () => {
+    if (state.inv.signature && !state.paymentSet) finishInvoice({ fromNew: true });
+    else startNewInvoice();
   });
 
   // Never lose typing when the app is closed or switched away from.
@@ -521,6 +529,57 @@ function wireEvents() {
     if (voice.listener?.active) finishListening(); // phone locked or app switched: keep what was heard
   });
   window.addEventListener("pagehide", () => { flushSave(); });
+}
+
+async function startNewInvoice(message = "") {
+  await flushSave();
+  await newDraft();
+  refreshStores();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  toast(message || `New invoice No. ${invoiceNo(state.nextNumber)}`);
+}
+
+// ── Done, thank you, payment ─────────────────────────────────────────────
+
+/** The customer has signed and taps Done: a gentle buzz and the thank-you, then the invoice with its QR code. */
+async function onDone() {
+  if (!state.inv.signature || el.signDone.getAttribute("aria-busy") === "true") return;
+  buzz(); // straight from the tap: phones only buzz for a tap
+  el.signDone.setAttribute("aria-busy", "true");
+  const d = draft();
+  flushSave();
+  try {
+    await showThanks({ store: d.store, number: d.number, total: d.total });
+  } finally {
+    el.signDone.removeAttribute("aria-busy");
+  }
+  el.qrCard.scrollIntoView({ block: "center", behavior: "smooth" });
+  el.qrCard.classList.remove("is-ready");
+  void el.qrCard.offsetWidth; // restart the highlight
+  el.qrCard.classList.add("is-ready");
+  setTimeout(() => el.qrCard.classList.remove("is-ready"), 1600);
+}
+
+/**
+ * The private payment page (owner or sales rep only), once the customer has their receipt:
+ * Cash → Paid; 7 or 14 days → Unpaid with its own due date. Then a new invoice starts.
+ * fromNew: opened by "New invoice"; skipping it still starts the new invoice.
+ */
+async function finishInvoice({ fromNew = false } = {}) {
+  await flushSave();
+  const saved = state.inv.id ? await invoices.get(state.inv.id) : null;
+  if (!saved) { if (fromNew) await startNewInvoice(); return; }
+  if (saved.payment) { state.paymentSet = true; renderSignState(); if (fromNew) await startNewInvoice(); return; }
+  const payment = await paymentPage(withTotals(saved), { skipText: fromNew ? "Skip for now" : "Not now" });
+  if (!payment) { if (fromNew) await startNewInvoice(); return; }
+  try {
+    await invoices.setPayment(saved.id, payment);
+  } catch (e) {
+    toast(e?.message || "Couldn't save that. Please try again.");
+    return;
+  }
+  state.paymentSet = true;
+  await startNewInvoice(`Saved to your dashboard. New invoice No. ${invoiceNo(await invoices.peekNextNumber())}`);
 }
 
 async function output(button, action) {
@@ -725,11 +784,14 @@ async function route() {
     return;
   }
   hideDashboard();
-  // The open invoice may have been deleted from the dashboard.
-  if (state.inv.id && !(await invoices.get(state.inv.id))) {
+  // The open invoice may have been deleted from the dashboard, or its payment recorded there.
+  const open = state.inv.id ? await invoices.get(state.inv.id) : null;
+  if (state.inv.id && !open) {
     await newDraft();
     refreshStores();
   } else {
+    state.paymentSet = Boolean(open?.payment);
+    renderSignState();
     state.nextNumber = await invoices.peekNextNumber();
     renderNumber();
   }

@@ -182,6 +182,8 @@ svg.icon {
 .sign-card.is-signed .sign-pad { border-style: solid; border-color: color-mix(in srgb, var(--brand) 45%, var(--line-strong)); }
 .sign-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 .sign-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; min-height: 38px; }
+.sign-buttons { display: flex; gap: 8px; flex: none; }
+#sign-done { min-width: 84px; font-weight: 750; }
 .sign-tip { margin: 0 4px; font-size: 13.5px; color: var(--muted); }
 @media (prefers-color-scheme: dark) {
   /* Ink is black (it prints black), so the pad stays light for the customer to see their signature. */
@@ -196,12 +198,81 @@ svg.icon {
 .qr-box.is-empty { min-height: 120px; border: 1.5px dashed var(--line-strong); border-radius: 12px; background: var(--paper-2); }
 .qr-empty { margin: 0; padding: 18px; color: var(--muted); font-size: 15px; }
 .qr-caption { margin: 14px 8px 2px; font-size: 14.5px; color: var(--ink-2); }
+/* Back from the thank-you: a soft green ring shows where the QR is. */
+.qr-card.is-ready { animation: qr-ready 1.5s ease-out; }
+@keyframes qr-ready {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 55%, transparent), var(--shadow); }
+  60% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--brand) 0%, transparent), var(--shadow); }
+  100% { box-shadow: var(--shadow); }
+}
 
 /* ── Actions ── */
 .actions { display: grid; gap: 10px; }
 .actions .link-btn { justify-self: center; }
 .btn[aria-busy="true"] { opacity: .65; pointer-events: none; }
 .new-block { display: grid; gap: 8px; margin-top: 12px; }
+.btn-finish { background: #0f1411; border-color: #0f1411; color: #f3efe4; }
+.btn-finish svg { color: #6cc495; stroke-width: 2.6; }
+@media (prefers-color-scheme: dark) { .btn-finish { background: #f3efe4; border-color: #f3efe4; color: #0f1411; } .btn-finish svg { color: var(--brand); } }
+
+/* ── Thank-you (after the customer signs and taps Done) ── */
+.thanks {
+  position: fixed; inset: 0; z-index: 2147482000; display: grid; place-items: center;
+  padding: calc(24px + var(--safe-top)) 28px calc(24px + var(--safe-bottom));
+  background: var(--bg); color: var(--ink); cursor: pointer; touch-action: manipulation;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  animation: thanks-in .2s ease-out both;
+  transition: opacity .3s ease;
+}
+.thanks.is-leaving { opacity: 0; }
+.thanks-inner { display: grid; justify-items: center; text-align: center; max-width: 30rem; transform: translateY(-3vh); }
+.thanks-check { width: 136px; height: 136px; margin-bottom: 22px; overflow: visible; }
+.thanks-disc { fill: var(--brand-soft); transform-box: fill-box; transform-origin: center; animation: thanks-pop .5s cubic-bezier(.2, .9, .3, 1.25) both; }
+.thanks-ring { fill: none; stroke: var(--brand); stroke-width: 5; stroke-dasharray: 277; stroke-dashoffset: 0; animation: thanks-ring .6s cubic-bezier(.65, 0, .35, 1) .08s both; }
+.thanks-tick { fill: none; stroke: var(--brand); stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 55; stroke-dashoffset: 0; animation: thanks-tick .38s cubic-bezier(.65, 0, .35, 1) .58s both; }
+.thanks-title { margin: 0; font-family: var(--font-display); font-size: clamp(26px, 7.4vw, 34px); line-height: 1.15; font-weight: 700; overflow-wrap: anywhere; animation: thanks-up .45s ease-out .45s both; }
+.thanks-meta { margin: 12px 0 0; font-size: 16px; color: var(--ink-2); animation: thanks-up .45s ease-out .6s both; }
+.thanks-total { margin: 4px 0 0; font-family: var(--font-display); font-size: 30px; font-weight: 700; animation: thanks-up .45s ease-out .7s both; }
+@keyframes thanks-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes thanks-pop { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes thanks-ring { from { stroke-dashoffset: 277; } to { stroke-dashoffset: 0; } }
+@keyframes thanks-tick { from { stroke-dashoffset: 55; } to { stroke-dashoffset: 0; } }
+@keyframes thanks-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* ── Payment page (owner or sales rep only, after the customer is done) ── */
+dialog.pay {
+  width: 100%; max-width: 560px; height: 100dvh; max-height: none; margin: 0 auto; padding: 0; border: 0;
+  background: var(--bg); color: var(--ink); display: flex; flex-direction: column;
+}
+dialog.pay:not([open]) { display: none; }
+dialog.pay::backdrop { background: #0f1411; }
+@media (min-width: 600px) { dialog.pay { height: calc(100dvh - 40px); margin-top: 20px; border-radius: 22px; overflow: hidden; box-shadow: var(--shadow-lg); } }
+.pay-head { padding: calc(18px + var(--safe-top)) 20px 18px; background: #0f1411; color: #f3efe4; }
+.pay-head h2 { margin: 6px 0 0; font-family: var(--font-display); font-size: 1.6rem; font-weight: 700; outline: none; }
+.pay-private { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; font-weight: 700; letter-spacing: .04em; color: #6cc495; }
+.pay-private .icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+.pay-body { flex: 1; overflow-y: auto; padding: 16px 16px 12px; display: grid; align-content: start; gap: 14px; }
+.pay-summary { padding: 16px 18px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); }
+.pay-store { margin: 0; font-weight: 750; font-size: 18px; overflow-wrap: anywhere; }
+.pay-meta { margin: 2px 0 0; color: var(--ink-2); font-size: 14.5px; }
+.pay-total { margin: 8px 0 0; font-family: var(--font-display); font-size: 30px; font-weight: 700; }
+.pay-options { display: grid; gap: 10px; }
+.pay-option {
+  display: flex; align-items: center; gap: 14px; width: 100%; min-height: 82px; padding: 14px 16px; text-align: left;
+  font: inherit; color: var(--ink); background: var(--paper); border: 1.5px solid var(--line-strong); border-radius: var(--radius);
+  cursor: pointer; touch-action: manipulation;
+}
+.pay-option:active { transform: scale(.985); }
+.pay-option:focus-visible { outline: 3px solid color-mix(in srgb, var(--brand) 60%, transparent); outline-offset: 2px; }
+.pay-option-icon { display: grid; place-items: center; width: 46px; height: 46px; flex: none; border-radius: 12px; background: var(--paper-2); color: var(--ink-2); }
+.pay-option-icon .icon { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.pay-option-text { display: grid; gap: 2px; }
+.pay-option-title { font-size: 20px; font-weight: 800; }
+.pay-option-sub { font-size: 14px; color: var(--ink-2); }
+.pay-option.is-cash { border-color: var(--brand); background: var(--brand-soft); }
+.pay-option.is-cash .pay-option-icon { background: var(--brand); color: var(--brand-ink); }
+.pay-note { margin: 2px 4px 0; font-size: 13.5px; color: var(--muted); }
+.pay-foot { padding: 8px 16px calc(14px + var(--safe-bottom)); }
 .save-status { margin: 0; text-align: center; font-size: 13px; color: var(--muted); }
 
 /* ── Sticky total bar ── */

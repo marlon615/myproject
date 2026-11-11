@@ -5,14 +5,18 @@
  *
  * parseSpokenInvoice(text, { products, stores, today }) →
  *   { store, address, addressFrom, date, dateHeard, lines, transcript }
- *   line: { key, productId, name, qty, unit, price, priceFrom ("said" | null), heard, issue }
+ *   line: { key, productId, name, qty, unit, price, priceFrom ("said" | null), saidAs ("2 dozen" when converted), heard, issue }
+ *
+ * Products are matched loosely (case, plurals, extra words and close sounds don't matter); the one best match is used,
+ * and it only asks "which product?" when two products are equally close. "Dozen" means 12: dozens become single items.
  *
  * Prices are only ever the ones said for this invoice ("24 beetroot juice 315 per unit", "16 green juice at 230");
  * nothing is filled in from earlier invoices. A spoken date ("12th of the 11th 2026") sets the invoice date.
  *   issue: null | { kind, message, choices? }   kind: "product" | "which" | "quantity" | "price" | "noPrice" | "store"
  *
- * Nothing unclear is guessed: a word that doesn't clearly match a product, a missing amount, or a price that
- * can't be read comes back as a line with an `issue`, for the review screen to highlight.
+ * What can't be settled — two products equally close, an amount said for words that match no product, a missing
+ * amount, a price that can't be read — comes back as a line with an `issue`, for the review screen to highlight.
+ * Extra words with no amount before them ("please", "okay then") are left out.
  * Pure (no DOM), so it can be tested anywhere.
  */
 import { defaultUnitFor, normalizeUnit, todayISO } from "./util.js";
@@ -181,24 +185,30 @@ function readQuantity(t, i) {
 }
 
 // ── Product matching ─────────────────────────────────────────────────────
+// A product is matched loosely, by the words that make it different: case, plurals, extra words and the generic
+// "juice"/"drink" don't matter, close sounds count ("bambi" ≈ "bammy", "kalaloo" ≈ "callaloo"), and split or joined
+// words are the same ("beet root" = "beetroot"). The single best match is used — the review screen is where mistakes
+// get fixed. Only when two products are equally close ("bammy": Mini or Large?) does it ask.
 
 const BUILTIN_ALIASES = {
-  "Beetroot Juice": ["beet root juice", "beet juice", "beetroot", "beet root", "beat root juice", "beetroots"],
-  "Cucumber Juice": ["cucumber", "cucumbers"],
-  "Pumpkin Punch": ["pumpkin", "pumpkin punches"],
+  "Beetroot Juice": ["beetroot", "beet root", "beet root juice", "beet juice", "beat root", "beat root juice", "beet route", "beetroot juices"],
+  "Cucumber Juice": ["cucumber", "cucumber juices", "cue cumber"],
+  "Pumpkin Punch": ["pumpkin", "punkin punch", "pumpkin punches"],
   "Green Juice": ["greens juice", "green juices"],
-  "Mini Bammy": ["mini bammies", "mini bammie", "small bammy", "small bammies", "mini bammys"],
-  "Large Bammy": ["large bammies", "large bammie", "big bammy", "big bammies", "large bammys"],
-  "Juicify Drink Grape": ["juicify grape", "grape juicify", "juicify grape drink", "grape drink", "grape"],
-  "Juicify Drink Fruit Punch": ["juicify fruit punch", "fruit punch juicify", "fruit punch drink", "fruit punch"],
-  "Hot Pepper": ["hot peppers", "scotch bonnet", "scotch bonnets", "scotch bonnet pepper", "scotch bonnet peppers", "pepper", "peppers"],
-  "Shredded Callaloo": ["callaloo", "calaloo", "kalaloo", "calalu", "shredded calaloo", "shred callaloo"],
+  "Mini Bammy": ["mini bammie", "mini bammies", "mini bami", "mini bambi", "small bammy", "small bammies"],
+  "Large Bammy": ["large bammie", "large bammies", "large bami", "large bambi", "big bammy", "big bammies"],
+  "Juicify Drink Grape": ["juicify grape", "grape juicify", "grape drink", "grape", "juicy fi grape"],
+  "Juicify Drink Fruit Punch": ["juicify fruit punch", "fruit punch juicify", "fruit punch", "juicy fi fruit punch"],
+  "Hot Pepper": ["hot peppers", "pepper", "peppers", "scotch bonnet", "scotch bonnets", "scotch bonnet pepper"],
+  "Shredded Callaloo": ["callaloo", "calaloo", "kalaloo", "calalu", "kallaloo", "shredded calaloo"],
   "Lemons": ["lemon"],
   "Limes": ["lime"],
-  "Grapefruit": ["grapefruits", "grape fruit", "grape fruits"],
-  "Okra": ["okras", "ochro", "ochra", "okro"],
+  "Grapefruit": ["grape fruit", "grapefruits"],
+  "Okra": ["okras", "ochro", "ochra", "okro", "ocra", "oprah"],
 };
 const GENERIC = new Set(["juice", "juices", "drink", "drinks"]);
+const TIE = 0.02;       // scores this close count as "equally close"
+const MIN_MATCH = 0.5;  // below this, nothing was clearly said
 
 const compact = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 /** A rough sound-alike key: "bammie" ≈ "bammy", "kalaloo" ≈ "callaloo", "ochra" ≈ "okra". */
@@ -219,62 +229,100 @@ function similarity(a, b) {
   return 1 - prev[n] / Math.max(m, n);
 }
 
-/** All the ways each product may be said. */
-function buildMatcher(products) {
-  const entries = [];
-  for (const p of products) {
-    const name = p.name.toLowerCase();
-    const forms = new Set([name, ...(BUILTIN_ALIASES[p.name] || [])]);
-    const words = name.split(/\s+/);
-    const core = words.filter((w) => !GENERIC.has(w));
-    if (core.length && core.length < words.length && core.join("").length >= 4) forms.add(core.join(" "));
-    for (const f of [...forms]) {
-      if (f.endsWith("s") && f.length > 4) forms.add(f.slice(0, -1));
-      else forms.add(`${f}s`);
-    }
-    for (const f of forms) entries.push({ product: p, words: f.split(/\s+/).length, c: compact(f), k: soundKey(f) });
-  }
-  return entries;
+/** Singular, plain form: "bammies" → "bammy", "lemons" → "lemon", "peppers" → "pepper". */
+function stem(w) {
+  if (w.length > 4 && w.endsWith("ies")) return `${w.slice(0, -3)}y`;
+  if (w.length > 4 && /(?:ch|sh|x|z|ss)es$/.test(w)) return w.slice(0, -2);
+  if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
+  return w;
 }
 
-const scoreWindow = (text, e) => Math.max(similarity(compact(text), e.c), similarity(soundKey(text), e.k) - 0.03);
+/** How alike two spoken words are (1 = same), ignoring plurals and allowing close sounds. */
+function wordSim(a, b) {
+  const x = stem(a), y = stem(b);
+  if (x === y) return 1;
+  return Math.max(similarity(x, y), similarity(soundKey(x), soundKey(y)) - 0.02);
+}
+
+/** Each product's names (its own and the usual ways it's said), as the words that tell it apart. */
+function buildMatcher(products) {
+  const forms = [];
+  for (const p of products) {
+    for (const name of new Set([p.name.toLowerCase(), ...(BUILTIN_ALIASES[p.name] || [])])) {
+      const words = name.split(/\s+/).filter(Boolean);
+      const key = words.filter((w) => !GENERIC.has(w));
+      forms.push({ product: p, key: key.length ? key : words });
+    }
+  }
+  return forms;
+}
 
 /**
- * Best product said at t[i] (1–5 words). → { product, score, end, runnerUp } | null
- * Words that are numbers, units or price words never start or join a product name.
+ * Share of a product's telling words that were heard (closely), less a little for each extra word heard.
+ * strict: the first word heard must be part of the name (so "Rose Hall Grocery okra" isn't read as one product).
  */
-function matchAt(t, i, matcher) {
-  const stop = (tok) => !tok || wordNumber(tok.w) !== null || unitAt([tok], 0) || PRICE_WORDS.has(tok.w) || PER_WORDS.has(tok.w) || CONNECTORS.has(tok.w) || tok.w === "of";
-  if (stop(t[i])) return null;
-  const best = new Map(); // product id → { score, end }
-  for (let len = 1; len <= 5 && i + len <= t.length; len++) {
-    if (stop(t[i + len - 1])) break;
-    const text = t.slice(i, i + len).map((x) => x.w).join(" ");
-    for (const e of matcher) {
-      if (Math.abs(e.words - len) > 1) continue;
-      const s = scoreWindow(text, e);
-      const cur = best.get(e.product.id);
-      if (!cur || s > cur.score || (s === cur.score && i + len > cur.end)) best.set(e.product.id, { product: e.product, score: s, end: i + len });
-    }
-    if (t[i + len - 1].pause) break; // names don't run across a comma
+function formScore(W, form, strict = false) {
+  const used = new Set();
+  let sum = 0;
+  for (const k of form.key) {
+    let best = 0, at = [];
+    W.forEach((w, j) => { const s = wordSim(w, k); if (s > best) { best = s; at = [j]; } });
+    for (let j = 0; j + 1 < W.length; j++) { const s = wordSim(W[j] + W[j + 1], k); if (s > best) { best = s; at = [j, j + 1]; } }
+    if (best >= 0.75) { sum += best; for (const j of at) used.add(j); }
   }
-  const ranked = [...best.values()].sort((a, b) => b.score - a.score || b.end - a.end);
-  if (!ranked.length || ranked[0].score < 0.6) return null;
-  return { ...ranked[0], runnerUp: ranked[1] || null };
+  let score = sum / form.key.length;
+  const joined = similarity(compact(W.join("")), compact(form.key.join(""))); // "beetroot" heard for "beet root"
+  if (joined >= 0.85 && joined > score) { score = joined; W.forEach((_, j) => used.add(j)); }
+  if (strict && !used.has(0)) return -Infinity;
+  const extra = W.filter((w, j) => !used.has(j) && !GENERIC.has(w)).length;
+  return score - 0.12 * extra;
 }
 
-const isConfident = (m) => m && (m.score >= 0.86 || (m.score >= 0.76 && (!m.runnerUp || m.score - m.runnerUp.score >= 0.1)));
-
-/** Products whose words sound like the heard words (for "which product?" suggestions). */
-function suggest(heardWords, products) {
-  const scored = [];
-  for (const p of products) {
-    const forms = [p.name, ...(BUILTIN_ALIASES[p.name] || [])].flatMap((f) => f.toLowerCase().split(/\s+/)).filter((w) => !GENERIC.has(w) && w.length > 2);
-    let s = 0;
-    for (const hw of heardWords) for (const f of forms) s = Math.max(s, similarity(compact(hw), compact(f)), similarity(soundKey(hw), soundKey(f)) - 0.05);
-    if (s >= 0.6) scored.push({ id: p.id, s });
+/**
+ * The product said at t[i] (1–5 words). → { product, score, end, ties: [other products just as close] } | null
+ * Numbers, units and price words never start or join a product name. Extra words around the name are allowed
+ * ("fresh beetroot juice"), unless `strict` (used while the store and address may still be being said).
+ */
+function matchAt(t, i, matcher, { strict = false } = {}) {
+  const stop = (tok) => !tok || wordNumber(tok.w) !== null || unitAt([tok], 0) || PRICE_WORDS.has(tok.w) || PER_WORDS.has(tok.w) || CONNECTORS.has(tok.w) || tok.w === "of";
+  if (stop(t[i])) return null;
+  const best = new Map(); // product id → { product, score, end }: its best reading of the words here
+  const atEnd = new Map(); // end → Map(product id → score): every product's score for the same words
+  for (let len = 1; len <= 5 && i + len <= t.length; len++) {
+    if (stop(t[i + len - 1])) break;
+    const W = t.slice(i, i + len).map((x) => x.w);
+    const scores = new Map();
+    for (const form of matcher) {
+      const s = formScore(W, form, strict);
+      if (s > (scores.get(form.product.id) ?? -Infinity)) scores.set(form.product.id, s);
+      const cur = best.get(form.product.id);
+      if (!cur || s > cur.score + 1e-9 || (Math.abs(s - cur.score) <= 1e-9 && i + len > cur.end)) best.set(form.product.id, { product: form.product, score: s, end: i + len });
+    }
+    atEnd.set(i + len, scores);
+    if (t[i + len - 1].pause) break; // names don't run across a comma
   }
-  return scored.sort((a, b) => b.s - a.s).slice(0, 3).map((x) => x.id);
+  // Best first; on equal scores the reading that explains more of what was said ("grape fruit" over "grape").
+  const ranked = [...best.values()].sort((a, b) => b.score - a.score || b.end - a.end);
+  if (!ranked.length || ranked[0].score < MIN_MATCH) return null;
+  const top = ranked[0];
+  const same = atEnd.get(top.end);
+  const ties = ranked.slice(1).filter((r) => (same.get(r.product.id) ?? -Infinity) >= top.score - TIE).map((r) => r.product);
+  return { ...top, ties };
+}
+
+/** One best match (nothing else equally close). */
+const isConfident = (m) => Boolean(m) && m.ties.length === 0;
+
+/** Products with a word that sounds like the heard words (suggestions when nothing matched). */
+function suggest(heardWords, products) {
+  const scored = new Map();
+  for (const form of buildMatcher(products)) {
+    for (const hw of heardWords) for (const k of [...form.key, ...form.product.name.toLowerCase().split(/\s+/)]) {
+      const s = wordSim(hw, k);
+      if (s >= 0.6 && s > (scored.get(form.product.id) || 0)) scored.set(form.product.id, s);
+    }
+  }
+  return [...scored.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => id);
 }
 
 // ── Store and address ────────────────────────────────────────────────────
@@ -411,14 +459,23 @@ export function extractDate(text, today = todayISO()) {
 
 /** Where the products start: the first amount followed by a product (or a unit), or a product followed by an amount. */
 function findItemsStart(t, matcher) {
+  // "14 Pepper Lane", "22 Lime Tree Road" are addresses.
+  const isStreet = (m) => {
+    if (!m) return false;
+    for (let k = m.end; k < Math.min(t.length, m.end + 3); k++) {
+      if (STREET_WORDS.has(t[k].w)) return true;
+      if (t[k].pause || wordNumber(t[k].w) !== null || PRICE_WORDS.has(t[k].w)) break;
+    }
+    return false;
+  };
   for (let i = 0; i < t.length; i++) {
     const q = readQuantity(t, i);
     if (q) {
-      const m = matchAt(t, q.end, matcher);
-      if (q.unit || isConfident(m)) return i;
+      const m = matchAt(t, q.end, matcher); // an amount then a product, extra words allowed ("3 nice fresh beetroot")
+      if ((q.unit || m) && !isStreet(m)) return i;
     }
-    const m = matchAt(t, i, matcher);
-    if (isConfident(m)) {
+    const m = matchAt(t, i, matcher, { strict: true });
+    if (m && !isStreet(m)) {
       const after = readQuantity(t, m.end);
       if (after?.unit) return i;                                   // "okra fifty pounds"
       if (t[m.end] && PRICE_WORDS.has(t[m.end].w)) return i;       // "beetroot juice at 350"
@@ -441,7 +498,14 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
   const lines = [];
   let i = start;
   const skip = () => { while (t[i] && (CONNECTORS.has(t[i].w) || t[i].w === "of")) i++; };
-  const lineStartsAt = (k) => { const q = readQuantity(t, k); return Boolean(q && (q.unit || isConfident(matchAt(t, q.end, matcher)))); };
+  const lineStartsAt = (k) => { const q = readQuantity(t, k); return Boolean(q && (q.unit || matchAt(t, q.end, matcher))); };
+  // A number followed by a word is the next line's amount ("… a dozen lemons, 4 juice"), not this line's price.
+  const amountStartsAt = (k) => {
+    if (lineStartsAt(k)) return true;
+    const q = readQuantity(t, k), nx = q && t[q.end];
+    return Boolean(nx && !t[q.end - 1].pause && wordNumber(nx.w) === null && !PRICE_WORDS.has(nx.w) && !PER_WORDS.has(nx.w)
+      && !CONNECTORS.has(nx.w) && nx.w !== "a" && nx.w !== "an" && !/^(dollars?|cents?)$/.test(nx.w));
+  };
 
   while (i < t.length) {
     skip();
@@ -450,25 +514,22 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
     let q = readQuantity(t, i);
     if (q) { i = q.end; skip(); }
     let m = matchAt(t, i, matcher);
-    const line = { key: nextKey(), productId: null, name: "", qty: q ? q.qty : null, unit: q ? q.unit : null, price: null, priceFrom: null, heard: "", issue: null };
+    const line = { key: nextKey(), productId: null, name: "", qty: q ? q.qty : null, unit: q ? q.unit : null, price: null, priceFrom: null, pricePer: null, saidAs: "", heard: "", issue: null };
     if (m && isConfident(m)) {
       i = m.end;
       line.productId = m.product.id;
       line.name = m.product.name;
     } else if (m) {
-      // Close to more than one product (or not close enough): show what was heard and ask — never pick for them.
-      const heardWords = t.slice(i, m.end);
-      line.heard = heardWords.map((x) => x.raw).join(" ");
+      // Two products equally close to what was said: the only time it asks.
+      line.heard = t.slice(i, m.end).map((x) => x.raw).join(" ");
       i = m.end;
-      const soundsLike = suggest(heardWords.map((x) => x.w), products);
-      const close = m.runnerUp && m.runnerUp.score >= 0.55 ? [m.runnerUp.product.id] : [];
-      const choices = [...new Set([m.product.id, ...soundsLike, ...close])].slice(0, 3);
-      line.issue = { kind: "which", message: `Which product is “${line.heard}”?`, choices };
+      line.issue = { kind: "which", message: `Which product is “${line.heard}”?`, choices: [m.product.id, ...m.ties.map((p) => p.id)].slice(0, 4) };
     } else {
-      // Words that aren't a product we know: keep them, and ask.
+      // Words that aren't a product we know. With an amount before them they were meant as a product: ask.
+      // Without one they're just extra words ("please", "okay then"): leave them out.
       const words = [];
       while (t[i] && !PRICE_WORDS.has(t[i].w) && !PER_WORDS.has(t[i].w) && !readQuantity(t, i) && !CONNECTORS.has(t[i].w)) { words.push(t[i]); i++; if (t[i - 1].pause) break; }
-      if (!words.length && !q) { i = Math.max(i, from + 1); continue; } // stray word we can't use at all
+      if (!q) { i = Math.max(i, from + 1); continue; }
       line.heard = words.map((x) => x.raw).join(" ");
       line.issue = { kind: "product", message: words.length ? `Didn't catch the product (heard “${line.heard}”).` : "Didn't catch the product.", choices: suggest(words.map((x) => x.w), products) };
     }
@@ -486,7 +547,7 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
       if (!price && !line.issue) { line.issue = { kind: "price", message: "Didn't catch the price." }; i++; }
     } else if (t[i] && wordNumber(t[i].w) !== null && (line.productId || line.issue?.kind === "which")) {
       const cand = readPrice(t, i, { lineStartsAt });
-      if (cand && (perMarkerAt(t, cand.end) || cand.end >= t.length || (line.qty !== null && !lineStartsAt(i)))) price = cand;
+      if (cand && (perMarkerAt(t, cand.end) || cand.end >= t.length || (line.qty !== null && !amountStartsAt(i)))) price = cand;
     }
     if (price) {
       line.price = price.value;
@@ -494,7 +555,10 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
       i = price.end;
       const per = perMarkerAt(t, i);
       if (per) {
-        if (per.unit && !line.unit) line.unit = per.unit;
+        line.pricePer = per.unit || "each";
+        const countable = (u) => !u || u === "each" || u === "dozen"; // dozens and single items convert (12 to a dozen)
+        if (countable(per.unit) && countable(line.unit)) { /* settled below */ }
+        else if (per.unit && !line.unit) line.unit = per.unit;
         else if (per.unit && line.unit && per.unit !== line.unit && !line.issue) {
           line.issue = { kind: "price", message: `The price was per ${per.unit === "lb" ? "pound" : per.unit}, but the amount was in ${line.unit === "lb" ? "pounds" : line.unit === "each" ? "items" : line.unit + "s"}.` };
         }
@@ -511,6 +575,29 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
   for (const line of lines) {
     const p = line.productId ? byId.get(line.productId) : null;
     line.unitSaid = Boolean(line.unit);
+    // "Dozen" means 12: "two dozen beetroot" is 24 beetroot. A price is per item unless "per dozen" was said;
+    // a price per dozen becomes the price per item when it splits evenly to the cent (otherwise the line stays in dozens).
+    const perDozen = line.pricePer === "dozen";
+    if (line.qty !== null && (line.unit === "dozen" || (perDozen && (!line.unit || line.unit === "each")))) {
+      const items = Math.round((line.unit === "dozen" ? line.qty * 12 : line.qty) * 1000) / 1000;
+      const cents = line.price === null ? null : Math.round(line.price * 100);
+      if (line.unit === "dozen") line.saidAs = `${Number(line.qty.toFixed(3))} dozen`;
+      if (!perDozen || cents === null || cents % 12 === 0) {
+        line.qty = items;
+        line.unit = "each";
+        if (perDozen && cents !== null) { line.price = cents / 12 / 100; line.saidPrice = `${cents / 100} a dozen`; }
+      } else if (items % 12 === 0) {
+        line.qty = items / 12;
+        line.unit = "dozen";
+        line.saidAs = "";
+      } else {
+        line.qty = items;
+        line.unit = "each";
+        line.price = Math.round(cents / 12) / 100;
+        if (!line.issue) line.issue = { kind: "price", message: "The price was per dozen. Check the price per item." };
+      }
+      line.unitSaid = true;
+    }
     line.unit = normalizeUnit(line.unit || (p ? defaultUnitFor(p) : "each"));
     if (!line.issue && line.qty === null) line.issue = { kind: "quantity", message: "How many? I didn't catch the amount." };
     if (!line.issue && line.productId && line.price === null) line.issue = { kind: "noPrice", message: `No price said${line.unit === "each" ? "" : ` per ${line.unit === "lb" ? "pound" : line.unit}`}. Tap to add it.` };
@@ -523,6 +610,7 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
     const twin = line.productId && mergeable(line) && merged.find((x) => x.productId === line.productId && x.unit === line.unit && mergeable(x));
     if (twin) {
       twin.qty = (twin.qty || 0) + (line.qty || 0);
+      twin.saidAs = "";
       if (line.priceFrom === "said") {
         if (twin.priceFrom === "said" && twin.price !== line.price) twin.issue = { kind: "price", message: "Two different prices were said." };
         twin.price = line.price; twin.priceFrom = "said";

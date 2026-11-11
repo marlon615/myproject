@@ -34,6 +34,7 @@ html, body { background: #ebe8df; color: #1a1c19; color-scheme: light; }
 .signed { margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; font-weight: 650; text-align: center; }
 .signed.is-yes { background: #e4f1e8; color: #17633f; }
 .signed.is-no { background: #f3f0e8; color: #73796f; }
+.thanks-line { margin: 22px 0 0; text-align: center; font-family: var(--font-display); font-size: 23px; line-height: 1.2; font-weight: 700; color: #17633f; overflow-wrap: anywhere; }
 .sheet-foot { margin-top: 18px; text-align: center; font-size: 12.5px; color: #8a8f84; }
 .sheet-empty { text-align: center; border-top-color: #c2702a; }
 .sheet-empty h1 { font-family: var(--font-display); font-size: 26px; margin-bottom: 8px; }

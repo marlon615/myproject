@@ -1,6 +1,7 @@
 /**
  * Review screen for a spoken invoice: check every line before the customer signs, tap any line to fix it.
- * Lines that weren't clearly understood stay highlighted until they're fixed or removed — nothing is guessed.
+ * Only lines that can't go on the invoice as they are (two products equally close, no amount, a price that couldn't
+ * be read) are highlighted; a line that just has no price yet stays plain, with a quiet "add price" note.
  *
  * reviewSpokenInvoice(parsed, { products, onSpeakAgain }) → Promise<{ store, address, lines } | null>
  * "Speak again" calls onSpeakAgain() inside the tap (so listening can start straight away) and resolves null.
@@ -67,8 +68,11 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
         const p = byId.get(sel.value);
         line.productId = p ? p.id : null;
         line.name = p ? p.name : "";
-        line.qty = parseAmount(qty.value);
-        line.unit = normalizeUnit(unit.value);
+        const newQty = parseAmount(qty.value), newUnit = normalizeUnit(unit.value);
+        if (newQty !== line.qty || newUnit !== line.unit) line.saidAs = "";
+        line.qty = newQty;
+        line.unit = newUnit;
+        line.unitSaid = true;
         const newPrice = parseAmount(price.value);
         if (newPrice !== line.price) line.priceFrom = newPrice === null ? null : "typed";
         line.price = newPrice;
@@ -88,15 +92,17 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
 
     function row(line) {
       const p = line.productId ? byId.get(line.productId) : null;
-      const cls = blocking(line) ? " needs-fix" : line.issue ? " needs-look" : "";
+      const cls = blocking(line) ? " needs-fix" : "";
       const li = h("li", { class: `review-line${cls}${openKey === line.key ? " is-open" : ""}`, dataset: { key: line.key } });
       const name = p ? p.name : line.heard ? `“${line.heard}”` : "Which product?";
-      const calc = `${line.qty === null ? "How many?" : qtyWithUnit(line.qty, line.unit)} × ${line.price === null ? "no price" : money(line.price)}`;
+      const said = line.saidAs ? ` (${line.saidAs})` : "";
+      const calc = `${line.qty === null ? "How many?" : qtyWithUnit(line.qty, line.unit) + said} × ${line.price === null ? "no price" : money(line.price)}`;
       li.append(h("button", { type: "button", class: "review-line-main", "aria-expanded": String(openKey === line.key), onclick: () => { openKey = openKey === line.key ? null : line.key; render(); } },
         h("span", { class: "review-line-name" }, name),
         h("span", { class: "review-line-calc num" }, calc),
         h("span", { class: "review-line-total num" }, line.qty === null || line.price === null ? "—" : money(lineTotal(line.qty, line.price)))));
-      if (line.issue) li.append(h("p", { class: "review-issue" }, line.issue.message));
+      if (blocking(line)) li.append(h("p", { class: "review-issue" }, line.issue.message));
+      else if (line.issue) li.append(h("p", { class: "review-note" }, line.issue.kind === "noPrice" ? "Add price: tap the line" : line.issue.message));
       const choices = (line.issue?.choices || []).filter((id) => byId.has(id));
       if (choices.length && openKey !== line.key) {
         li.append(h("div", { class: "review-choices", role: "group", "aria-label": "Choose the product" },
@@ -137,7 +143,7 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
     dlg.append(
       h("header", { class: "review-head" },
         h("h2", { id: "review-title" }, "Check before the customer signs"),
-        h("p", {}, "Tap any line to fix it. Lines in orange need a look.")),
+        h("p", {}, "Tap any line to change it.")),
       h("div", { class: "review-body" },
         h("section", { class: "review-card" },
           h("label", { class: "review-field" }, h("span", { class: "review-field-label" }, "Store"), store),

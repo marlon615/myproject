@@ -5,7 +5,7 @@
  * print sheet.
  */
 import { parseInvoiceHash } from "./codec.js";
-import { h, invoiceNo, money, prettyDate, qtyWithUnit } from "./util.js";
+import { h, invoiceNo, money, prettyDate, qtyWithUnit, thankYouText } from "./util.js";
 import { WORDMARK } from "./wordmark.js";
 import { deliverFile, makeReceiptFile } from "./share.js";
 import { toast } from "./ui.js";
@@ -60,6 +60,7 @@ function render() {
         h("strong", { class: "total-amt num" }, money(inv.total))),
       mismatch ? h("p", { class: "note" }, `The items add up to ${money(inv.computedTotal)}. The total above is the one on the invoice, so please check with ${inv.seller}.`) : null,
       h("p", { class: `signed ${inv.signed ? "is-yes" : "is-no"}` }, inv.signed ? "✓ Signed by the customer" : "Not signed"),
+      h("p", { class: "thanks-line" }, thankYouText(inv.store)),
       h("footer", { class: "sheet-foot" }, `Shared by QR code by ${inv.seller}. The details come from the code itself and are never sent to a server.`)),
     h("div", { class: "view-actions" },
       h("button", { type: "button", class: "btn btn-primary", onclick: (e) => savePdf(e.currentTarget, inv) }, icon("download"), "Save PDF"),

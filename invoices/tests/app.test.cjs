@@ -166,8 +166,14 @@ async function qrText(page) {
     check(sh.type === "application/pdf" && sh.name === "Invoice-0001-Rose-Hall-Grocery.pdf", "Share PDF hands over a named PDF", JSON.stringify(sh));
     await page.screenshot({ path: path.join(OUT, "app-filled.png"), fullPage: true });
 
+    // New invoice on a signed invoice with no payment recorded: the private payment page comes first (can be skipped).
+    await page.click("#new-btn");
+    await page.waitForSelector("dialog.pay[open]");
+    check(/Only you see this page/.test(await page.textContent("dialog.pay[open]")), "New invoice on a signed invoice offers the private payment page first");
+    await page.getByRole("button", { name: "Skip for now" }).click();
+    await page.waitForTimeout(400);
+
     // New invoice + known store fills its address.
-    await page.click("#new-btn"); await page.waitForTimeout(300);
     check(await page.textContent("#invoice-no") === "No. 0002" && await page.inputValue("#store") === "" && await page.locator(".prod-row.is-on").count() === 0, "New invoice starts clean as No. 0002");
     await page.fill("#store", "Rose Hall Grocery");
     await page.waitForTimeout(100);

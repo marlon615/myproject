@@ -183,7 +183,7 @@
 #dashboard .dash-rows { margin: 0; padding: 0; list-style: none; overflow: hidden; }
 #dashboard .dash-rows > li + li { border-top: 1px solid var(--line); }
 #dashboard .dash-row {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "meta total" "store badge";
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "meta total" "store store" "badges badges";
   gap: 4px 12px; align-items: baseline; width: 100%; min-height: 64px; padding: 12px 16px;
   border: 0; border-radius: 0; background: transparent; color: inherit; text-align: left; cursor: pointer;
   transition: background-color .15s ease;
@@ -193,7 +193,7 @@
 #dashboard .dash-row-meta { grid-area: meta; font-size: .82rem; color: var(--muted); }
 #dashboard .dash-row-total { grid-area: total; justify-self: end; font-weight: 700; }
 #dashboard .dash-row-store { grid-area: store; font-size: 1.02rem; font-weight: 650; overflow-wrap: anywhere; }
-#dashboard .dash-row .dash-badge { grid-area: badge; justify-self: end; }
+#dashboard .dash-row-badges { grid-area: badges; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
 
 #dashboard .dash-badge {
   display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px;
@@ -202,6 +202,49 @@
 #dashboard .dash-badge .dash-icon { width: 14px; height: 14px; stroke-width: 2.6; }
 #dashboard .dash-badge.is-signed { padding-left: 6px; background: var(--brand-soft); color: var(--brand); }
 #dashboard .dash-badge.is-unsigned { color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
+
+/* ── Payment (owner only): chips, unpaid list, detail ─────────────────── */
+
+#dashboard .dash-pay {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px;
+  border-radius: 999px; font-size: .76rem; font-weight: 750; white-space: nowrap;
+}
+#dashboard .dash-pay .dash-icon { width: 14px; height: 14px; stroke-width: 2.6; }
+#dashboard .dash-pay.is-paid { padding-left: 6px; background: var(--brand-soft); color: var(--brand); }
+#dashboard .dash-pay.is-unpaid { background: var(--accent-soft); color: #8a4a0f; }
+#dashboard .dash-pay.is-due { padding-left: 6px; background: var(--danger); color: #fff; }
+#dashboard .dash-pay.is-none { color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
+@media (prefers-color-scheme: dark) {
+  #dashboard .dash-pay.is-unpaid { color: var(--accent); }
+  #dashboard .dash-pay.is-due { color: #1a0d0b; }
+}
+#dashboard .dash-row.is-due { background: var(--danger-soft); box-shadow: inset 4px 0 0 var(--danger); }
+#dashboard .dash-row.is-due .dash-row-total { color: var(--danger); }
+#dashboard .dash-unpaid-sum { font-weight: 700; color: var(--ink-2); margin-right: 4px; }
+#dashboard .dash-due-note {
+  display: flex; align-items: center; gap: 6px; margin: -2px 4px 10px; font-weight: 750; color: var(--danger);
+}
+#dashboard .dash-due-note .dash-icon { width: 18px; height: 18px; }
+#dashboard .dash-payment.is-due { box-shadow: inset 0 0 0 2px var(--danger); }
+#dashboard .dash-pay-line { margin: 0; }
+#dashboard .dash-pay-text { margin: 8px 0 12px; font-weight: 600; }
+#dashboard .dash-payment.is-due .dash-pay-text { color: var(--danger); }
+#dashboard .dash-payment .btn { margin-bottom: 12px; }
+
+/* ── Your business in numbers ─────────────────────────────────────────── */
+
+#dashboard .dash-month-nav { display: flex; align-items: center; gap: 2px; }
+#dashboard .dash-month-btn { width: 40px; min-height: 40px; color: var(--brand); background: transparent; border-color: transparent; }
+#dashboard .dash-month-btn:disabled { color: var(--muted); opacity: .4; }
+#dashboard .dash-month-next .dash-icon { transform: rotate(180deg); }
+#dashboard .dash-month-label { min-width: 9.5em; margin: 0; text-align: center; font-weight: 700; font-size: .95rem; }
+#dashboard .dash-numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 14px; }
+#dashboard .dash-number { min-width: 0; }
+#dashboard .dash-number[data-number="billed"] { grid-column: 1 / -1; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+#dashboard .dash-number-label { margin: 0; font-size: .82rem; font-weight: 700; letter-spacing: .02em; color: var(--ink-2); }
+#dashboard .dash-number-value { margin: 2px 0 0; font-size: 1.12rem; font-weight: 750; line-height: 1.25; overflow-wrap: anywhere; }
+#dashboard .dash-number[data-number="billed"] .dash-number-value { font-family: var(--font-display); font-size: 2rem; font-weight: 700; }
+#dashboard .dash-number-sub { margin: 2px 0 0; font-size: .84rem; color: var(--muted); }
 
 /* ── Invoice detail ──────────────────────────────────────────────────── */
 

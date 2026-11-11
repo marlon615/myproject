@@ -124,9 +124,17 @@ The invoice is stored and also passed to every consumer, both saved and unsaved:
   total: 4200,               // sum of item totals
   signature: "data:image/png;base64,…" | null,   // black strokes on transparent, ~3:1 aspect
   signedAt: "2026-11-10T19:45:00.000Z" | null,
-  createdAt, updatedAt       // ISO
+  createdAt, updatedAt,      // ISO
+  payment: {                 // OWNER ONLY, set from the payment page or the dashboard; absent until recorded
+    status: "paid" | "unpaid", method: "cash" | "terms", termsDays: 0 | 7 | 14,
+    dueDate: "2026-11-18" | null,   // invoice date + 7 or 14
+    recordedAt, paidAt: ISO | null
+  }
 }
 ```
+
+`payment` never goes into the QR code, the receipt, the PDF, the picture, the customer page or the signing screen.
+`invoices.put` keeps a stored `payment` when the object saved has none; `invoices.setPayment(id, payment)` changes it.
 
 Consumers must call `withTotals(inv)` before using totals, and must never trust `total` fields blindly. An item's `name` is a snapshot, so old invoices keep their names even if a product is later renamed or removed.
 
@@ -353,21 +361,29 @@ On every launch of the main app (`index.html` only, never the viewer) a splash s
 - **Understanding (`js/voice-parse.js`, pure and Node-tested):**
   - Numbers in words and digits, halves, dozens, bags and pounds, and spoken prices ("two fifty" means 250).
   - Splits the store and address by pauses, the house number or business words.
-  - Matches products by sound, aliases included.
+  - **Matches products loosely:** case, plurals, extra words and close sounds don't matter ("beet root", "beetroot juice", "cucumber", "large bammies", "kalaloo"); split or joined words are the same. The one best match is used, and fixes happen on the review screen. It asks "which product?" only when two products are equally close ("bammy": Mini or Large; "punch": Pumpkin or Fruit Punch). Extra words with no amount before them are left out.
+  - **"Dozen" means 12:** "two dozen beetroot" is 24 Beetroot Juice (the review shows "24 (2 dozen)"). A price after dozens is per item unless "per dozen" / "a dozen" is said; a price per dozen becomes the price per item when it divides to the cent (otherwise the line stays in dozens).
   - Okra and Hot Pepper default to pounds.
   - **Spoken prices** are the unit price for that line, on this invoice only: "24 beetroot juice 315 per unit", "16 green juice at 230", "250 each", "4200 per dozen", "300 a pound", or a bare number after the product that isn't the next product's amount.
   - "Per unit", "each", "per dozen", "per pound" and "at" never become a product line.
   - **No standing prices:** nothing is saved or pre-filled from earlier invoices, whether spoken or typed. Every invoice starts fresh.
   - **Spoken dates** set the invoice date and are removed before the store and address are read. They're read day first: "12th of the 11th 2026", "the twelfth of November", "November 12th", "12/11/2026".
-  - **Nothing unclear is guessed:** such lines carry an `issue`.
+  - Lines that can't be settled carry an `issue` (two products equally close, an amount for words that match no product, no amount, an unreadable price).
 - **Review (`js/voice-review.js`):** a full-screen "Check before the customer signs" screen.
   - Tap any line to fix the product, amount, unit or price.
-  - Unclear lines are highlighted with one-tap product choices, and "Put on invoice" waits until they're fixed or removed.
+  - Only lines that can't go on the invoice as they are get highlighted, with one-tap product choices; "Put on invoice" waits until they're fixed or removed. A line with no price yet stays plain with a quiet "Add price" note.
   - Applying respects the signed-invoice guard and asks before replacing existing products.
 - **Units:**
   - Lines carry `unit` (each | dozen | bag | lb). Each ticked row has a unit picker.
   - Units appear on receipts, PDFs, the customer page and the dashboard ("24 sold · 50 lb").
   - In the QR, the unit is a letter after the amount (`2d`, `50p`, `3b`); old links read as "each".
+
+### After the customer signs (owner request)
+- **Done** (under the signature, once signed): a gentle buzz (`navigator.vibrate`; on iPhone a hidden switch toggle), then a full-screen thank-you (`js/thanks.js`): a green checkmark that draws itself, "Thank you, <store>" ("Thank you!" with no store), the invoice number and the total, for about two seconds (tap skips). Then back to the invoice with the QR code in view.
+- **Thank-you line:** "Thank you, <store>" is the last line of the customer page, the PDF, the picture and the paper receipt.
+- **Payment page** (`js/payment.js`, owner or sales rep only): "Finish invoice" (shown on a signed invoice with no payment recorded) opens a full-screen page: Cash (Paid now), 7 days or 14 days (Unpaid, due the invoice date + 7 or 14). Choosing saves it and starts a new invoice. "New invoice" on such an invoice opens it first ("Skip for now" records nothing).
+- **Each invoice stands alone**, with its own payment and due date; one store can have several open invoices. An unpaid invoice turns red on its due day and stays red; only "Payment received" on that invoice (dashboard) clears it.
+- Payment status and due dates appear only on the dashboard and History.
 
 ### A: `js/app.js` (main screen)
 - Startup: `await db.init()`. Register `/sw.js` (scope `/`). Open `settings.currentId` if it still exists; otherwise start a new draft.
@@ -424,13 +440,16 @@ export function hideDashboard()
   - After 5 wrong tries, wait 30 seconds; the wait doubles after each further failure, and the countdown persists in memory.
   - Stay unlocked for 5 minutes since the last dashboard activity. Lock immediately when the page is hidden (`visibilitychange`).
   - **Forgot PIN:** show a sheet that says the invoices are kept and the PIN only keeps casual eyes out (it doesn't encrypt). Typing RESET sets a new PIN and records `pinResetAt`. The dashboard then shows a notice: "PIN was reset on …".
+- **Unpaid invoices** (top of Overview, owner only): every unpaid invoice on its own row, soonest due first, with the total owed. From its due day a row is red ("Due today", "Overdue 3 days") until "Payment received".
+- **Your business in numbers** (Overview, one month at a time with ‹ ›): total billed, best customer (most billed) and busiest day (most invoices, then the bigger amount).
 - **Totals** (by invoice `date`):
   - Cards for Today, This week (Monday to Sunday), This month and All time, each with $ total and invoice count.
   - Monthly totals for the last 12 months that have data, as simple CSS bars.
   - Top stores (total and count) and products sold (qty and revenue), each with a This month / All time toggle.
 - **History:**
-  - Search by store or invoice number, plus filter chips: All, This month, Not signed.
-  - Rows show "No. 0007 · 10 Nov 2026", the store, `money(total)` and a signed badge.
+  - Search by store or invoice number, plus filter chips: All, This month, Unpaid, Not signed.
+  - Rows show "No. 0007 · 10 Nov 2026", the store, `money(total)`, a payment chip (Paid · cash / Unpaid · due Wed 18 Nov / red Due today or Overdue / No payment set) and a signed badge.
+  - The detail view has a **Payment** card: the status, with **Payment received** (confirm first) on an unpaid invoice, or **Record payment** (the payment page) when none is set.
   - Tapping a row opens a detail view: the full invoice (items, total, signature image, QR via qr.js plus codec.js) with these actions:
     - **Open and edit**: `hooks.openInvoice`.
     - **Print**: `printInvoice`, called directly in the click handler.
