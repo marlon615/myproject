@@ -369,7 +369,9 @@ On every launch of the main app (`index.html` only, never the viewer) a splash s
   - "Per unit", "each", "per dozen", "per pound" and "at" never become a product line.
   - **No standing prices:** nothing is saved or pre-filled from earlier invoices, whether spoken or typed. Every invoice starts fresh.
   - **Spoken dates** set the invoice date and are removed before the store and address are read. They're read day first: "12th of the 11th 2026", "the twelfth of November", "November 12th", "12/11/2026".
-  - Lines that can't be settled carry an `issue` (two products equally close, an amount for words that match no product, no amount, an unreadable price).
+  - **Nothing said is dropped.** Lines that can't be settled carry an `issue` (two products equally close, words that match no product, no amount, an unreadable price) and stay on the review screen, highlighted. Only filler on its own ("please", "that's all", "thank you very much") is left out. Unknown words said before any product also offer "Use “…” as the address".
+  - An amount goes with the product after it ("sorrel drink, one dozen cucumber"), unless amounts are being said after the products ("okra fifty pounds, hot pepper four pounds").
+  - **The phone's guesses:** the recogniser gives up to three guesses per phrase; `bestParseSegments` tries them phrase by phrase and keeps the reading that matches the most products (then the fewest lines to fix). A reading that lost a line is never preferred. Words still being heard when listening stops are kept.
 - **Review (`js/voice-review.js`):** a full-screen "Check before the customer signs" screen.
   - Tap any line to fix the product, amount, unit or price.
   - Only lines that can't go on the invoice as they are get highlighted, with one-tap product choices; "Put on invoice" waits until they're fixed or removed. A line with no price yet stays plain with a quiet "Add price" note.
@@ -378,6 +380,12 @@ On every launch of the main app (`index.html` only, never the viewer) a splash s
   - Lines carry `unit` (each | dozen | bag | lb). Each ticked row has a unit picker.
   - Units appear on receipts, PDFs, the customer page and the dashboard ("24 sold · 50 lb").
   - In the QR, the unit is a letter after the amount (`2d`, `50p`, `3b`); old links read as "each".
+
+### Signing thank-you (owner request, approved on /lab/sign)
+- While the customer signs, "Thank you" writes itself in a flowing pointed-pen script across the top of the signature box (`js/sign-thanks.js`, `js/ink-script.js`, letters from EMS Allure in `js/thankyou-strokes.js`, SIL OFL), in step with the finger. The customer's own signature stays visible where they sign, at the bottom, on the signing line.
+- When the finger lifts (a pause under 0.65 s still counts as the same signature), the words finish and settle, the customer's name appears under them, the green tick draws itself, then one gentle tap. Done appears once it has settled. A tap alone doesn't bring the thank-you.
+- The signature is still recorded and saved exactly as drawn by SignaturePad (900×300 PNG). The box is 236 px tall; a reopened signed invoice shows the settled thank-you at once (no animation, no tap), with the saved signature drawn back below it (`baseArea`). Clear empties the box.
+- `/lab/sign` stays as the approved reference page (not linked from the app, not cached).
 
 ### After the customer signs (owner request)
 - **Done** (under the signature, once signed): one gentle haptic tap (`navigator.vibrate(35)`; on iPhone a hidden switch toggle), then a full-screen thank-you (`js/thanks.js`): a green checkmark that draws itself, "Thank you, <store>" ("Thank you!" with no store), the invoice number and the total, for about two seconds (tap skips). Then back to the invoice with the QR code in view.

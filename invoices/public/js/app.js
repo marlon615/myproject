@@ -9,13 +9,14 @@ import {
 } from "./util.js";
 import { choiceSheet, confirmSheet, toast } from "./ui.js";
 import { SignaturePad } from "./signature.js";
+import { SignThanks, signatureArea } from "./sign-thanks.js";
 import { invoiceToText, invoiceToUrl } from "./codec.js";
 import { qrCanvas } from "./qr.js";
 import { printInvoice } from "./printer.js";
 import { shareInvoiceImage, shareInvoicePdf } from "./share.js";
 import { hideDashboard, initDashboard, showDashboard } from "./dashboard.js";
 import { Listener, canListen, dictate } from "./voice.js";
-import { bestParse } from "./voice-parse.js";
+import { bestParse, bestParseSegments } from "./voice-parse.js";
 import { reviewSpokenInvoice } from "./voice-review.js";
 import { buzz, showThanks } from "./thanks.js";
 import { paymentPage } from "./payment.js";
@@ -27,7 +28,7 @@ const el = {
   list: $("prod-list"), addForm: $("prod-add"), addName: $("prod-add-name"),
   grandTotal: $("grand-total"), grandCount: $("grand-count"), grandAmount: $("grand-amount"),
   signCard: $("sign-card"), signCanvas: $("sign-canvas"), signStatus: $("sign-status"), signTip: $("sign-tip"), signClear: $("sign-clear"),
-  signDone: $("sign-done"), finish: $("finish-btn"),
+  signDone: $("sign-done"), finish: $("finish-btn"), signPad: $("sign-pad"),
   qrCard: $("qr-card"), qrBox: $("qr-box"), qrCaption: $("qr-caption"), qrToggle: $("qr-toggle"),
   print: $("print-btn"), sharePdf: $("share-pdf-btn"), shareImage: $("share-image-btn"),
   newBtn: $("new-btn"), saveStatus: $("save-status"),
@@ -52,6 +53,7 @@ const state = {
 };
 const rows = new Map(); // productId → { li, cb, qty, price, total, detail, product }
 let pad = null;
+let thanks = null; // the signing thank-you: "Thank you" writes itself as the customer signs
 
 const itemsText = (n) => `${n} item${n === 1 ? "" : "s"}`;
 const timeText = (d) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -69,7 +71,8 @@ async function start() {
   }
   state.qrMode = (await settings.get("qrMode", "link")) === "text" ? "text" : "link";
   state.products = await products.all();
-  pad = new SignaturePad(el.signCanvas, { onChange: onSigned });
+  pad = new SignaturePad(el.signCanvas, { onChange: onSigned, baseArea: signatureArea });
+  thanks = new SignThanks({ pad: el.signPad, canvas: el.signCanvas, signature: pad, name: () => el.store.value, onChange: () => renderSignState() });
 
   const currentId = await settings.get("currentId", null);
   const current = currentId ? await invoices.get(currentId) : null;
@@ -108,6 +111,7 @@ async function newDraft(from = null) {
   state.savedAt = null;
   await settings.remove("currentId");
   pad.clear();
+  thanks.reset();
   renderAll();
   if (from) scheduleSave();
 }
@@ -125,6 +129,8 @@ async function loadInvoice(inv) {
   state.savedAt = inv.updatedAt ? new Date(inv.updatedAt) : null;
   renderAll();
   await pad.fromDataURL(state.inv.signature);
+  if (state.inv.signature) thanks.showSigned(); else thanks.reset();
+  renderSignState();
 }
 
 function addLineFromItem(it) {
@@ -365,6 +371,7 @@ function onSigned() {
 
 function clearSignature() {
   pad.clear();
+  thanks.reset();
   state.inv.signature = null;
   state.inv.signedAt = null;
   renderSignState();
@@ -376,7 +383,7 @@ function renderSignState() {
   el.signCard.classList.toggle("is-signed", signed);
   el.signedBadge.hidden = !signed;
   el.signClear.hidden = !signed;
-  el.signDone.hidden = !signed;
+  el.signDone.hidden = !signed || Boolean(thanks?.busy); // Done comes once the thank-you has settled
   el.finish.hidden = !signed || state.paymentSet;
   el.signStatus.textContent = signed ? `Signed ✓${state.inv.signedAt ? " " + timeText(new Date(state.inv.signedAt)) : ""}` : "Not signed yet";
   el.signTip.textContent = signed ? "Signed. Changing the invoice will ask first." : "Ask the customer to sign here with a finger.";
@@ -653,10 +660,10 @@ async function finishListening() {
   el.voiceTip.textContent = "";
   el.voicePanel.classList.add("is-working");
   try {
-    const { text, candidates } = await listener.stop();
+    const { text, candidates, segments } = await listener.stop();
     el.voicePanel.hidden = true;
     if (!text) { toast("I didn't hear anything. Tap the mic and try again."); return; }
-    await reviewAndApply(candidates);
+    await reviewAndApply(candidates, segments);
   } finally {
     voice.busy = false;
     el.voicePanel.hidden = true;
@@ -674,8 +681,10 @@ async function typedInvoice(reason, text) {
   }
 }
 
-async function reviewAndApply(candidates) {
-  const parsed = bestParse(candidates, { products: state.products, stores: state.stores, today: todayISO() });
+/** The phone's guesses → the reading that matches the most products → review → invoice. Nothing said is dropped. */
+async function reviewAndApply(candidates, segments = null) {
+  const ctx = { products: state.products, stores: state.stores, today: todayISO() };
+  const parsed = segments?.length ? bestParseSegments(segments, ctx) : bestParse(candidates, ctx);
   const result = await reviewSpokenInvoice(parsed, {
     products: state.products,
     currentDate: el.date.value || todayISO(),

@@ -121,7 +121,9 @@
   check(A("sarah supermarket today two dozen beetroot one dozen cucumber thirteen green juice at 300") === "Sarah Supermarket |  | Beetroot Juice, Cucumber Juice, Green Juice", "same with no commas at all", A("sarah supermarket today two dozen beetroot one dozen cucumber thirteen green juice at 300"));
   check(A("Sarah Supermarket. Today. 2 doesn't beetroot, one dozen cucumber, 13 green juice at 300") === "Sarah Supermarket |  | Beetroot Juice, Cucumber Juice, Green Juice", "'doesn't' heard for 'dozen' is still a product, not an address");
   check(A("Sarah Supermarket, beetroot juice, cucumber juice, green juice at 300") === "Sarah Supermarket |  | Beetroot Juice, Cucumber Juice, Green Juice", "product names with no amount are product lines, never the address", A("Sarah Supermarket, beetroot juice, cucumber juice, green juice at 300"));
-  check(A("Sarah Supermarket, Brownstone, two dozen beetroot") === "Sarah Supermarket |  | Beetroot Juice", "a word that isn't clearly an address leaves it blank", A("Sarah Supermarket, Brownstone, two dozen beetroot"));
+  r = parse("Sarah Supermarket, Brownstone, two dozen beetroot");
+  check(r.address === "" && r.lines.length === 2 && r.lines[0].issue?.kind === "product" && r.lines[0].heard === "Brownstone" && r.lines[0].issue.address === "Brownstone" && r.lines[1].name === "Beetroot Juice" && r.lines[1].qty === 24,
+    "a word that isn't clearly an address leaves it blank, and is kept as a line to fix (with 'use as the address')", r.lines.map(brief).join(" / "));
   check(A("Sarah Supermarket, 14 Wellington Street, Brownstone, two dozen beetroot") === "Sarah Supermarket | 14 Wellington Street, Brownstone | Beetroot Juice", "a house number and street (and the town after it) is the address");
   check(A("Sarah Supermarket Wellington Street two dozen beetroot") === "Sarah Supermarket | Wellington Street | Beetroot Juice", "a street without a number is an address");
   check(A("Sarah Supermarket, Montego Bay, two dozen beetroot") === "Sarah Supermarket | Montego Bay | Beetroot Juice" && A("Sarah Supermarket, Kingston 10, 2 okra") === "Sarah Supermarket | Kingston 10 | Okra", "a known place is an address");
@@ -131,6 +133,33 @@
   check(A("Pepper Pot, 2 dozen beetroot") === "Pepper Pot |  | Beetroot Juice" && A("Joe's Place, 2 okra") === "Joe's Place |  | Okra" && A("Hope Road Pharmacy, 2 okra") === "Hope Road Pharmacy |  | Okra",
     "store names that contain a product or street word stay the store");
   check(A("Sarah, Supermarket, two dozen beetroot") === "Sarah Supermarket |  | Beetroot Juice", "a store name split by a comma is put back together");
+
+  // Nothing said is dropped: a line that can't be matched stays, highlighted, for the owner to fix.
+  r = parse("Sarah Supermarket, two dozen beetroot, mango nectar, one dozen cucumber");
+  check(r.lines.map(brief).join(" / ") === "Beetroot Juice|24|each|null|!noPrice / ?|null|each|null|!product / Cucumber Juice|12|each|null|!noPrice" && r.lines[1].heard === "mango nectar",
+    "an unknown product said between two others is kept as a highlighted line (and doesn't take the next one's amount)", r.lines.map(brief).join(" / "));
+  r = parse("sarah supermarket two dozen beetroot mango nectar one dozen cucumber");
+  check(r.lines.length === 3 && r.lines[1].heard === "mango nectar" && r.lines[2].qty === 12, "same with no commas at all", r.lines.map(brief).join(" / "));
+  r = parse("sarah supermarket two dozen beetroot sorrel drink one dozen cucumber okra fifty pounds hot pepper four pounds");
+  check(r.lines.map(brief).join(" / ") === "Beetroot Juice|24|each|null|!noPrice / Sorrel Drink|null|each|null|!quantity / Cucumber Juice|12|each|null|!noPrice / Okra|50|lb|null|!noPrice / Hot Pepper|4|lb|null|!noPrice",
+    "an amount goes with the product after it, unless amounts are being said after the products", r.lines.map(brief).join(" / "));
+  r = parse("Sarah Supermarket, two dozen beetroot, blorp at 300, 4 widgets, one dozen cucumber");
+  check(r.lines.length === 4 && r.lines[1].heard === "blorp" && r.lines[1].price === 300 && r.lines[1].issue?.kind === "product" && r.lines[2].heard === "widgets" && r.lines[2].qty === 4,
+    "unmatched lines keep what was said with them (price, amount)", r.lines.map(brief).join(" / "));
+  check(parse("Mega Mart, 2 okra, okay that's all, thank you very much, have a nice day").lines.length === 1, "filler on its own ('that's all', 'thank you very much') is not a line");
+  check(parse("Shop X, 2 okra").store === "Shop X" && parse("Shop X, 2 okra").lines.length === 1, "a short name after the business word stays part of the store");
+
+  // Several guesses from the phone: the reading that matches the most products wins; no line is ever lost.
+  const { bestParseSegments } = await import("../public/js/voice-parse.js");
+  let b = bestParse(["Sarah Supermarket two dozen beetroot", "Sarah Supermarket two dozen beetroot one dozen cucumber"], ctx);
+  check(b.lines.map((l) => l.name).join(",") === "Beetroot Juice,Cucumber Juice", "a guess that lost a line is never preferred", b.lines.map(brief).join(" / "));
+  b = bestParse(["Sarah Supermarket two dozen beat rude one dozen cucumber", "Sarah Supermarket two dozen beetroot one dozen cucumber"], ctx);
+  check(b.lines.map((l) => l.name).join(",") === "Beetroot Juice,Cucumber Juice", "picks the guess that matches the most products", b.lines.map(brief).join(" / "));
+  b = bestParseSegments([["Sarah Supermarket today"], ["two dozen beat rude", "two dozen beetroot", "to doesn't be true"], ["one dozen cucumber"], ["13 green shoes at 300", "13 green juice at 300"]], ctx);
+  check(b.lines.map(brief).join(" / ") === "Beetroot Juice|24|each|null|!noPrice / Cucumber Juice|12|each|null|!noPrice / Green Juice|13|each|300" && b.address === "",
+    "phrase by phrase: every misheard phrase is put right from the phone's other guesses", b.lines.map(brief).join(" / "));
+  b = bestParseSegments([["Sarah Supermarket"], ["two dozen beetroot"], ["three blorps", "three blorbs"], ["one dozen cucumber"]], ctx);
+  check(b.lines.length === 3 && b.lines[1].issue?.kind === "product" && b.lines[1].qty === 3, "a phrase no guess can match still stays, highlighted", b.lines.map(brief).join(" / "));
 
   // Dates: set the invoice date, and stay out of the address.
   r = parse("Sarah Supermarket, 12th of the 11th 2026, 14 Wellington Street, Brownstone, 24 beetroot juice 315 per unit");

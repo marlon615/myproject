@@ -169,7 +169,7 @@ svg.icon {
 /* ── Signature ── */
 .sign-card { padding: 12px; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .sign-pad {
-  position: relative; height: 172px; border: 1.5px dashed var(--line-strong); border-radius: 12px; background: var(--paper-2);
+  position: relative; height: 236px; border: 1.5px dashed var(--line-strong); border-radius: 12px; background: var(--paper-2);
   overflow: hidden;
 }
 .sign-guide {
@@ -181,6 +181,45 @@ svg.icon {
 .sign-card.is-signed .sign-here { visibility: hidden; }
 .sign-card.is-signed .sign-pad { border-style: solid; border-color: color-mix(in srgb, var(--brand) 45%, var(--line-strong)); }
 .sign-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+
+/* The signing thank-you (approved on /lab/sign): "Thank you" writes itself across the top as the customer signs,
+   under their signature (which stays on top, where they sign); then the name and the green tick settle in. */
+.sign-thanks-ink, .sign-thanks-fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.sign-thanks-ink {
+  filter: saturate(1.25) brightness(1.18);   /* fresh, wet ink while it's being written */
+  transition: transform .7s cubic-bezier(.2, .8, .2, 1), filter .9s ease;
+}
+.sign-pad.is-thanked .sign-thanks-ink { transform: translateY(-4px) scale(.94); filter: none; }
+.sign-thanks-sealed {
+  position: absolute; left: 0; right: 0; top: 78px;
+  display: flex; justify-content: center; align-items: center; gap: 9px; padding: 0 14px;
+  opacity: 0; transform: translateY(6px); transition: opacity .5s ease, transform .5s cubic-bezier(.2, .8, .2, 1);
+  pointer-events: none;
+}
+.sign-thanks-sealed.is-shown { opacity: 1; transform: none; }
+.sign-thanks-who {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-display); font-size: 16.5px; font-weight: 600; letter-spacing: .01em; color: #2b3830;
+}
+.sign-thanks-check { width: 26px; height: 26px; flex: none; overflow: visible; }
+.sign-thanks-check .disc { fill: #e4f1e8; transform-box: fill-box; transform-origin: center; transform: scale(0); }
+.sign-thanks-check .ring { fill: none; stroke: #17633f; stroke-width: 7; stroke-dasharray: 277; stroke-dashoffset: 277; }
+.sign-thanks-check .tick { fill: none; stroke: #17633f; stroke-width: 9; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 55; stroke-dashoffset: 55; }
+.sign-thanks-sealed.is-checked .disc { animation: sign-pop .45s cubic-bezier(.2, .9, .3, 1.3) forwards; }
+.sign-thanks-sealed.is-checked .ring { animation: sign-draw .5s cubic-bezier(.65, 0, .35, 1) forwards; }
+.sign-thanks-sealed.is-checked .tick { animation: sign-draw .32s cubic-bezier(.65, 0, .35, 1) .42s forwards; }
+@keyframes sign-draw { to { stroke-dashoffset: 0; } }
+@keyframes sign-pop { to { transform: scale(1); } }
+/* An invoice that's already signed, or reduced motion: the settled thank-you, with no movement. */
+.sign-pad.is-static .sign-thanks-ink, .sign-pad.is-static .sign-thanks-sealed { transition: none; }
+.sign-pad.is-static .sign-thanks-check .disc, .sign-pad.is-static .sign-thanks-check .ring, .sign-pad.is-static .sign-thanks-check .tick { animation: none; }
+.sign-pad.is-static .sign-thanks-check .disc { transform: scale(1); }
+.sign-pad.is-static .sign-thanks-check .ring, .sign-pad.is-static .sign-thanks-check .tick { stroke-dashoffset: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .sign-pad.is-thanked .sign-thanks-ink { transform: none; }
+  .sign-thanks-sealed.is-checked .disc { transform: scale(1); }
+  .sign-thanks-sealed.is-checked .ring, .sign-thanks-sealed.is-checked .tick { stroke-dashoffset: 0; }
+}
 .sign-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; min-height: 38px; }
 .sign-buttons { display: flex; gap: 8px; flex: none; }
 #sign-done { min-width: 84px; font-weight: 750; }

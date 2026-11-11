@@ -127,12 +127,20 @@ export class Listener {
     rec.start();
   }
 
-  /** Stops listening and resolves with { text, candidates } once the last words are in. */
+  /**
+   * Stops listening and resolves with { text, candidates, segments } once the last words are in.
+   * segments: the phone's guesses phrase by phrase ([[guess1, guess2…], …]); words still being heard are kept too.
+   */
   stop() {
     this.active = false;
     return new Promise((resolve) => {
       let settled = false;
-      const finish = () => { if (settled) return; settled = true; resolve({ text: this.text(), candidates: this.candidates() }); };
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (this.interim.trim()) { this.finals.push([this.interim.trim()]); this.interim = ""; }
+        resolve({ text: this.text(), candidates: this.candidates(), segments: this.finals.map((alts) => [...alts]) });
+      };
       this.done = finish;
       try { this.rec?.stop(); } catch { finish(); }
       if (!this.rec) finish();

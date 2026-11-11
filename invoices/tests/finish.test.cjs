@@ -94,7 +94,11 @@ async function reloadOn(page, when) {
     check(await page.locator("#sign-done").isHidden() && await page.locator("#finish-btn").isHidden(), "Done and Finish stay hidden until the customer signs");
     await fillInvoice(page, { store: "Sarah Supermarket", address: "14 Wellington Street", items: [["Beetroot Juice", 24, 315], ["Okra", 50, 250]] });
     await drawSignature(page);
-    check(await page.locator("#sign-done").isVisible(), "after signing, a Done button appears under the signature");
+    check(await page.evaluate(() => document.querySelectorAll(".sign-thanks-ink").length === 1), "signing writes the thank-you in the signature box");
+    await page.waitForSelector("#sign-done", { state: "visible", timeout: 6000 });
+    check(JSON.stringify(await page.evaluate(() => window.__buzz)) === "[35]" && /Sarah Supermarket/.test(await page.textContent(".sign-thanks-who")),
+      "as the customer finishes signing: 'Thank you', their name, the tick and one gentle tap", await page.textContent(".sign-thanks-who"));
+    check(await page.locator("#sign-done").isVisible(), "then a Done button appears under the signature");
     const t0 = Date.now();
     await page.click("#sign-done");
     await page.waitForSelector(".thanks");
@@ -102,7 +106,7 @@ async function reloadOn(page, when) {
     check(/Thank you, Sarah Supermarket/.test(thanks) && /Invoice No\. 0001/.test(thanks) && /\$20,060\.00/.test(thanks), "thank-you shows 'Thank you, Sarah Supermarket', the invoice number and the total", thanks);
     check(await page.locator(".thanks svg.thanks-check .thanks-ring").count() === 1 && await page.locator(".thanks svg.thanks-check .thanks-tick").count() === 1, "with a checkmark (ring and tick)");
     check(await page.evaluate(() => getComputedStyle(document.querySelector(".thanks-tick")).stroke) === "rgb(23, 99, 63)", "the checkmark is green");
-    check(JSON.stringify(await page.evaluate(() => window.__buzz)) === "[35]", "a gentle haptic tap with it (one short tap)");
+    check(JSON.stringify(await page.evaluate(() => window.__buzz)) === "[35,35]", "a gentle haptic tap with it (one short tap)");
     const early = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".thanks-tick")).strokeDashoffset));
     await page.waitForTimeout(1200);
     const late = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".thanks-tick")).strokeDashoffset));

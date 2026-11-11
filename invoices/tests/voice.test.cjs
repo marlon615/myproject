@@ -282,6 +282,52 @@ const NO_SPEECH = `Object.defineProperty(window, "SpeechRecognition", { value: u
     await p4.waitForSelector("dialog.review", { state: "detached" });
     await p4.waitForTimeout(300);
     check(await p4.inputValue("#store") === "Sarah Supermarket" && await p4.inputValue("#address") === "" && await p4.locator(".prod-row.is-on").count() === 3, "on the invoice: Sarah Supermarket, empty address, three products ticked");
+
+    // Several guesses from the phone: the reading that matches the most products is used, and no line is dropped —
+    // a line nothing matches stays, highlighted, to fix.
+    await p4.waitForTimeout(700);
+    await p4.click("#new-btn");
+    await p4.waitForTimeout(300);
+    await p4.evaluate(() => window.scrollTo(0, 0));
+    await p4.click("#mic-btn");
+    await p4.waitForFunction(() => window.__speech.started === 5);
+    await p4.evaluate(() => {
+      window.__say("Sarah Supermarket today,");
+      window.__say("two dozen beat rude,", true, ["two dozen beetroot,"]);
+      window.__say("one dozen cucumber, mango nectar,");
+      window.__say("13 green shoes at 300", true, ["13 green juice at 300"]);
+    });
+    await p4.click("#mic-btn");
+    await p4.waitForSelector("dialog.review[open]");
+    const n7 = await p4.locator("dialog.review .review-line-name").allTextContents();
+    check(n7.join(" | ") === "Beetroot Juice | Cucumber Juice | “mango nectar” | Green Juice", "the phone's other guesses put misheard products right; nothing said is dropped", n7.join(" | "));
+    const fix7 = p4.locator("dialog.review .review-line.needs-fix");
+    check(await fix7.count() === 1 && /mango nectar/.test(await fix7.textContent()), "the line nothing matched stays on the review screen, highlighted");
+    check(await p4.locator("dialog.review .review-apply").isDisabled() && /Fix 1 highlighted line/.test(await p4.textContent("dialog.review .review-apply")), "…and must be fixed or removed before it goes on the invoice");
+    await p4.setViewportSize({ width: 390, height: 1100 });
+    await p4.waitForTimeout(250);
+    await p4.screenshot({ path: path.join(OUT, "voice-10-unmatched-line.png") });
+    await p4.setViewportSize({ width: 390, height: 844 });
+    await fix7.locator(".review-line-main").click();
+    await p4.locator("dialog.review .review-editor select[aria-label='Product']").selectOption({ label: "Green Juice" });
+    await p4.locator("dialog.review .review-editor input[aria-label='Amount']").fill("6");
+    await p4.locator("dialog.review .review-editor").getByRole("button", { name: "Done" }).click();
+    check(await p4.locator("dialog.review .review-line.needs-fix").count() === 0 && await p4.locator("dialog.review .review-apply").isEnabled(), "fixed by tapping the line and choosing the product");
+    await p4.click("dialog.review button:has-text('Cancel')");
+    await p4.waitForSelector("dialog.review", { state: "detached" });
+
+    // Words before the products that weren't a product or a clear address: highlighted, with "use as the address".
+    await p4.click("#mic-btn");
+    await p4.waitForFunction(() => window.__speech.started === 6);
+    await p4.evaluate(() => window.__say("Sarah Supermarket, Brownstone, two dozen beetroot"));
+    await p4.click("#mic-btn");
+    await p4.waitForSelector("dialog.review[open]");
+    const chip = p4.locator("dialog.review .review-chip-address");
+    check(await chip.count() === 1 && /Use “Brownstone” as the address/.test(await chip.textContent()), "a word that might be the address is kept, with one tap to use it as the address");
+    await chip.click();
+    check(await p4.inputValue("dialog.review textarea[aria-label='Store address']") === "Brownstone" && await p4.locator("dialog.review .review-line").count() === 1, "one tap: it's the address, and the line goes");
+    await p4.click("dialog.review button:has-text('Cancel')");
+    await p4.waitForSelector("dialog.review", { state: "detached" });
     await c4.close();
     check(errors.length === 0, "no console errors (test sentence)", errors.join(" | "));
   } finally {

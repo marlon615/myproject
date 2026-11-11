@@ -6,6 +6,8 @@
  *   rotation, and on high-density screens.
  * - toDataURL() exports black ink on a transparent 900×300 PNG, cropped to the ink and centred.
  * - onChange fires after every finished stroke. clear() and fromDataURL() are for the app and never fire it.
+ * - baseArea(w, h) (optional): where a saved signature is drawn back into the pad, as { x, y, w, h } in pad pixels
+ *   (default: the whole pad). It only places the picture on screen; the export is unchanged.
  *
  *   const pad = new SignaturePad(canvas, { onChange: () => save(pad.toDataURL()) });
  */
@@ -22,6 +24,7 @@ export class SignaturePad {
   #canvas;
   #ctx;
   #onChange;
+  #baseArea;
   #strokes = [];               // arrays of { x, y } in pad space
   #base = null;                // { img, url } drawn underneath, from fromDataURL()
   #space = null;               // { w, h }: the pad's size when this signature was started
@@ -31,10 +34,11 @@ export class SignaturePad {
   #edited = false;             // strokes were added after fromDataURL()
   #loads = 0;                  // bumped by clear()/fromDataURL() so a slow image load can't overwrite newer state
 
-  constructor(canvas, { onChange } = {}) {
+  constructor(canvas, { onChange, baseArea } = {}) {
     this.#canvas = canvas;
     this.#ctx = canvas.getContext("2d");
     this.#onChange = onChange;
+    this.#baseArea = baseArea;
     canvas.style.touchAction = "none";
     canvas.addEventListener("pointerdown", (e) => this.#start(e));
     canvas.addEventListener("pointermove", (e) => this.#move(e));
@@ -69,7 +73,7 @@ export class SignaturePad {
     out.height = OUT_H;
     const ctx = out.getContext("2d");
     ctx.setTransform(s, 0, 0, s, (OUT_W - box.w * s) / 2 - box.x * s, (OUT_H - box.h * s) / 2 - box.y * s);
-    paint(ctx, this.#space, this.#base, this.#strokes);
+    paint(ctx, this.#area(), this.#base, this.#strokes);
     return out.toDataURL("image/png");
   }
 
@@ -188,7 +192,14 @@ export class SignaturePad {
     ctx.clearRect(0, 0, this.#canvas.width, this.#canvas.height);
     if (!this.#space || !this.#view.w) return;
     this.#pen();
-    paint(ctx, this.#space, this.#base, this.#strokes);
+    paint(ctx, this.#area(), this.#base, this.#strokes);
+  }
+
+  /** Where the saved signature picture goes, in pad space. */
+  #area() {
+    const sp = this.#space;
+    const a = sp && this.#baseArea?.(sp.w, sp.h);
+    return a && a.w > 0 && a.h > 0 ? a : { x: 0, y: 0, w: sp?.w || OUT_W, h: sp?.h || OUT_H };
   }
 
   #resize() {
@@ -206,7 +217,7 @@ export class SignaturePad {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     const add = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
     if (this.#base) {
-      const r = fit(this.#base.img, this.#space);
+      const r = fit(this.#base.img, this.#area());
       add(r.x, r.y);
       add(r.x + r.w, r.y + r.h);
     }
@@ -225,16 +236,16 @@ function setPen(ctx) {
   ctx.fillStyle = INK;
 }
 
-/** Where an image sits when fitted (contained and centred) inside a w×h area. */
-function fit(img, { w, h }) {
+/** Where an image sits when fitted (contained and centred) inside an area { x, y, w, h }. */
+function fit(img, { x = 0, y = 0, w, h }) {
   const s = Math.min(w / img.naturalWidth, h / img.naturalHeight);
-  return { x: (w - img.naturalWidth * s) / 2, y: (h - img.naturalHeight * s) / 2, w: img.naturalWidth * s, h: img.naturalHeight * s };
+  return { x: x + (w - img.naturalWidth * s) / 2, y: y + (h - img.naturalHeight * s) / 2, w: img.naturalWidth * s, h: img.naturalHeight * s };
 }
 
-/** Draws the saved image and every stroke; the context's transform must already map pad space. */
-function paint(ctx, space, base, strokes) {
+/** Draws the saved image (fitted into `area`) and every stroke; the context's transform must already map pad space. */
+function paint(ctx, area, base, strokes) {
   if (base) {
-    const r = fit(base.img, space);
+    const r = fit(base.img, area);
     ctx.drawImage(base.img, r.x, r.y, r.w, r.h);
   }
   setPen(ctx);

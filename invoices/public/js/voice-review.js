@@ -59,6 +59,15 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
       render();
     }
 
+    /** Words said before the products that weren't a product after all: into the address, and the line goes. */
+    function useAsAddress(line) {
+      const words = line.issue.address;
+      address.value = address.value.trim() ? `${address.value.trim()}, ${words}` : words;
+      if (useSaved) useSaved.hidden = true;
+      lines.splice(lines.indexOf(line), 1);
+      render();
+    }
+
     function editor(line) {
       const sel = h("select", { class: "review-select", "aria-label": "Product" },
         h("option", { value: "" }, "Choose a product…"),
@@ -112,9 +121,11 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
       if (blocking(line)) li.append(h("p", { class: "review-issue" }, line.issue.message));
       else if (line.issue) li.append(h("p", { class: "review-note" }, line.issue.kind === "noPrice" ? "Add price: tap the line" : line.issue.message));
       const choices = (line.issue?.choices || []).filter((id) => byId.has(id));
-      if (choices.length && openKey !== line.key) {
-        li.append(h("div", { class: "review-choices", role: "group", "aria-label": "Choose the product" },
-          choices.map((id) => h("button", { type: "button", class: "review-chip", onclick: () => choose(line, id) }, byId.get(id).name))));
+      const asAddress = line.issue?.kind === "product" && line.issue.address;
+      if ((choices.length || asAddress) && openKey !== line.key) {
+        li.append(h("div", { class: "review-choices", role: "group", "aria-label": "Fix this line" },
+          choices.map((id) => h("button", { type: "button", class: "review-chip", onclick: () => choose(line, id) }, byId.get(id).name)),
+          asAddress ? h("button", { type: "button", class: "review-chip review-chip-address", onclick: () => useAsAddress(line) }, `Use “${asAddress}” as the address`) : null));
       }
       if (openKey === line.key) li.append(editor(line));
       return li;

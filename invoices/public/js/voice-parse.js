@@ -19,9 +19,9 @@
  * nothing is filled in from earlier invoices. A spoken date ("12th of the 11th 2026") sets the invoice date.
  *   issue: null | { kind, message, choices? }   kind: "product" | "which" | "quantity" | "price" | "noPrice" | "store"
  *
- * What can't be settled — two products equally close, an amount said for words that match no product, a missing
+ * Nothing said is dropped. What can't be settled — two products equally close, words that match no product, a missing
  * amount, a price that can't be read — comes back as a line with an `issue`, for the review screen to highlight.
- * Extra words with no amount before them ("please", "okay then") are left out.
+ * Only filler ("please", "okay", "that's all") is left out.
  * Pure (no DOM), so it can be tested anywhere.
  */
 import { defaultUnitFor, normalizeUnit, todayISO } from "./util.js";
@@ -41,6 +41,12 @@ const BUSINESS_WORDS = new Set(["supermarket", "supermarkets", "store", "stores"
   "grocery", "groceries", "wholesale", "wholesales", "pharmacy", "bakery", "restaurant", "limited", "ltd", "enterprise", "enterprises",
   "bar", "cafe", "deli", "supplies", "foods", "variety", "plaza", "kitchen", "farm", "farms", "company", "co"]);
 const SMALL_WORDS = new Set(["and", "of", "the", "at", "in", "on", "by", "for", "de"]);
+/** Words that carry no product ("please", "that's all", "thank you"): a phrase made only of these is left out. */
+const FILLER = new Set([...CONNECTORS, "please", "thanks", "thank", "you", "thats", "that", "is", "its", "it", "all", "everything",
+  "done", "finished", "alright", "right", "so", "yes", "yeah", "no", "oh", "well", "now", "just", "like", "good", "great",
+  "perfect", "cool", "cheers", "bye", "goodbye", "sir", "maam", "boss", "invoice", "delivery", "order", "total", "a", "an", "of", "to", "be", "will",
+  "very", "much", "lot", "lots", "have", "nice", "day", "appreciate", "appreciated", "welcome", "again", "see", "later", "soon", "take", "care",
+  "god", "bless", "hello", "hi", "morning", "afternoon", "evening", "night", "here", "there", "we", "go", "this", "one", "for"]);
 
 const isDigits = (w) => /^\d+(\.\d+)?$/.test(w);
 const wordNumber = (w) => (isDigits(w) ? Number(w) : w in ONES ? ONES[w] : w in TENS ? TENS[w] : null);
@@ -470,7 +476,13 @@ function storeAt(t, i, matcher, { first }) {
   if (!run.length) return null;
   let biz = -1;
   for (const k of run) if (BUSINESS_WORDS.has(t[k].w) && !(t[k + 1] && STREET_WORDS.has(t[k + 1].w) && !t[k].pause)) biz = k;
-  if (biz >= 0) return { start: i, end: biz + 1 };
+  if (biz >= 0) {
+    // "Shop X," / "Sarah Supermarket Brownstone,": a short name after the business word, up to a comma, is part of it.
+    const last = run.at(-1);
+    const tail = last - biz;
+    if (t[last].pause && tail >= 1 && tail <= 2 && !matchAt(t, biz + 1, matcher, { strict: true }) && !addressAt(t, biz + 1, matcher)) return { start: i, end: last + 1 };
+    return { start: i, end: biz + 1 };
+  }
   if (!first || addressAt(t, i, matcher)) return null;
   const m = matchAt(t, i, matcher, { strict: true });
   if (m && m.score >= 0.9 && m.end > run.at(-1)) return null; // nothing but a product's name: a product line
@@ -601,19 +613,28 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
       i = m.end;
       line.issue = { kind: "which", message: `Which product is “${line.heard}”?`, choices: [m.product.id, ...m.ties.map((p) => p.id)].slice(0, 4) };
     } else {
-      // Words that aren't a product we know. With an amount before them they were meant as a product: ask.
-      // Without one they're just extra words ("please", "okay then"): leave them out.
+      // Words that aren't a product we know. Never dropped: they become a line to fix on the review screen.
+      // Only filler on its own ("please", "okay", "that's all") is left out.
       const words = [];
       while (t[i] && !PRICE_WORDS.has(t[i].w) && !PER_WORDS.has(t[i].w) && !readQuantity(t, i) && !CONNECTORS.has(t[i].w) && !addressAt(t, i, matcher)) { words.push(t[i]); i++; if (t[i - 1].pause) break; }
-      if (!q) { i = Math.max(i, from + 1); continue; }
+      const meaningful = words.filter((x) => !FILLER.has(x.w));
+      const strayPrice = !words.length && t[i] && PRICE_WORDS.has(t[i].w) && readPrice(t, t[i].w === "$" ? i : i + 1);
+      if (!q && !meaningful.length && !strayPrice) { i = Math.max(i, from + 1); continue; }
       line.heard = words.map((x) => x.raw).join(" ");
       line.issue = { kind: "product", message: words.length ? `Didn't catch the product (heard “${line.heard}”).` : "Didn't catch the product.", choices: suggest(words.map((x) => x.w), products) };
+      // Said before any product, with no amount: it may have been part of the address — offer that as one tap.
+      if (!q && !lines.length && meaningful.length && !meaningful.some((x) => GENERIC.has(x.w))) line.issue.address = titleCase(words);
     }
     // Amount said after the product ("okra fifty pounds", "fruit punch 24 at 375") — unless that number is clearly the
     // amount of the next product ("… 2 dozen cucumber juice").
+    // An amount followed by a product belongs to that product (amounts are usually said first: "one dozen cucumber"),
+    // unless that product has its own amount after it ("okra fifty pounds hot pepper four pounds").
     if (line.qty === null && !addressAt(t, i, matcher)) {
       const after = readQuantity(t, i);
-      if (after && (after.unit || !isConfident(matchAt(t, after.end, matcher)))) { line.qty = after.qty; line.unit = after.unit; i = after.end; }
+      const next = after && matchAt(t, after.end, matcher);
+      const amountAfter = (k) => { const a = readQuantity(t, k); return Boolean(a && !matchAt(t, a.end, matcher)); };
+      const forNext = next && (!line.productId || t[i - 1]?.pause || !amountAfter(next.end));
+      if (after && !forNext && (after.unit || !isConfident(next))) { line.qty = after.qty; line.unit = after.unit; i = after.end; }
     }
     // Unit price for this line: "at 230", "for 300", "$250", "315 per unit", "250 each", "4200 per dozen",
     // "300 a pound" — or a number right after the product that isn't the next product's amount ("… 315, 16 green juice").
@@ -719,19 +740,58 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
   };
 }
 
-/** How many lines need attention (used to pick the best of several possible transcripts). */
+/** How many lines need attention. */
 export const issueCount = (parsed) => parsed.lines.filter((l) => l.issue && l.issue.kind !== "noPrice").length * 2
   + parsed.lines.filter((l) => l.issue?.kind === "noPrice").length + (parsed.storeIssue ? 1 : 0);
 
-/** Parses each candidate transcript (best first) and keeps the one with the fewest unclear parts. */
+/**
+ * How well one reading of what was said went, best first: the most product lines matched (a tie between two products
+ * counts half), then the fewest lines left to fix, then a store heard. Fewer lines never wins by itself, so a reading
+ * that lost a line can't be preferred.
+ */
+export function rank(parsed) {
+  const matched = parsed.lines.filter((l) => l.productId).length + 0.5 * parsed.lines.filter((l) => l.issue?.kind === "which").length;
+  const unclear = parsed.lines.filter((l) => l.issue && !["noPrice", "which"].includes(l.issue.kind)).length;
+  return [matched, -unclear, parsed.store ? 1 : 0];
+}
+const better = (a, b) => { for (let k = 0; k < a.length; k++) if (a[k] !== b[k]) return a[k] > b[k]; return false; };
+
+/** Parses each whole transcript the phone offered (its best guess first) and keeps the one that matches the most products. */
 export function bestParse(candidates, ctx) {
-  let best = null;
+  let best = null, bestRank = null;
   for (const text of candidates) {
     if (!String(text || "").trim()) continue;
-    const parsed = parseSpokenInvoice(text, ctx);
-    if (!best || issueCount(parsed) < issueCount(best)) best = parsed;
+    const parsed = parseSpokenInvoice(text, ctx), r = rank(parsed);
+    if (!best || better(r, bestRank)) { best = parsed; bestRank = r; }
   }
   return best || parseSpokenInvoice("", ctx);
+}
+
+/**
+ * The phone hears an invoice phrase by phrase, with up to three guesses for each phrase: segments = [[guess1, guess2…], …].
+ * Starting from its best guesses, tries each other guess phrase by phrase and keeps any that makes the invoice match
+ * more products (two passes, so several misheard phrases are all put right). Every phrase is always included.
+ */
+export function bestParseSegments(segments, ctx) {
+  const segs = (segments || []).map((alts) => (alts || []).filter((a) => String(a || "").trim())).filter((alts) => alts.length);
+  if (!segs.length) return parseSpokenInvoice("", ctx);
+  const pick = segs.map(() => 0);
+  const read = () => parseSpokenInvoice(segs.map((alts, k) => alts[pick[k]]).join(" "), ctx);
+  let best = read(), bestRank = rank(best);
+  for (let pass = 0; pass < 2; pass++) {
+    let changed = false;
+    segs.forEach((alts, k) => {
+      for (let a = 0; a < alts.length; a++) {
+        if (a === pick[k]) continue;
+        const keep = pick[k];
+        pick[k] = a;
+        const parsed = read(), r = rank(parsed);
+        if (better(r, bestRank)) { best = parsed; bestRank = r; changed = true; } else pick[k] = keep;
+      }
+    });
+    if (!changed) break;
+  }
+  return best;
 }
 
 export const _test = { tokenize, readNumber, readPrice, readQuantity, similarity, soundKey };
