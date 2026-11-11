@@ -663,7 +663,7 @@ async function finishListening() {
     const { text, candidates, segments } = await listener.stop();
     el.voicePanel.hidden = true;
     if (!text) { toast("I didn't hear anything. Tap the mic and try again."); return; }
-    await reviewAndApply(candidates, segments);
+    await reviewAndApply(candidates, segments, text);
   } finally {
     voice.busy = false;
     el.voicePanel.hidden = true;
@@ -675,16 +675,18 @@ async function typedInvoice(reason, text) {
   voice.busy = true;
   try {
     const said = await dictate({ reason, text });
-    if (said) await reviewAndApply([said]);
+    if (said) await reviewAndApply([said], null, said);
   } finally {
     voice.busy = false;
   }
 }
 
 /** The phone's guesses → the reading that matches the most products → review → invoice. Nothing said is dropped. */
-async function reviewAndApply(candidates, segments = null) {
+async function reviewAndApply(candidates, segments = null, rawText = "") {
   const ctx = { products: state.products, stores: state.stores, today: todayISO() };
   const parsed = segments?.length ? bestParseSegments(segments, ctx) : bestParse(candidates, ctx);
+  parsed.raw = rawText || parsed.transcript; // shown on the review screen exactly as the phone heard it
+  parsed.guesses = segments || [];
   const result = await reviewSpokenInvoice(parsed, {
     products: state.products,
     currentDate: el.date.value || todayISO(),

@@ -316,9 +316,40 @@ const NO_SPEECH = `Object.defineProperty(window, "SpeechRecognition", { value: u
     await p4.click("dialog.review button:has-text('Cancel')");
     await p4.waitForSelector("dialog.review", { state: "detached" });
 
-    // Words before the products that weren't a product or a clear address: highlighted, with "use as the address".
+    // Real, messy speech: the review shows exactly what the phone heard; repeats are kept once; the phone's other guess
+    // fixes a misheard product; a line nothing matches offers the closest products as one tap.
     await p4.click("#mic-btn");
     await p4.waitForFunction(() => window.__speech.started === 6);
+    await p4.evaluate(() => {
+      window.__say("sarah supermarket 24 beat root juice at 3:15 per unit");
+      window.__say("sarah supermarket 24 beat root juice at 3:15 per unit"); // the phone sends it twice
+      window.__say("16 grain juice 230 per unit", true, ["16 green juice 230 per unit"]);
+      window.__say("12 pumpkin bunch to 50 per unit 7 widgets");
+    });
+    await p4.click("#mic-btn");
+    await p4.waitForSelector("dialog.review[open]");
+    const heardText = await p4.textContent("dialog.review .review-heard-text");
+    check(heardText === "sarah supermarket 24 beat root juice at 3:15 per unit 16 grain juice 230 per unit 12 pumpkin bunch to 50 per unit 7 widgets",
+      "the review shows exactly what the phone heard (a repeated phrase only once)", heardText);
+    check(/16 green juice 230 per unit/.test(await p4.textContent("dialog.review .review-heard-used")), "…and says when it used the phone's other guess");
+    const n8 = await p4.locator("dialog.review .review-line-name").allTextContents();
+    const c8 = await p4.locator("dialog.review .review-line-calc").allTextContents();
+    check(n8.join(" | ") === "Beetroot Juice | Green Juice | Pumpkin Punch | “widgets”" && c8.slice(0, 3).join(" | ") === "24 × $315.00 | 16 × $230.00 | 12 × $250.00",
+      "messy speech: products matched by sound, '3:15' and 'to 50' read as prices", `${n8.join(" | ")} — ${c8.join(" | ")}`);
+    const unclear = p4.locator("dialog.review .review-line.needs-fix");
+    check(await unclear.count() === 1 && /Closest:/.test(await unclear.textContent()) && await unclear.locator(".review-chip").count() >= 1, "the unclear line offers the closest products as one tap", await unclear.textContent());
+    await p4.setViewportSize({ width: 390, height: 1150 });
+    await p4.waitForTimeout(250);
+    await p4.screenshot({ path: path.join(OUT, "voice-11-heard-transcript.png") });
+    await p4.setViewportSize({ width: 390, height: 844 });
+    await unclear.locator(".review-chip").first().click();
+    check(await p4.locator("dialog.review .review-line.needs-fix").count() === 0, "one tap on a suggestion fixes it");
+    await p4.click("dialog.review button:has-text('Cancel')");
+    await p4.waitForSelector("dialog.review", { state: "detached" });
+
+    // Words before the products that weren't a product or a clear address: highlighted, with "use as the address".
+    await p4.click("#mic-btn");
+    await p4.waitForFunction(() => window.__speech.started === 7);
     await p4.evaluate(() => window.__say("Sarah Supermarket, Brownstone, two dozen beetroot"));
     await p4.click("#mic-btn");
     await p4.waitForSelector("dialog.review[open]");

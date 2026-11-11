@@ -46,7 +46,9 @@ const FILLER = new Set([...CONNECTORS, "please", "thanks", "thank", "you", "that
   "done", "finished", "alright", "right", "so", "yes", "yeah", "no", "oh", "well", "now", "just", "like", "good", "great",
   "perfect", "cool", "cheers", "bye", "goodbye", "sir", "maam", "boss", "invoice", "delivery", "order", "total", "a", "an", "of", "to", "be", "will",
   "very", "much", "lot", "lots", "have", "nice", "day", "appreciate", "appreciated", "welcome", "again", "see", "later", "soon", "take", "care",
-  "god", "bless", "hello", "hi", "morning", "afternoon", "evening", "night", "here", "there", "we", "go", "this", "one", "for"]);
+  "god", "bless", "hello", "hi", "morning", "afternoon", "evening", "night", "here", "there", "we", "go", "this", "one", "for",
+  "give", "gimme", "me", "mi", "need", "needs", "want", "wants", "get", "got", "send", "i", "us", "can", "could", "would", "let", "lets",
+  "put", "down", "write", "make", "man", "mon", "yuh", "ya", "is", "are", "was", "order", "invoice", "says", "say", "said"]);
 
 const isDigits = (w) => /^\d+(\.\d+)?$/.test(w);
 const wordNumber = (w) => (isDigits(w) ? Number(w) : w in ONES ? ONES[w] : w in TENS ? TENS[w] : null);
@@ -57,6 +59,8 @@ function tokenize(text) {
     .replace(/[‘’ʼ]/g, "'")
     .replace(/&/g, " and ")
     .replace(/(\d),(?=\d{3}\b)/g, "$1")                 // 1,250 → 1250
+    .replace(/\b(\d{1,2}):(\d{2})\b/g, "$1$2")            // "three fifteen" written as a time, 3:15 → 315
+    .replace(/\b(\d+)(?:st|nd|rd|th)\b/gi, "$1")           // 24th → 24 (dates were taken out before this)
     .replace(/(\d)\s*(lbs?|pounds?|doz(?:en)?s?|bags?)\b/gi, "$1 $2") // 50lb → 50 lb
     .replace(/[-–—/]/g, " ");
   const tokens = [];
@@ -82,12 +86,15 @@ function readNumber(t, i, opts = {}) {
   if (t[j] && isDigits(t[j].w)) {
     let value = Number(t[j].w);
     j++;
+    // "20 4" → 24: the phone sometimes writes "twenty-four" as two numbers.
+    if (value >= 20 && value <= 90 && value % 10 === 0 && !t[j - 1].pause && t[j] && /^[1-9]$/.test(t[j].w) && !opts.lineStartsAt?.(j)) { value += Number(t[j].w); j++; }
     if (t[j]?.w === "and" && t[j + 1]?.w === "a" && t[j + 2]?.w === "half") { value += 0.5; j += 3; }
     return { value, end: j };
   }
   let total = 0, cur = 0, used = false, last = null;
   while (j < t.length) {
     const w = t[j].w;
+    if (last === "tens" && /^[1-9]$/.test(w) && !t[j - 1].pause) { cur += Number(w); last = "ones"; j++; break; } // "twenty 4"
     if (w in ONES || w in TENS) {
       const v = ONES[w] ?? TENS[w];
       if (used && !(last === "tens" && v < 10) && last !== "hundred" && last !== "thousand" && last !== "and") break; // a new number starts
@@ -125,7 +132,10 @@ function readNumber(t, i, opts = {}) {
 function readPrice(t, i, opts = {}) {
   let j = i;
   if (t[j]?.w === "$") j++;
-  // Spoken shorthand: [1–19] then [10–99] (or "oh" + digit): "two fifty", "twelve fifty", "two oh five".
+  // Spoken shorthand: [1–19] then [10–99] (or "oh" + digit): "two fifty", "twelve fifty", "two oh five" — also as the
+  // phone may write it: "2 50", "to 50", "3 15".
+  const lead = t[j] && (/^[1-9]$/.test(t[j].w) ? Number(t[j].w) : t[j].w === "to" || t[j].w === "too" ? 2 : null);
+  if (lead && !t[j].pause && t[j + 1] && /^\d{2}$/.test(t[j + 1].w) && Number(t[j + 1].w) >= 10) return { value: lead * 100 + Number(t[j + 1].w), end: j + 2 };
   const a = t[j] && ONES[t[j].w];
   if (a >= 1 && t[j + 1] && t[j + 1].w !== "hundred" && t[j + 1].w !== "thousand") {
     let k = j + 1, b = null;
@@ -151,10 +161,10 @@ function readPrice(t, i, opts = {}) {
 function unitAt(t, j) {
   const w = t[j]?.w;
   if (!w) return null;
-  if (/^doz(en)?s?$/.test(w)) return { unit: "dozen", end: j + 1 };
+  if (/^(doz(en)?s?|dozn|dosen|dozin|dozing|dozan|dozzen)$/.test(w)) return { unit: "dozen", end: j + 1 };
   if (/^(bags?|sacks?)$/.test(w)) return { unit: "bag", end: j + 1 };
   if (/^(pounds?|lbs?|pds?)$/.test(w)) return { unit: "lb", end: j + 1 };
-  if (/^(each|pieces?|bottles?|units?|pcs)$/.test(w)) return { unit: "each", end: j + 1 };
+  if (/^(each|pieces?|bottles?|units?|pcs|bunch|bunches|bundles?)$/.test(w)) return { unit: "each", end: j + 1 };
   return null;
 }
 
@@ -220,13 +230,31 @@ const BUILTIN_ALIASES = {
 };
 const GENERIC = new Set(["juice", "juices", "drink", "drinks"]);
 const TIE = 0.02;       // scores this close count as "equally close"
-const MIN_MATCH = 0.5;  // below this, nothing was clearly said
+const MIN_MATCH = 0.45; // below this, nothing was clearly said ("bammy" alone still counts, as Mini or Large)
 
 const compact = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-/** A rough sound-alike key: "bammie" ≈ "bammy", "kalaloo" ≈ "callaloo", "ochra" ≈ "okra". */
-const soundKey = (s) => compact(s)
-  .replace(/ph/g, "f").replace(/ck/g, "k").replace(/q/g, "k").replace(/c(?=[eiy])/g, "s").replace(/c/g, "k").replace(/ch/g, "k")
-  .replace(/z/g, "s").replace(/ie\b|y\b/g, "i").replace(/ies$/, "is").replace(/(.)\1+/g, "$1");
+
+/** Vowel sounds, roughly: "ee"/"ea"/"i"/"y" → i, "oo"/"ou"/"u" → u, "o"/"oa" → o, "a"/"ai" → a, else e. */
+const vowelClass = (v) => (/^(ee|ea|ie|ei|ey|iy|i|y)/.test(v) ? "i" : /^(oo|ou|ue|ui|ew|u)/.test(v) ? "u" : /^(oa|ow|oe|o)/.test(v) ? "o" : /^(ai|ay|au|aw|ae|a)/.test(v) ? "a" : "e");
+
+/**
+ * A sound-alike key, so spellings that sound the same compare the same, whatever the accent or the phone wrote:
+ * "beet"/"beat" → bit, "root"/"route"/"rude" → rut, "bammy"/"bami"/"barmy" → bam, "callaloo"/"calaloo"/"kalaloo" → kalal,
+ * "okra"/"ochro"/"okro" → okr, "cucumber"/"cue cumber"/"queue cumber" → kukumb.
+ */
+function soundKey(s, { finalVowel = false } = {}) {
+  let k = compact(s);
+  if (!k) return k;
+  k = k.replace(/ph/g, "f").replace(/ck/g, "k").replace(/q/g, "k").replace(/x/g, "ks").replace(/ch/g, "k").replace(/sh/g, "s")
+    .replace(/th/g, "t").replace(/wh/g, "w").replace(/gh/g, "g").replace(/c(?=[eiy])/g, "s").replace(/c/g, "k").replace(/z/g, "s")
+    .replace(/(?<=[a-z][^aeiou])e$/, "")                     // silent final e: "grape" → grap (not "true")
+    .replace(/([aeiou])r(?=[^aeiouy]|$)/g, "$1")             // r that isn't said: "barmy" → bamy, "cucumber" → cucumbe
+    .replace(/[aeiouy]+/g, vowelClass)                       // vowel sounds: "beet"/"beat" → bit, "root"/"route" → rut
+    .replace(/(.)\1+/g, "$1")                                // double letters: "bammy" → bami
+    .replace(/b/g, "p").replace(/d/g, "t").replace(/g/g, "k").replace(/v/g, "f"); // "bunch" ≈ "punch", "rude" ≈ "root"
+  if (!finalVowel && k.length >= 4) k = k.replace(/[aeiou]$/, ""); // a final vowel: "okra"/"okro" → okr, "bami" → pam
+  return k;
+}
 
 function similarity(a, b) {
   if (a === b) return 1;
@@ -241,52 +269,70 @@ function similarity(a, b) {
   return 1 - prev[n] / Math.max(m, n);
 }
 
-/** Singular, plain form: "bammies" → "bammy", "lemons" → "lemon", "peppers" → "pepper". */
+/** Singular, plain form: "bammies" → "bammy", "lemons" → "lemon", "peppers" → "pepper", "greens" → "green". */
 function stem(w) {
+  w = w.replace(/'s$|s'$/, "");
   if (w.length > 4 && w.endsWith("ies")) return `${w.slice(0, -3)}y`;
-  if (w.length > 4 && /(?:ch|sh|x|z|ss)es$/.test(w)) return w.slice(0, -2);
+  if (w.length > 4 && /(?:ch|sh|x|z|ss|oes)es$/.test(w)) return w.slice(0, -2);
   if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
   return w;
 }
 
-/** How alike two spoken words are (1 = same), ignoring plurals and allowing close sounds. */
+/** How alike two spoken words are (1 = same), ignoring plural endings and comparing by sound. */
 function wordSim(a, b) {
   const x = stem(a), y = stem(b);
   if (x === y) return 1;
-  return Math.max(similarity(x, y), similarity(soundKey(x), soundKey(y)) - 0.02);
+  const sound = Math.max(similarity(soundKey(x), soundKey(y)), similarity(soundKey(x, { finalVowel: true }), soundKey(y, { finalVowel: true })));
+  const spelt = similarity(x, y) - (Math.min(x.length, y.length) < 6 ? 0.15 : 0); // short words must sound alike ("time" isn't "lime")
+  return Math.max(spelt, sound - 0.02);
 }
 
-/** Each product's names (its own and the usual ways it's said), as the words that tell it apart. */
+/**
+ * Each product's names (its own and the usual ways it's said), as the words that tell it apart, plus which of those
+ * words belong to that product alone ("large", "pumpkin", "cucumber", "shredded"): one of them is enough.
+ */
 function buildMatcher(products) {
   const forms = [];
+  const owners = new Map(); // word of a product's own name → the products whose names use it
   for (const p of products) {
+    for (const w of p.name.toLowerCase().split(/\s+/).filter((x) => x && !GENERIC.has(x))) {
+      const k = stem(w);
+      if (!owners.has(k)) owners.set(k, new Set());
+      owners.get(k).add(p.id);
+    }
     for (const name of new Set([p.name.toLowerCase(), ...(BUILTIN_ALIASES[p.name] || [])])) {
       const words = name.split(/\s+/).filter(Boolean);
       const key = words.filter((w) => !GENERIC.has(w));
-      forms.push({ product: p, key: key.length ? key : words });
+      forms.push({ product: p, key: key.length ? key : words, own: name === p.name.toLowerCase() });
     }
   }
+  for (const f of forms) f.distinct = new Set(f.key.filter((w) => { const o = owners.get(stem(w)); return o?.size === 1 && o.has(f.product.id); }));
   return forms;
 }
 
 /**
- * Share of a product's telling words that were heard (closely), less a little for each extra word heard.
+ * Share of a product's telling words that were heard (closely, by sound), less a little for each extra word heard
+ * (filler like "um", "like", "please" doesn't count). One word that only this product has is enough on its own.
  * strict: the first word heard must be part of the name (so "Rose Hall Grocery okra" isn't read as one product).
  */
 function formScore(W, form, strict = false) {
   const used = new Set();
-  let sum = 0;
+  let sum = 0, distinct = false;
   for (const k of form.key) {
     let best = 0, at = [];
-    W.forEach((w, j) => { const s = wordSim(w, k); if (s > best) { best = s; at = [j]; } });
-    for (let j = 0; j + 1 < W.length; j++) { const s = wordSim(W[j] + W[j + 1], k); if (s > best) { best = s; at = [j, j + 1]; } }
-    if (best >= 0.75) { sum += best; for (const j of at) used.add(j); }
+    // Each heard word counts for one word of the name only ("punch line" can't be both "punkin" and "punch").
+    W.forEach((w, j) => { if (used.has(j)) return; const s = wordSim(w, k); if (s > best) { best = s; at = [j]; } });
+    for (let j = 0; j + 1 < W.length; j++) { if (used.has(j) || used.has(j + 1)) continue; const s = wordSim(W[j] + W[j + 1], k); if (s > best) { best = s; at = [j, j + 1]; } }
+    if (best >= 0.75) { sum += best; for (const j of at) used.add(j); if (best >= 0.82 && form.distinct.has(k)) distinct = true; }
   }
   let score = sum / form.key.length;
-  const joined = similarity(compact(W.join("")), compact(form.key.join(""))); // "beetroot" heard for "beet root"
+  // "beetroot" heard for "beet root", or the other way round (the generic "juice" and filler left out).
+  const plain = W.filter((w) => !GENERIC.has(w) && !FILLER.has(w)).join("");
+  const joined = plain ? wordSim(plain, form.key.join("")) : 0;
   if (joined >= 0.85 && joined > score) { score = joined; W.forEach((_, j) => used.add(j)); }
+  if (distinct) score = Math.max(score, 0.9);
   if (strict && !used.has(0)) return -Infinity;
-  const extra = W.filter((w, j) => !used.has(j) && !GENERIC.has(w)).length;
+  const extra = W.filter((w, j) => !used.has(j) && !GENERIC.has(w) && !FILLER.has(w)).length;
   return score - 0.12 * extra;
 }
 
@@ -297,18 +343,20 @@ function formScore(W, form, strict = false) {
  */
 function matchAt(t, i, matcher, { strict = false } = {}) {
   const stop = (tok) => !tok || wordNumber(tok.w) !== null || unitAt([tok], 0) || PRICE_WORDS.has(tok.w) || PER_WORDS.has(tok.w) || CONNECTORS.has(tok.w) || tok.w === "of";
-  if (stop(t[i])) return null;
+  if (stop(t[i]) || FILLER.has(t[i].w)) return null; // "like", "yeah", "man" never start a product ("like" isn't "lime")
   const best = new Map(); // product id → { product, score, end }: its best reading of the words here
   const atEnd = new Map(); // end → Map(product id → score): every product's score for the same words
   for (let len = 1; len <= 5 && i + len <= t.length; len++) {
     if (stop(t[i + len - 1])) break;
+    if (FILLER.has(t[i + len - 1].w) && !t[i + len - 1].pause) continue; // a name never ends on filler ("punch to 50")
     const W = t.slice(i, i + len).map((x) => x.w);
     const scores = new Map();
     for (const form of matcher) {
       const s = formScore(W, form, strict);
       if (s > (scores.get(form.product.id) ?? -Infinity)) scores.set(form.product.id, s);
       const cur = best.get(form.product.id);
-      if (!cur || s > cur.score + 1e-9 || (Math.abs(s - cur.score) <= 1e-9 && i + len > cur.end)) best.set(form.product.id, { product: form.product, score: s, end: i + len });
+      // Nearly as good but covering more of what was said wins ("pumpkin bunch" over "pumpkin").
+      if (!cur || s > cur.score + 0.03 || (s >= cur.score - 0.03 && i + len > cur.end)) best.set(form.product.id, { product: form.product, score: s, end: i + len });
     }
     atEnd.set(i + len, scores);
     if (t[i + len - 1].pause) break; // names don't run across a comma
@@ -325,16 +373,20 @@ function matchAt(t, i, matcher, { strict = false } = {}) {
 /** One best match (nothing else equally close). */
 const isConfident = (m) => Boolean(m) && m.ties.length === 0;
 
-/** Products with a word that sounds like the heard words (suggestions when nothing matched). */
-function suggest(heardWords, products) {
+/** The products that sound closest to the heard words, best first (always some, when any word was heard). */
+function suggest(heardWords, products, n = 3) {
+  const words = heardWords.filter((w) => !FILLER.has(w) && wordNumber(w) === null && !PRICE_WORDS.has(w) && !PER_WORDS.has(w));
+  const tries = [...words];
+  for (let j = 0; j + 1 < words.length; j++) tries.push(words[j] + words[j + 1]); // "be true" → betrue ≈ beetroot
   const scored = new Map();
   for (const form of buildMatcher(products)) {
-    for (const hw of heardWords) for (const k of [...form.key, ...form.product.name.toLowerCase().split(/\s+/)]) {
+    const names = [...form.key, form.key.join("")];
+    for (const hw of tries) for (const k of names) {
       const s = wordSim(hw, k);
-      if (s >= 0.6 && s > (scored.get(form.product.id) || 0)) scored.set(form.product.id, s);
+      if (s > (scored.get(form.product.id) || 0)) scored.set(form.product.id, s);
     }
   }
-  return [...scored.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => id);
+  return [...scored.entries()].filter(([, sc]) => sc >= 0.25).sort((a, b) => b[1] - a[1]).slice(0, n).map(([id]) => id);
 }
 
 // ── Store and address ────────────────────────────────────────────────────
@@ -501,7 +553,7 @@ const ORDINALS = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6,
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 const MONTH_RE = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec";
 const ORD_RE = "(?:\\d{1,2}(?:st|nd|rd|th)?|(?:twenty|thirty)[\\s-]+(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth)";
-const YEAR_RE = "(?:\\d{4}|twenty[\\s-]+twenty(?:[\\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?|two[\\s-]+thousand(?:[\\s-]+and)?[\\s-]+twenty(?:[\\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?)";
+const YEAR_RE = "(?:\\d{4}|20\\s\\d{2}\\b|twenty[\\s-]+twenty(?:[\\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?|two[\\s-]+thousand(?:[\\s-]+and)?[\\s-]+twenty(?:[\\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?)";
 const LEAD_RE = "(?:\\b(?:dated|date|on)\\s+)?(?:the\\s+)?";
 
 function ordinalValue(s) {
@@ -516,6 +568,8 @@ function yearValue(s, fallback) {
   if (!s) return fallback;
   const w = s.toLowerCase().replace(/[\s-]+/g, " ").trim();
   if (/^\d{4}$/.test(w)) return Number(w);
+  const split = /^20 (\d{2})$/.exec(w); // "20 26" → 2026
+  if (split) return 2000 + Number(split[1]);
   const tail = /twenty(?: (\w+))?$/.exec(w);
   return tail ? 2020 + (ONES[tail[1]] || 0) : fallback;
 }
@@ -537,6 +591,7 @@ export function extractDate(text, today = todayISO()) {
     [new RegExp(`${LEAD_RE}(${ORD_RE})\\s+(?:of\\s+)?(${MONTH_RE})\\b(?:\\s*,?\\s*(${YEAR_RE}))?`, "i"), (m) => [ordinalValue(m[1]), monthValue(m[2]), m[3]]],
     [new RegExp(`(?:\\b(?:dated|date|on)\\s+)?\\b(${MONTH_RE})\\s+(?:the\\s+)?(${ORD_RE})\\b(?:\\s*,?\\s*(${YEAR_RE}))?`, "i"), (m) => [ordinalValue(m[2]), monthValue(m[1]), m[3]]],
     [/(?:\b(?:dated|date|on)\s+)?\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})\b/i, (m) => [Number(m[1]), Number(m[2]), m[3].length === 2 ? String(2000 + Number(m[3])) : m[3]]],
+    [/\b(\d{1,2})\s+(\d{1,2})\s+(20\d{2})\b/, (m) => [Number(m[1]), Number(m[2]), m[3]]], // "12 11 2026"
   ];
   for (const [re, read] of patterns) {
     const m = re.exec(text);
@@ -576,7 +631,12 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
   let storeToks = null;
   const addressParts = [];
   let i = 0;
-  const skip = () => { while (t[i] && (CONNECTORS.has(t[i].w) || t[i].w === "of")) i++; };
+  // Connectors and filler between things ("and", "um", "like", "give me", "thank you") — but not words that start an
+  // amount ("a dozen", "one", "to dozen", "for 300").
+  const QTY_START = new Set(["a", "an", "half", "to", "too", "for", "one"]);
+  const skip = () => {
+    while (t[i] && (CONNECTORS.has(t[i].w) || t[i].w === "of" || (FILLER.has(t[i].w) && !QTY_START.has(t[i].w) && wordNumber(t[i].w) === null))) i++;
+  };
   const lineStartsAt = (k) => { const q = readQuantity(t, k); return Boolean(q && (q.unit || matchAt(t, q.end, matcher))); };
   // A number followed by a word is the next line's amount ("… a dozen lemons, 4 juice"), not this line's price.
   const amountStartsAt = (k) => {
@@ -586,10 +646,34 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
       && !CONNECTORS.has(nx.w) && nx.w !== "a" && nx.w !== "an" && !/^(dollars?|cents?)$/.test(nx.w));
   };
 
+  const raw = (a, b) => t.slice(a, b).map((x) => x.raw).join(" ");
+  const priceLeadAt = (k) => (t[k]?.w === "to" || t[k]?.w === "too") && /^\d{2}$/.test(t[k + 1]?.w || ""); // "to 50" = two fifty
+  /** A unit price for `line` at t[i…] (with its "per unit" / "a pound" / "each"). */
+  const applyPrice = (line, price) => {
+    line.price = price.value;
+    line.priceFrom = "said";
+    i = price.end;
+    const per = perMarkerAt(t, i);
+    if (per) {
+      line.pricePer = per.unit || "each";
+      const countable = (u) => !u || u === "each" || u === "dozen"; // dozens and single items convert (12 to a dozen)
+      if (countable(per.unit) && countable(line.unit)) { /* settled below */ }
+      else if (per.unit && !line.unit) line.unit = per.unit;
+      else if (per.unit && line.unit && per.unit !== line.unit && !line.issue) {
+        line.issue = { kind: "price", message: `The price was per ${per.unit === "lb" ? "pound" : per.unit}, but the amount was in ${line.unit === "lb" ? "pounds" : line.unit === "each" ? "items" : line.unit + "s"}.` };
+      }
+      i = per.end;
+    }
+    // Any leftover price words ("per unit" said twice, "each") are part of this line, never a product of their own.
+    while (t[i] && (PER_WORDS.has(t[i].w) || (t[i].w === "a" && t[i + 1] && PER_WORDS.has(t[i + 1].w)))) i++;
+  };
+
   while (i < t.length) {
     skip();
     if (i >= t.length) break;
     const from = i;
+    // Lead-in words before the store ("the order for …", "invoice for …").
+    if (!storeToks && !lines.length && /^(order|invoice|delivery|deliver|for|to|is|this|its|bill|account)$/.test(t[i].w) && !unitAt(t, i + 1) && wordNumber(t[i + 1]?.w || "") === null) { i++; continue; }
     // The store: the name said before the products.
     if (!storeToks) {
       const st = storeAt(t, i, matcher, { first: lines.length === 0 });
@@ -598,15 +682,33 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
     // An address, only from a phrase that clearly is one.
     const addr = addressAt(t, i, matcher);
     if (addr) { addressParts.push(t.slice(addr.start, addr.end)); i = addr.end; continue; }
+    // A price for the line before, said on its own ("…beetroot juice. 315 per unit." / ", at 230" / "$250 each"), or a
+    // lone number after a line that has its amount but no price ("16 green juice, 230,"): that line's price — never a
+    // new line of its own.
+    const prev = lines.at(-1);
+    if (prev && prev.price === null) {
+      const w = t[i].w;
+      let pr = null;
+      if (PRICE_WORDS.has(w) && !(["for", "at"].includes(w) && unitAt(t, i + 1))) pr = readPrice(t, w === "$" ? i : i + 1, { lineStartsAt });
+      else if (wordNumber(w) !== null || priceLeadAt(i)) {
+        const c = readPrice(t, i, { lineStartsAt });
+        const lone = c && prev.qty !== null && !unitAt(t, c.end) && (c.end >= t.length || t[c.end - 1].pause) && !matchAt(t, c.end, matcher);
+        if (c && (perMarkerAt(t, c.end) || lone)) pr = c;
+      }
+      if (pr) { applyPrice(prev, pr); prev.said = `${prev.said} ${raw(from, i)}`.trim(); continue; }
+    }
     // Otherwise: a product line (an amount, a product's name, a price) — or extra words, left out.
     let q = readQuantity(t, i);
     if (q) { i = q.end; skip(); }
     let m = matchAt(t, i, matcher);
     const line = { key: nextKey(), productId: null, name: "", qty: q ? q.qty : null, unit: q ? q.unit : null, price: null, priceFrom: null, pricePer: null, saidAs: "", heard: "", issue: null };
+    // Half of a two-word nickname with no amount ("big …") isn't enough on its own: it becomes a line to fix.
+    if (m && !q && m.score < 0.6 && !m.ties.length) m = null;
     if (m && isConfident(m)) {
       i = m.end;
       line.productId = m.product.id;
       line.name = m.product.name;
+      while (t[i] && /^(bunch|bunches|bundles?|bottles?|pieces?|pcs)$/.test(t[i].w)) i++; // "callaloo bunch", "pumpkin punch bottles"
     } else if (m) {
       // Two products equally close to what was said: the only time it asks.
       line.heard = t.slice(i, m.end).map((x) => x.raw).join(" ");
@@ -620,8 +722,10 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
       const meaningful = words.filter((x) => !FILLER.has(x.w));
       const strayPrice = !words.length && t[i] && PRICE_WORDS.has(t[i].w) && readPrice(t, t[i].w === "$" ? i : i + 1);
       if (!q && !meaningful.length && !strayPrice) { i = Math.max(i, from + 1); continue; }
+      // The store's name said again ("…, Sarah Supermarket, …"): not a product.
+      if (!q && storeToks && words.length && similarity(soundKey(words.map((x) => x.w).join("")), soundKey(storeToks.map((x) => x.w).join(""))) >= 0.8) continue;
       line.heard = words.map((x) => x.raw).join(" ");
-      line.issue = { kind: "product", message: words.length ? `Didn't catch the product (heard “${line.heard}”).` : "Didn't catch the product.", choices: suggest(words.map((x) => x.w), products) };
+      line.issue = { kind: "product", message: "", choices: suggest(words.map((x) => x.w), products) };
       // Said before any product, with no amount: it may have been part of the address — offer that as one tap.
       if (!q && !lines.length && meaningful.length && !meaningful.some((x) => GENERIC.has(x.w))) line.issue.address = titleCase(words);
     }
@@ -634,7 +738,8 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
       const next = after && matchAt(t, after.end, matcher);
       const amountAfter = (k) => { const a = readQuantity(t, k); return Boolean(a && !matchAt(t, a.end, matcher)); };
       const forNext = next && (!line.productId || t[i - 1]?.pause || !amountAfter(next.end));
-      if (after && !forNext && (after.unit || !isConfident(next))) { line.qty = after.qty; line.unit = after.unit; i = after.end; }
+      const isPrice = after && !after.unit && perMarkerAt(t, after.end); // "… 315 per unit" is a price
+      if (after && !forNext && !isPrice && (after.unit || !isConfident(next))) { line.qty = after.qty; line.unit = after.unit; i = after.end; }
     }
     // Unit price for this line: "at 230", "for 300", "$250", "315 per unit", "250 each", "4200 per dozen",
     // "300 a pound" — or a number right after the product that isn't the next product's amount ("… 315, 16 green juice").
@@ -642,28 +747,14 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
     if (t[i] && PRICE_WORDS.has(t[i].w)) {
       price = readPrice(t, t[i].w === "$" ? i : i + 1, { lineStartsAt });
       if (!price && !line.issue) { line.issue = { kind: "price", message: "Didn't catch the price." }; i++; }
-    } else if (t[i] && wordNumber(t[i].w) !== null && (line.productId || line.issue?.kind === "which")) {
+    } else if (t[i] && (wordNumber(t[i].w) !== null || priceLeadAt(i)) && (line.productId || line.issue?.kind === "which" || line.heard)) {
       const cand = readPrice(t, i, { lineStartsAt });
       if (cand && (perMarkerAt(t, cand.end) || cand.end >= t.length || (line.qty !== null && !amountStartsAt(i)))) price = cand;
     }
-    if (price) {
-      line.price = price.value;
-      line.priceFrom = "said";
-      i = price.end;
-      const per = perMarkerAt(t, i);
-      if (per) {
-        line.pricePer = per.unit || "each";
-        const countable = (u) => !u || u === "each" || u === "dozen"; // dozens and single items convert (12 to a dozen)
-        if (countable(per.unit) && countable(line.unit)) { /* settled below */ }
-        else if (per.unit && !line.unit) line.unit = per.unit;
-        else if (per.unit && line.unit && per.unit !== line.unit && !line.issue) {
-          line.issue = { kind: "price", message: `The price was per ${per.unit === "lb" ? "pound" : per.unit}, but the amount was in ${line.unit === "lb" ? "pounds" : line.unit === "each" ? "items" : line.unit + "s"}.` };
-        }
-        i = per.end;
-      }
-    }
-    // Any leftover price words ("per unit" said twice, "each") are part of this line, never a product of their own.
-    while (t[i] && (PER_WORDS.has(t[i].w) || (t[i].w === "a" && t[i + 1] && PER_WORDS.has(t[i + 1].w)))) i++;
+    if (price) applyPrice(line, price);
+    else while (t[i] && (PER_WORDS.has(t[i].w) || (t[i].w === "a" && t[i + 1] && PER_WORDS.has(t[i + 1].w)))) i++;
+    line.said = raw(from, Math.max(i, from + 1)); // exactly what was heard for this line
+    if (line.issue?.kind === "product") line.issue.message = `Didn't catch the product (heard “${line.heard || line.said}”).`;
     lines.push(line);
     if (i === from) i++; // always move on
   }
@@ -708,6 +799,7 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
     if (twin) {
       twin.qty = (twin.qty || 0) + (line.qty || 0);
       twin.saidAs = "";
+      twin.said = `${twin.said} · ${line.said}`;
       if (line.priceFrom === "said") {
         if (twin.priceFrom === "said" && twin.price !== line.price) twin.issue = { kind: "price", message: "Two different prices were said." };
         twin.price = line.price; twin.priceFrom = "said";
@@ -715,6 +807,15 @@ export function parseSpokenInvoice(text, { products = [], stores = [], today = t
       if (twin.price !== null && twin.issue?.kind === "noPrice") twin.issue = null;
     } else merged.push(line);
   }
+
+  // A line whose product wasn't caught always offers products to choose with one tap: the closest by sound, or —
+  // when nothing but an amount was heard — the products said around it, then the ones not on the invoice yet.
+  merged.forEach((l, k) => {
+    if (l.issue?.kind !== "product" || l.issue.choices.length) return;
+    const near = [merged[k + 1], merged[k - 1]].filter((x) => x?.productId).map((x) => x.productId);
+    const onInvoice = new Set(merged.map((x) => x.productId).filter(Boolean));
+    l.issue.choices = [...new Set([...near, ...products.filter((p) => !onInvoice.has(p.id)).map((p) => p.id)])].slice(0, 3);
+  });
 
   // Store (a store used before keeps its spelling) and address (only what was clearly said as one).
   let store = storeToks ? titleCase(storeToks) : "";

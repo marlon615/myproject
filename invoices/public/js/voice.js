@@ -39,12 +39,32 @@ async function onDevicePlan(Ctor) {
   return { lang: langs[0], onDevice: false, downloading: Boolean(downloadable) };
 }
 
+const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * Adds one phrase (its guesses) to the list. Phones sometimes send a phrase twice, or again with more words
+ * (Chrome on Android): the same words again are dropped, a longer repeat replaces the shorter one.
+ */
+export function addPhrase(list, alts) {
+  const said = norm(alts[0]);
+  if (!said) return list;
+  const prev = list.at(-1);
+  if (prev) {
+    const before = norm(prev[0]);
+    if (said === before || before.endsWith(` ${said}`)) return list;
+    if (said.startsWith(`${before} `)) { list[list.length - 1] = alts; return list; }
+  }
+  list.push(alts);
+  return list;
+}
+
 export class Listener {
   /** onText(textSoFar) while listening; onFail(code, textSoFar) if listening can't continue. */
   constructor({ onText = () => {}, onFail = () => {} } = {}) {
     this.onText = onText;
     this.onFail = onFail;
-    this.finals = [];   // each: [alternative1, alternative2, …]
+    this.finals = [];   // phrases heard so far, each: [alternative1, alternative2, …]
+    this.session = [];  // this listening session's phrases, by the browser's result number (a repeat replaces itself)
     this.interim = "";
     this.active = false;
     this.rec = null;
@@ -52,16 +72,33 @@ export class Listener {
     this.done = null;
   }
 
+  /** Every phrase heard so far, in order, without the repeats some phones send. */
+  phrases() {
+    const list = [];
+    for (const alts of this.finals) addPhrase(list, alts);
+    for (const alts of this.session) if (alts) addPhrase(list, alts);
+    return list;
+  }
+
+  /** Exactly what the phone heard (its best guess for each phrase), as one text. */
   text() {
-    return [...this.finals.map((a) => a[0]), this.interim].join(" ").replace(/\s+/g, " ").trim();
+    return [...this.phrases().map((a) => a[0]), this.interim].join(" ").replace(/\s+/g, " ").trim();
   }
 
   /** Transcripts to try: the best guess, then each alternative the recogniser offered for one phrase. */
   candidates() {
-    const base = this.finals.map((a) => a[0]);
+    const phrases = this.phrases();
+    const base = phrases.map((a) => a[0]);
     const out = [base.join(" ")];
-    this.finals.forEach((alts, k) => alts.slice(1, 3).forEach((alt) => { const c = [...base]; c[k] = alt; out.push(c.join(" ")); }));
+    phrases.forEach((alts, k) => alts.slice(1, 3).forEach((alt) => { const c = [...base]; c[k] = alt; out.push(c.join(" ")); }));
     return out.slice(0, 12);
+  }
+
+  /** This session's phrases join the list (the browser starts counting again after a restart). */
+  #commit() {
+    this.finals = this.phrases();
+    this.session = [];
+    if (this.interim.trim()) { addPhrase(this.finals, [this.interim.trim()]); this.interim = ""; }
   }
 
   /**
@@ -102,7 +139,7 @@ export class Listener {
         const r = e.results[k];
         if (r.isFinal) {
           const alts = Array.from({ length: r.length }, (_, a) => r[a].transcript.trim()).filter(Boolean);
-          if (alts.length) this.finals.push(alts);
+          if (alts.length) this.session[k] = alts; // by number: a result the browser sends again replaces itself
         } else interim += r[0].transcript;
       }
       this.interim = interim;
@@ -116,11 +153,11 @@ export class Listener {
       if (wasActive) this.onFail(e.error === "network" ? "offline" : e.error, this.text());
     };
     rec.onend = () => {
+      this.#commit();
       if (this.active && this.restarts < 40) {
         this.restarts++;
         try { rec.start(); return; } catch { /* fall through to finishing */ }
       }
-      if (this.interim) { this.finals.push([this.interim.trim()]); this.interim = ""; }
       this.active = false;
       this.done?.();
     };
@@ -138,7 +175,7 @@ export class Listener {
       const finish = () => {
         if (settled) return;
         settled = true;
-        if (this.interim.trim()) { this.finals.push([this.interim.trim()]); this.interim = ""; }
+        this.#commit();
         resolve({ text: this.text(), candidates: this.candidates(), segments: this.finals.map((alts) => [...alts]) });
       };
       this.done = finish;

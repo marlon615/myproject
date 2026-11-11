@@ -411,9 +411,15 @@ dialog.review::backdrop { background: rgba(10, 12, 9, .5); }
 .review-editor-actions { display: flex; justify-content: space-between; gap: 10px; }
 .review-remove { color: var(--danger); }
 .review-add { margin-top: 10px; width: 100%; border: 1.5px dashed var(--line-strong); }
-.review-heard { margin-top: 14px; color: var(--ink-2); font-size: 14px; }
-.review-heard summary { cursor: pointer; font-weight: 650; min-height: 32px; }
-.review-heard p { margin: 6px 0 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--paper-2); }
+.review-heard { margin: 0 0 12px; padding: 10px 12px 10px 14px; border-radius: var(--radius-sm); background: var(--paper-2); border-left: 4px solid var(--line-strong); color: var(--ink-2); font-size: 14px; }
+.review-heard-label { margin: 0 0 3px; font-size: .74rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.review-heard-text { margin: 0; color: var(--ink); font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
+.review-heard-used { margin: 6px 0 0; font-size: 13.5px; }
+.review-heard-used span { color: var(--ink); }
+.review-heard-guesses { margin-top: 6px; font-size: 13.5px; }
+.review-heard-guesses summary { cursor: pointer; font-weight: 650; min-height: 30px; }
+.review-heard-guesses ul { margin: 2px 0 0; padding-left: 18px; }
+.review-choices-label { align-self: center; font-size: 13px; font-weight: 700; color: var(--ink-2); }
 .review-foot {
   display: grid; gap: 8px; padding: 12px 16px calc(12px + var(--safe-bottom));
   background: var(--paper); border-top: 1px solid var(--line); box-shadow: 0 -6px 18px rgba(25, 28, 22, .06);

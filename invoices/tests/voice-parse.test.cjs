@@ -161,6 +161,75 @@
   b = bestParseSegments([["Sarah Supermarket"], ["two dozen beetroot"], ["three blorps", "three blorbs"], ["one dozen cucumber"]], ctx);
   check(b.lines.length === 3 && b.lines[1].issue?.kind === "product" && b.lines[1].qty === 3, "a phrase no guess can match still stays, highlighted", b.lines.map(brief).join(" / "));
 
+  // ── Real, messy speech, as phones actually write it ──────────────────────────────────────────────────────────
+  // No punctuation, filler, prices written as times ("3:15"), split numbers ("20 4"), mishearings ("beat route",
+  // "bee true", "grin juice", "barmy", "kalaloo", "juicy fi"), the year as "20 26"…  Expected: every product matched
+  // (only a true tie like "bammy" alone asks, with both as one-tap choices), every amount and price on its line.
+  const { DEFAULT_PRODUCTS: DP, defaultProductId: dpid, qtyWithUnit, money } = await import("../public/js/util.js");
+  const plain = DP.map((name, k) => ({ id: dpid(k), name }));
+  const nameOf = (id) => plain.find((p) => p.id === id)?.name;
+  const show = (l) => (l.productId ? l.name : `?(${(l.issue?.choices || []).map(nameOf).join("/")})`) + ` ${l.qty === null ? "?" : qtyWithUnit(l.qty, l.unit)}` + (l.price === null ? "" : ` @${l.price}`);
+  const MESSY = [
+    ["sarah supermarket 24 beat root juice at 3:15 per unit 16 greens juice 2:30 per unit 12 pumpkin punch to 50 per unit",
+      "Sarah Supermarket", "Beetroot Juice 24 @315 | Green Juice 16 @230 | Pumpkin Punch 12 @250"],
+    ["uh Sarah's supermarket today um two dozen beetroots one dozen of the cucumbers and thirteen green juice at 300 dollars each please",
+      "Sarah's Supermarket", "Beetroot Juice 24 | Cucumber Juice 12 | Green Juice 13 @300"],
+    ["Sarah supermarket. Twelfth of the 11th 20 26. 14 Wellington Street. 24 beet route juice, $315 per unit. 16 green juice, $230 per unit. 12 pumpkin punch, $250 per unit.",
+      "Sarah Supermarket", "Beetroot Juice 24 @315 | Green Juice 16 @230 | Pumpkin Punch 12 @250"],
+    ["hope store 2 dozen large bammies 1 dozen mini bami 3 dozen barmy and 6 calaloo",
+      "Hope Store", "Large Bammy 24 | Mini Bammy 12 | ?(Mini Bammy/Large Bammy) 36 | Shredded Callaloo 6"],
+    ["corner shop 10 pound okra at 250 a pound 5 pounds of hot peppers 400 a pound six bags of kalaloo 2 bag of limes",
+      "Corner Shop", "Okra 10 lb @250 | Hot Pepper 5 lb @400 | Shredded Callaloo 6 bags | Limes 2 bags"],
+    ["rose hall grocery twenty 4 cucumber juice 20 4 beetroot 315 each 2 dozen limes 1 dozen lemons",
+      "Rose Hall Grocery", "Cucumber Juice 24 | Beetroot Juice 24 @315 | Limes 24 | Lemons 12"],
+    ["mega mart three juicy fi grape six juicify fruit punch 4 grapefruits two lbs of okra",
+      "Mega Mart", "Juicify Drink Grape 3 | Juicify Drink Fruit Punch 6 | Grapefruit 4 | Okra 2 lb"],
+    ["Sarah Supermarket 24 Beetroot Juice 315 per unit 16 Green Juice 230 per unit 12 Pumpkin Punch 250 per unit",
+      "Sarah Supermarket", "Beetroot Juice 24 @315 | Green Juice 16 @230 | Pumpkin Punch 12 @250"],
+    ["general foods yeah so give me like 24 of the beetroot juice and um 16 green juice yeah at 230 and a dozen cucumber",
+      "General Foods", "Beetroot Juice 24 | Green Juice 16 @230 | Cucumber Juice 12"],
+    ["sarah supermarket 2 doz beetroot 1 doz cucumbers 5 doz large bammy 50 lb okra at 2:50",
+      "Sarah Supermarket", "Beetroot Juice 24 | Cucumber Juice 12 | Large Bammy 60 | Okra 50 lb @250"],
+    ["best foods twenty-four beet juice three fifteen per unit sixteen green juices two thirty per unit twelve pumpkin punches two fifty per unit",
+      "Best Foods", "Beetroot Juice 24 @315 | Green Juice 16 @230 | Pumpkin Punch 12 @250"],
+    ["Sarah supermarket 24 bee true juice 315 per unit 16 grin juice 230 per unit 12 pumpkin bunch 250 per unit",
+      "Sarah Supermarket", "Beetroot Juice 24 @315 | Green Juice 16 @230 | Pumpkin Punch 12 @250"],
+    ["sarah's supermarket 26 cucumber 20 beetroot for 300 each 4 okra 2 bammy",
+      "Sarah's Supermarket", "Cucumber Juice 26 | Beetroot Juice 20 @300 | Okra 4 lb | ?(Mini Bammy/Large Bammy) 2"],
+    ["the order for Sarah supermarket is 24 beetroot juice at three fifteen and sixteen green juice at two thirty and twelve pumpkin punch at two fifty thank you",
+      "Sarah Supermarket", "Beetroot Juice 24 @315 | Green Juice 16 @230 | Pumpkin Punch 12 @250"],
+    ["Sarah supermarket 24 beetroot juice 315 per unit 16 green juice 230 per unit 12 pumpkin punch 250 per unit 14 Wellington Street Brownstone",
+      "Sarah Supermarket", "Beetroot Juice 24 @315 | Green Juice 16 @230 | Pumpkin Punch 12 @250"],
+  ];
+  const report = ["# Messy speech: what the phone wrote → what the review screen shows", ""];
+  MESSY.forEach(([said, wantStore, want], k) => {
+    const x = parseSpokenInvoice(said, { products: plain, today: "2026-11-11" });
+    const got = x.lines.map(show).join(" | ");
+    check(x.store === wantStore && got === want, `messy ${k + 1}: ${said.slice(0, 60)}…`, got === want ? "" : `${x.store} | ${got}`);
+    check(x.lines.every((l) => l.productId || (l.issue?.choices || []).length > 0), `messy ${k + 1}: every unclear line offers a product to tap`);
+    report.push(`${k + 1}. **Heard:** ${said}`, `   **Store:** ${x.store}${x.address ? ` · **Address:** ${x.address}` : ""}${x.date ? ` · **Date:** ${x.date}` : ""}`,
+      `   **Lines:** ${x.lines.map((l) => (l.productId ? `${l.name} ${qtyWithUnit(l.qty, l.unit)}${l.price === null ? "" : ` × ${money(l.price)}`}` : `Mini/Large? “${l.heard}” ${qtyWithUnit(l.qty, l.unit)} (tap Mini Bammy or Large Bammy)`)).join("; ")}`, "");
+  });
+  r = parse("Sarah supermarket. Twelfth of the 11th 20 26. 14 Wellington Street. 24 beet route juice, $315 per unit.");
+  check(r.date === "2026-11-12" && r.address === "14 Wellington Street", "'20 26' after a date is the year, not two amounts", `${r.date} | ${r.address}`);
+  require("fs").writeFileSync(require("path").join(__dirname, "output", "voice-messy-results.md"), report.join("\n"));
+
+  // Loose matching never turns everyday words into a product.
+  for (const w of ["money", "time", "line", "paper", "cream", "many", "honey", "grain", "big up", "street", "lunch", "fine", "my friend"]) {
+    const x = parseSpokenInvoice(`Hope Store, 2 okra, ${w}, 3 limes`, { products: plain });
+    check(x.lines.filter((l) => l.productId).map((l) => l.name).join(",") === "Okra,Limes", `'${w}' is never taken as a product`, x.lines.map(show).join(" | "));
+  }
+  check(parseSpokenInvoice("Hope Store, 2 bunches of callaloo, 3 big", { products: plain }).lines.map(show).join(" | ") === "Shredded Callaloo 2 | Large Bammy 3", "'bunches' count items; one distinctive word with an amount is enough");
+  // A quantity heard with no product never stands alone without a suggestion.
+  r = parseSpokenInvoice("Hope Store, 2 okra, 7, 3 limes", { products: plain });
+  check(r.lines.every((l) => l.productId || l.issue?.choices?.length), "an amount with no product still offers products to tap", r.lines.map(show).join(" | "));
+
+  // The phone sending a phrase twice, or again with more words (Chrome on Android), never doubles anything.
+  const { addPhrase } = await import("../public/js/voice.js");
+  const phrases = [];
+  for (const a of [["Sarah Supermarket"], ["Sarah Supermarket 24 beetroot"], ["Sarah Supermarket 24 beetroot juice 315 per unit"], ["16 green juice"], ["16 green juice"], ["green juice"]]) addPhrase(phrases, a);
+  check(JSON.stringify(phrases.map((a) => a[0])) === JSON.stringify(["Sarah Supermarket 24 beetroot juice 315 per unit", "16 green juice"]), "repeated phrases from the phone are kept once", JSON.stringify(phrases.map((a) => a[0])));
+
   // Dates: set the invoice date, and stay out of the address.
   r = parse("Sarah Supermarket, 12th of the 11th 2026, 14 Wellington Street, Brownstone, 24 beetroot juice 315 per unit");
   check(r.date === "2026-11-12" && r.address === "14 Wellington Street, Brownstone" && r.store === "Sarah Supermarket", "'12th of the 11th 2026' sets the date and stays out of the address", `${r.date} | ${r.store} | ${r.address}`);

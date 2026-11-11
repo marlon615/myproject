@@ -111,7 +111,7 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
       const p = line.productId ? byId.get(line.productId) : null;
       const cls = blocking(line) ? " needs-fix" : "";
       const li = h("li", { class: `review-line${cls}${openKey === line.key ? " is-open" : ""}`, dataset: { key: line.key } });
-      const name = p ? p.name : line.heard ? `“${line.heard}”` : "Which product?";
+      const name = p ? p.name : line.heard ? `“${line.heard}”` : line.said ? `“${line.said}”` : "Which product?";
       const said = line.saidAs ? ` (${line.saidAs})` : "";
       const calc = `${line.qty === null ? "How many?" : qtyWithUnit(line.qty, line.unit) + said} × ${line.price === null ? "no price" : money(line.price)}`;
       li.append(h("button", { type: "button", class: "review-line-main", "aria-expanded": String(openKey === line.key), onclick: () => { openKey = openKey === line.key ? null : line.key; render(); } },
@@ -124,6 +124,7 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
       const asAddress = line.issue?.kind === "product" && line.issue.address;
       if ((choices.length || asAddress) && openKey !== line.key) {
         li.append(h("div", { class: "review-choices", role: "group", "aria-label": "Fix this line" },
+          line.issue?.kind === "product" && choices.length ? h("span", { class: "review-choices-label" }, "Closest:") : null,
           choices.map((id) => h("button", { type: "button", class: "review-chip", onclick: () => choose(line, id) }, byId.get(id).name)),
           asAddress ? h("button", { type: "button", class: "review-chip review-chip-address", onclick: () => useAsAddress(line) }, `Use “${asAddress}” as the address`) : null));
       }
@@ -156,14 +157,26 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
     });
     store.addEventListener("input", render);
 
-    const heard = parsed.transcript
-      ? h("details", { class: "review-heard" }, h("summary", {}, "What I heard"), h("p", {}, parsed.transcript))
-      : null;
+    // Exactly what the phone heard, always in view, so a mishearing is easy to spot.
+    const rawText = String(parsed.raw ?? parsed.transcript ?? "").trim();
+    const simple = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const others = (parsed.guesses || []).filter((alts) => alts.length > 1);
+    const heard = rawText ? h("section", { class: "review-heard", "aria-label": "What your phone heard" },
+      h("p", { class: "review-heard-label" }, "What your phone heard"),
+      h("p", { class: "review-heard-text" }, rawText),
+      parsed.transcript && simple(parsed.transcript) !== simple(rawText)
+        ? h("p", { class: "review-heard-used" }, "Read using the phone's other guesses as: ", h("span", {}, parsed.transcript))
+        : null,
+      others.length
+        ? h("details", { class: "review-heard-guesses" }, h("summary", {}, "The phone's other guesses"),
+          h("ul", {}, others.map((alts) => h("li", {}, alts.map((a, k) => (k ? ` · ${a}` : a)).join("")))))
+        : null) : null;
     dlg.append(
       h("header", { class: "review-head" },
         h("h2", { id: "review-title" }, "Check before the customer signs"),
         h("p", {}, "Tap any line to change it.")),
       h("div", { class: "review-body" },
+        heard,
         h("section", { class: "review-card" },
           h("label", { class: "review-field" }, h("span", { class: "review-field-label" }, "Store"), store),
           h("div", { class: "review-field" },
@@ -176,8 +189,7 @@ export function reviewSpokenInvoice(parsed, { products, onSpeakAgain, currentDat
           lines.push(line);
           openKey = line.key;
           render();
-        } }, "+ Add a line"),
-        heard),
+        } }, "+ Add a line")),
       h("footer", { class: "review-foot" },
         h("div", { class: "review-total" }, h("span", { class: "review-total-label" }, "Total", totalCount), totalAmt),
         apply,
