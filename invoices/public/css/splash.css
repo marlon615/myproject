@@ -1,12 +1,11 @@
-/* Startup splash: the "Marlon" wordmark (custom flourished "M", clean "arlon") large and centered, with
-   "Delivery Invoices" small beneath it. Always dark, whatever the phone's light/dark setting.
+/* Startup splash: only the "Marlon" wordmark, large and centered, on its own.
+   Always dark, whatever the phone's light/dark setting.
    Shown for five seconds from launch, then it fades smoothly into the main page (timing in js/splash.js).
    Load after base.css. Markup lives at the top of <body> in index.html. */
 
 #splash {
   --splash-bg: #0f1411;      /* deep green-black */
   --splash-ink: #f3efe4;     /* warm ivory for the name */
-  --splash-accent: #6cc495;  /* soft green for "Delivery Invoices" (8.8:1 contrast) */
 }
 
 /* Paint the very first frame dark too, and stop the page behind from scrolling while the splash shows. */
@@ -68,15 +67,6 @@ html.splash-active body { overflow: hidden; }
   letter-spacing: -.02em;
 }
 
-.splash-tag {
-  margin: 16px 0 0;
-  font-family: var(--font);
-  font-weight: 600;
-  font-size: 16px;
-  line-height: 1.2;
-  letter-spacing: .08em;
-  color: var(--splash-accent);
-}
 
 /* Reduced motion: keep a short, gentle cross-fade (opacity only, no movement).
    The id selector outranks base.css's global "transition: none !important". */

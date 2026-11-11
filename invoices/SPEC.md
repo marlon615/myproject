@@ -315,17 +315,17 @@ export class SignaturePad {
 ```
 
 ### Startup splash (owner request, LEAD owns the files)
-On every launch of the main app (`index.html` only, never the viewer) a splash shows **"Marlon"** large and centered with a small line **"Delivery Invoices"** beneath it, for **five seconds**, then fades smoothly (0.8 s) into the main page.
+On every launch of the main app (`index.html` only, never the viewer) a splash shows **only "Marlon"**, large and centered on its own (owner request: no line underneath). It stays for **five seconds**, then fades smoothly (0.8 s) into the main page.
 - The splash is **always dark** (#0f1411), never white, whatever the phone's light/dark setting.
 - **A tap anywhere skips it.** Any key press does too. It fades straight to the main page and never presses what's underneath, because the splash consumes the whole tap.
-- The name is the inline SVG wordmark (see "Brand mark" below): a refined serif M, with "Delivery Invoices" in green beneath it.
+- The name is the inline SVG wordmark (see "Brand mark" below), a refined serif M. The splash shows nothing else; the brand bar and receipts still carry "Delivery Invoices".
 - Files: `css/splash.css` and `js/splash.js` (a classic deferred script, independent of the app modules). Both must be in the service-worker precache.
 - index.html wiring:
   - `<html lang="en" class="splash-active">`.
   - `<link rel="stylesheet" href="/css/splash.css">` after base.css.
   - `<script src="/js/splash.js" defer></script>` before the app module.
   - This as the **first child of `<body>`**:
-    `<div id="splash" aria-hidden="true"><div class="splash-mark"><p class="splash-name">Marlon</p><p class="splash-tag">Delivery Invoices</p></div></div>`
+    `<div id="splash" aria-hidden="true"><div class="splash-mark"><p class="splash-name"><!-- wordmark --></p></div></div>`
 - app.js: after the first screen has rendered, run `window.__appReady = true; document.dispatchEvent(new Event("app:ready"));`. The splash never fades into a blank page; it waits for this signal, capped at 10 s in total.
 - Tests: automated browsers (`navigator.webdriver`) skip the splash so other tests aren't slowed down. Load `/?splash` to force it in a splash test.
 

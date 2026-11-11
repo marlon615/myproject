@@ -1,4 +1,4 @@
-/** Startup splash: "Marlon" + "Delivery Invoices", five seconds, smooth fade, never into a blank page. */
+/** Startup splash: only "Marlon", five seconds, smooth fade, never into a blank page. */
 const { chromium } = require("playwright");
 const { start } = require("./serve.cjs");
 const path = require("path");
@@ -43,9 +43,9 @@ async function state(page) {
         const svg = n && n.querySelector("svg");
         return svg ? svg.getAttribute("aria-label") : n && n.textContent.trim();
       });
-      const tag = (await page.locator("#splash .splash-tag").innerText()).trim();
       check(name === "Marlon", "name reads 'Marlon'", JSON.stringify(name));
-      check(tag === "Delivery Invoices", "tagline is exactly 'Delivery Invoices'", JSON.stringify(tag));
+      const onlyText = await page.evaluate(() => document.getElementById("splash").textContent.replace(/\s+/g, " ").trim());
+      check(await page.locator("#splash .splash-tag").count() === 0 && onlyText === "Marlon", "the splash shows only 'Marlon' (no line underneath)", JSON.stringify(onlyText));
       const theme = await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content);
       check(theme === "#0f1411", "status bar colour is dark during the splash", theme);
       const box = await page.locator(".splash-name").boundingBox();
