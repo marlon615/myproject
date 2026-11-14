@@ -1,27 +1,19 @@
 /*
- * Opening animation. The splash (#splash in index.html, styles in css/splash.css): the screen starts dark, a burst
- * of gold and white sparkles flies out from the centre to the edges and drifts down twinkling (drawn here on a
- * canvas, at most 160 sparks, stopped when the splash goes); as it bursts, the whole word "Marlon" appears with a
- * glow and a gentle scale-up, then a shimmer of light sweeps across it; at about two seconds it fades into the app.
- * Reduced motion: no sparkles or movement, just the word fading in.
- *
- * - A plain (non-module) deferred script, so the splash still leaves even if the app's modules fail to load.
- * - The time is counted from navigation start (performance.now()), and also waits for the last letter's animation.
- * - If the app hasn't drawn its first screen by then (it sets window.__appReady and fires "app:ready"),
- *   the splash waits for it, but never longer than MAX_MS in total, so you don't fade into a blank page.
- * - While the splash shows, the page behind it is inert (no accidental taps or keyboard focus), and the
- *   browser/status-bar colour (meta theme-color) matches the dark splash; both are restored afterwards.
- * - A tap anywhere (or any key) skips the wait and fades straight to the main page. It listens for "click",
- *   which fires when the finger lifts, so the tap is fully used up by the splash and can't fall through
- *   and press something on the page underneath.
- * - Automated browsers (navigator.webdriver) skip it so tests run fast; add "?splash" to the URL to force it.
- * - Right after the app reloads itself into a new version (sessionStorage "skipSplashOnce"), it isn't shown again.
+ * Opening animation (#splash in index.html, styles in css/splash.css), about three seconds:
+ *   0.0 s  the screen is completely black — no name.
+ *   0.3 s  a cannon blast: a white-gold flash, the screen jolts, and hundreds of gold confetti pieces and sparkles
+ *          shoot out of three cannons (bottom left, bottom right, centre) across the whole screen.
+ *   ~1.5 s the blast has settled (confetti drifting down, sparkles twinkling) and "Marlon" appears, whole, at once.
+ *   ~2.5 s after holding the name for a second, the screen fades into the app (0.5 s).
+ * "Marlon" is never visible before the blast has settled. Reduced motion: no blast — black, then the name fades in,
+ * then the app. Drawn on a canvas, all in the page, so it works offline; stopped as soon as the splash goes.
  */
 (() => {
-  const SPLASH_BG = "#0f1411"; // must match --splash-bg in splash.css
-  const SHOW_MS = 1550;  // fully visible until this long after launch, then the 0.5 s fade: ~2 s in all
-  const BURST_MS = 150;  // the sparkles burst (and the word appears) this long after the splash starts
-  const SHIMMER_MS = 700; // the shimmer sweeps across the word this long after the burst
+  const SPLASH_BG = "#000000"; // must match --splash-bg in splash.css
+  const BLAST_MS = 300;  // black, then the cannon blast this long after the splash starts
+  const WORD_MS = 1500;  // the blast has settled: "Marlon" appears (never before this)
+  const HOLD_MS = 1000;  // the name is held this long before the fade
+  const SHOW_MS = WORD_MS + HOLD_MS; // then the 0.5 s fade: about three seconds in all
   const FADE_MS = 500;   // must match the transition in splash.css
   const MAX_MS = 10000;  // never hold the app back longer than this
   const TAP_GRACE_MS = 1500; // after a tap, wait at most this long for a slow app before fading anyway
@@ -63,15 +55,11 @@
   let leaving = false;
 
   const elapsed = performance.now();
-  setTimeout(() => { timeUp = true; maybeLeave(); }, Math.max(0, SHOW_MS - elapsed));
+  setTimeout(() => { timeUp = true; maybeLeave(); }, Math.max(0, (matchMedia("(prefers-reduced-motion: reduce)").matches ? 1400 : SHOW_MS) - elapsed));
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var stopSparks = reduced ? () => {} : sparkles(splash);
-  setTimeout(() => {
-    splash.classList.add("is-burst");
-    setTimeout(() => {
-      splash.classList.add("is-shimmer");
-    }, SHIMMER_MS);
-  }, reduced ? 0 : BURST_MS);
+  var stopSparks = reduced ? () => {} : blast(splash);
+  // The name appears whole once the blast has settled (with reduced motion: after a moment of black).
+  setTimeout(() => splash.classList.add("is-word"), Math.max(0, (reduced ? 400 : WORD_MS) - elapsed));
   setTimeout(() => { appReady = true; maybeLeave(); }, Math.max(0, MAX_MS - elapsed));
   document.addEventListener("app:ready", () => { appReady = true; maybeLeave(); }, { once: true });
 
@@ -108,8 +96,8 @@
     document.dispatchEvent(new Event("splash:done"));
   }
 
-  /** The burst: gold and white sparks shot out from the centre, slowing, then falling and twinkling. */
-  function sparkles(host) {
+  /** The cannon blast: gold confetti and sparkles fired across the whole screen, then falling and twinkling. */
+  function blast(host) {
     const canvas = document.createElement("canvas");
     canvas.className = "splash-sparks";
     canvas.setAttribute("aria-hidden", "true");
@@ -120,46 +108,69 @@
     let w = 0, h = 0;
     const size = () => { w = host.clientWidth; h = host.clientHeight; canvas.width = w * dpr; canvas.height = h * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
     size();
-    const COLORS = ["#ffd56b", "#f7c548", "#ffe9a8", "#ffffff", "#fff4d6", "#e8b04a"];
-    const reach = Math.hypot(w, h) / 2;
-    const sparks = Array.from({ length: Math.min(160, Math.round(w * h / 2400)) }, (_, i) => {
-      const angle = Math.random() * Math.PI * 2, speed = reach * (0.9 + Math.random() * 1.6); // px per second
-      return { x: 0, y: 0, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - reach * 0.25, r: 1 + Math.random() * 2.6,
-        color: COLORS[i % COLORS.length], star: Math.random() < 0.35, spin: Math.random() * 6, twinkle: 4 + Math.random() * 8, phase: Math.random() * 6 };
-    });
-    let start = 0, last = 0, raf = 0, stopped = false;
+    const GOLD = ["#ffd700", "#ffc93c", "#f5b81c", "#ffe27a", "#e6a817", "#fff1b8", "#ffffff", "#fff7dc", "#d4a017", "#ffdf6e"];
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    const big = Math.max(w, h);
+    const pieces = [];
+    // Three cannons: bottom left and bottom right firing up across the screen, and one bursting from the centre.
+    const fire = (x, y, angle, spread, count, speed) => {
+      for (let i = 0; i < count; i++) {
+        const a = angle + rnd(-spread, spread), v = speed * rnd(0.55, 1.25);
+        const confetti = Math.random() < 0.62;
+        pieces.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, confetti,
+          size: confetti ? rnd(7, 15) : rnd(1.6, 4.2), color: GOLD[(Math.random() * GOLD.length) | 0],
+          rot: rnd(0, 6.28), spin: rnd(-14, 14), flip: rnd(4, 12), phase: rnd(0, 6.28), twinkle: rnd(6, 16) });
+      }
+    };
+    let fired = false, start = 0, last = 0, raf = 0, stopped = false;
     const frame = (now) => {
       if (stopped) return;
-      if (!start) { start = last = now; }
+      if (!start) start = last = now;
       const t = (now - start) / 1000, dt = Math.min(0.05, (now - last) / 1000);
       last = now;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
-      const burst = (now - start) >= BURST_MS;
-      if (burst) {
-        // A quick flash at the centre as it bursts.
-        const ft = (now - start - BURST_MS) / 1000;
-        if (ft < 0.35) {
-          const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, reach * 0.55);
-          g.addColorStop(0, `rgba(255, 236, 180, ${0.55 * (1 - ft / 0.35)})`);
-          g.addColorStop(1, "rgba(255, 236, 180, 0)");
-          ctx.fillStyle = g;
-          ctx.fillRect(0, 0, w, h);
+      const since = (now - start - BLAST_MS) / 1000; // seconds since the blast
+      if (since >= 0) {
+        if (!fired) {
+          fired = true;
+          const n = Math.min(520, Math.round(w * h / 700));
+          fire(0, h, -Math.PI / 3.2, 0.42, n * 0.35, big * 2.6);
+          fire(w, h, -Math.PI + Math.PI / 3.2, 0.42, n * 0.35, big * 2.6);
+          fire(w / 2, h / 2, 0, Math.PI, n * 0.3, big * 1.9);
         }
-        for (const p of sparks) {
-          const drag = Math.pow(0.12, dt);               // fast out, then slowing (air resistance)
-          p.vx *= drag; p.vy = p.vy * drag + 260 * dt;    // ...and gravity takes over: they drift down
-          p.x += p.vx * dt; p.y += p.vy * dt;
-          const tw = 0.55 + 0.45 * Math.sin(t * p.twinkle + p.phase); // twinkle
-          ctx.globalAlpha = Math.max(0, Math.min(1, tw));
+        // The jolt: the whole blast shakes for a moment.
+        if (since < 0.3) { const k = (1 - since / 0.3) * 9; ctx.translate(rnd(-k, k), rnd(-k, k)); }
+        // The flash.
+        if (since < 0.4) {
+          const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, big * 0.8);
+          const o = 0.85 * (1 - since / 0.4);
+          g.addColorStop(0, `rgba(255, 250, 225, ${o})`);
+          g.addColorStop(0.45, `rgba(255, 205, 80, ${o * 0.55})`);
+          g.addColorStop(1, "rgba(255, 190, 60, 0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(-20, -20, w + 40, h + 40);
+        }
+        const drag = Math.pow(0.08, dt);
+        for (const p of pieces) {
+          p.vx *= drag; p.vy = p.vy * drag + (p.confetti ? 520 : 300) * dt; // fast out, then gravity: falling
+          if (p.confetti) { p.vx += Math.sin(t * 3 + p.phase) * 18 * dt; p.vy = Math.min(p.vy, 170); } // flutter down
+          p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.spin * dt;
+          if (p.y > h + 30 || p.x < -60 || p.x > w + 60) continue;
           ctx.fillStyle = p.color;
-          const x = w / 2 + p.x, y = h / 2 + p.y;
-          if (p.star) {                                   // a little four-pointed glint
-            const r = p.r * 2.2, a = p.spin + t * 3;
-            ctx.beginPath();
-            for (let k = 0; k < 8; k++) { const rr = k % 2 ? r * 0.28 : r; const aa = a + k * Math.PI / 4; ctx.lineTo(x + Math.cos(aa) * rr, y + Math.sin(aa) * rr); }
-            ctx.closePath(); ctx.fill();
+          if (p.confetti) {
+            ctx.save();
+            ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+            ctx.scale(1, Math.abs(Math.cos(t * p.flip + p.phase)) * 0.9 + 0.1); // tumbling paper
+            ctx.globalAlpha = 0.95;
+            ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+            ctx.restore();
           } else {
-            ctx.beginPath(); ctx.arc(x, y, p.r, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = Math.max(0.15, 0.6 + 0.4 * Math.sin(t * p.twinkle + p.phase)); // twinkle
+            const r = p.size * 2.4, a = p.rot;
+            ctx.beginPath();
+            for (let k = 0; k < 8; k++) { const rr = k % 2 ? r * 0.25 : r; const aa = a + k * Math.PI / 4; ctx.lineTo(p.x + Math.cos(aa) * rr, p.y + Math.sin(aa) * rr); }
+            ctx.closePath(); ctx.fill();
           }
         }
         ctx.globalAlpha = 1;

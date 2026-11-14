@@ -1,16 +1,14 @@
-/* Opening animation: dark screen, then a burst of gold and white sparkles from the centre (drawn on a canvas by
-   js/splash.js) flies out to the edges, then drifts down twinkling. As it bursts, the whole word "Marlon" appears
-   at once with a soft glow and a gentle scale-up, then a shimmer of light sweeps across it; at about two seconds
-   the screen fades into the app. Every time the app opens; all in the page (no downloads), so it works offline.
-   Load after base.css. Markup lives at the top of <body> in index.html. */
+/* Opening animation: a completely black screen, a cannon blast of gold confetti and sparkles across the whole
+   screen (drawn on a canvas by js/splash.js), then — once it has settled — "Marlon", whole, held for a second,
+   then the fade into the app. "Marlon" is hidden until js/splash.js adds .is-word. Offline: all in the page. */
 
 #splash {
-  --splash-bg: #0f1411;      /* deep green-black */
+  --splash-bg: #000000;      /* completely black */
   --splash-ink: #f3efe4;     /* warm ivory for the name */
 }
 
 /* Paint the very first frame dark too, and stop the page behind from scrolling while the splash shows. */
-html.splash-active { background: #0f1411; }
+html.splash-active { background: #000000; }
 html.splash-active,
 html.splash-active body { overflow: hidden; }
 
@@ -63,7 +61,7 @@ html.splash-active body { overflow: hidden; }
   opacity: 0;
 }
 /* The burst hits: the whole word appears at once, glowing, growing gently. */
-#splash.is-burst .splash-name svg { animation: splash-word 1.3s cubic-bezier(.22, 1, .36, 1) both; }
+#splash.is-word .splash-name svg { animation: splash-word .45s cubic-bezier(.22, 1, .36, 1) both; }
 /* The shimmer: a band of gold-white light, skewed, sweeping left to right inside the letters. */
 .splash-shine { opacity: 0; transform-box: view-box; transform: translateX(0) skewX(-18deg); }
 #splash.is-shimmer .splash-shine { animation: splash-shine .75s cubic-bezier(.4, 0, .2, 1) both; }
@@ -75,9 +73,9 @@ html.splash-active body { overflow: hidden; }
 .splash-sparks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .splash-mark { position: relative; z-index: 1; }
 @keyframes splash-word {
-  0%   { opacity: 0; transform: scale(.86); filter: drop-shadow(0 0 0 rgba(255, 214, 120, 0)); }
-  25%  { opacity: 1; filter: drop-shadow(0 0 22px rgba(255, 214, 120, .55)); }
-  100% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 8px rgba(255, 226, 160, .22)); }
+  0%   { opacity: 0; transform: scale(.9); filter: drop-shadow(0 0 0 rgba(255, 214, 120, 0)); }
+  40%  { opacity: 1; filter: drop-shadow(0 0 26px rgba(255, 214, 120, .6)); }
+  100% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 12px rgba(255, 214, 120, .3)); }
 }
 
 /* Fallback if the wordmark is plain text. */
@@ -93,7 +91,8 @@ html.splash-active body { overflow: hidden; }
 /* Reduced motion: no sparkles, no movement — the word simply fades in, then a short fade into the app. */
 @media (prefers-reduced-motion: reduce) {
   #splash { transition: opacity .25s linear, visibility 0s linear .25s !important; }
-  #splash .splash-name svg { animation: splash-fade .5s ease .1s both !important; }
+  #splash .splash-name svg { animation: none !important; }
+  #splash.is-word .splash-name svg { animation: splash-fade .5s ease both !important; }
   #splash .splash-sparks, #splash .splash-shine { display: none !important; }
   #splash.is-leaving .splash-mark { transform: translateY(-3vh) !important; transition: none !important; }
 }
