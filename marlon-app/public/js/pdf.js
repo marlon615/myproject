@@ -20,11 +20,14 @@ function canvasJpeg(canvas, quality) {
   });
 }
 
-/** → Blob (application/pdf) */
-export async function canvasToPdfBlob(canvas, { widthMm = 58, title = "Invoice" } = {}) {
-  const jpeg = new Uint8Array(await (await canvasJpeg(canvas, 0.92)).arrayBuffer());
-  const w = +(widthMm * 72 / 25.4).toFixed(2);
-  const h = +(w * canvas.height / canvas.width).toFixed(2);
+/**
+ * → Blob (application/pdf). The page is `widthMm` wide and as tall as the picture (a receipt), or exactly
+ * `page` = { w, h } points (e.g. US Letter 612 × 792) with the picture filling it.
+ */
+export async function canvasToPdfBlob(canvas, { widthMm = 58, page = null, title = "Invoice" } = {}) {
+  const jpeg = new Uint8Array(await (await canvasJpeg(canvas, 0.9)).arrayBuffer());
+  const w = page ? page.w : +(widthMm * 72 / 25.4).toFixed(2);
+  const h = page ? page.h : +(w * canvas.height / canvas.width).toFixed(2);
   const content = `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\n`;
 
   const parts = [];

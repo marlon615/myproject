@@ -44,7 +44,7 @@ const SOFT = "#3a3a3a";
  * Renders the receipt on a white canvas. paper 58 | 80 → 384 | 576 dots wide (203 dpi printers), × scale.
  * → HTMLCanvasElement
  */
-export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQr = true } = {}) {
+export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQr = true, mono = false } = {}) {
   const m = receiptModel(inv);
   const W = (paper === 80 ? 576 : 384) * scale;
   const pad = Math.round(W * 0.06);
@@ -176,7 +176,7 @@ export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQ
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = Math.ceil(y);
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", mono ? { willReadFrequently: true } : undefined);
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.textBaseline = "alphabetic";
@@ -215,5 +215,17 @@ export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQ
       }
     }
   }
+  if (mono) blackAndWhite(ctx, canvas.width, canvas.height);
   return canvas;
+}
+
+/** Thermal printers print dots or no dots: every pixel becomes pure black or pure white (no faint grey). */
+function blackAndWhite(ctx, w, h) {
+  const img = ctx.getImageData(0, 0, w, h), d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const v = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114 < 170 ? 0 : 255;
+    d[i] = d[i + 1] = d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
 }

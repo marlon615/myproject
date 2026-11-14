@@ -163,6 +163,7 @@ const NO_SPEECH = `Object.defineProperty(window, "SpeechRecognition", { value: u
     const c2 = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
       userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148" });
     await c2.addInitScript(NO_SPEECH);
+    await c2.addInitScript(() => Object.defineProperty(navigator, "standalone", { get: () => true })); // opened from the Home Screen
     const p2 = await c2.newPage();
     p2.on("pageerror", (e) => errors.push("fallback: " + e.message));
     await p2.goto(appUrl(srv));

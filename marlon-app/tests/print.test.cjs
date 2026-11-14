@@ -184,10 +184,12 @@ const SHARE_MOCK = `
     check(/iPhone browsers can't connect to Bluetooth printers/.test(sheetText) && /Bluefy/.test(sheetText), "iPhone: explains the Bluetooth limit and the Bluefy option");
     check(!/\bnull\b/.test(sheetText), "iPhone sheet has no stray 'null' text");
     await p2.screenshot({ path: path.join(OUT, "print-iphone-sheet.png") });
-    await p2.getByRole("button", { name: "Share PDF instead" }).click();
+    await p2.getByRole("button", { name: "Share receipt size" }).click();
+    await p2.waitForSelector("dialog.sheet[open]:has-text('Receipt size')");
+    await p2.locator("dialog.sheet[open]").getByRole("button", { name: "58 mm", exact: true }).click();
     const res = await pending;
     const sh = await p2.evaluate(() => window.__shared);
-    check(res.reason === "unsupported" && sh.length === 1 && sh[0].type === "application/pdf", "iPhone: 'Share PDF instead' shares the PDF");
+    check(res.reason === "unsupported" && sh.length === 1 && sh[0].type === "image/png" && /^Receipt-58mm-/.test(sh[0].name), "iPhone: 'Share receipt size' → 58 mm → shares the receipt picture for the printer's app", JSON.stringify(sh[0] && { name: sh[0].name, type: sh[0].type }));
     await ctx2.close();
   } finally {
     await browser.close();

@@ -5,12 +5,34 @@
 import { settings } from "./db.js";
 import { canvasToPdfBlob } from "./pdf.js";
 import { renderReceiptCanvas } from "./receipt.js";
+import { LETTER_PT, renderLetterCanvas } from "./letter.js";
 import { choiceSheet, toast } from "./ui.js";
 import { fileSafe, h, invoiceNo, withTotals } from "./util.js";
 
-/** → "shared" | "downloaded" | "cancelled" | "failed" */
+/** The invoice to email or print on paper: one US Letter page. → "shared" | "downloaded" | "cancelled" | "failed" */
 export function shareInvoicePdf(inv) {
-  return shareReceipt(inv, "pdf");
+  return shareReceipt(inv, "letter");
+}
+
+/**
+ * Receipt size: a narrow copy for a 58 mm or 80 mm thermal printer, as a pure black-and-white picture exactly the
+ * printer's width (384 or 576 dots), for the share sheet → the Bluetooth printer's app. Works on iPhone and Android.
+ */
+export function shareReceiptSize(inv, paper) {
+  return shareReceipt(inv, "thermal", paper === 80 ? 80 : 58);
+}
+
+/** Asks 58 mm or 80 mm (the last choice first), then shares the receipt-size copy. */
+export async function chooseReceiptSize(inv) {
+  const last = Number(await settings.get("paper", 58)) === 80 ? 80 : 58;
+  const choice = await choiceSheet({
+    title: "Receipt size",
+    message: h("p", {}, "A narrow copy for a thermal receipt printer. Choose your paper width, then pick your printer's app in the Share menu."),
+    choices: [{ label: "Not now", value: null }, { label: "58 mm", value: 58, primary: last === 58 }, { label: "80 mm", value: 80, primary: last === 80 }],
+  });
+  if (!choice) return "cancelled";
+  await settings.set("paper", choice);
+  return shareReceiptSize(inv, choice);
 }
 
 /** Same, as a PNG picture (some printer apps only accept pictures). */
@@ -18,12 +40,12 @@ export function shareInvoiceImage(inv) {
   return shareReceipt(inv, "png");
 }
 
-async function shareReceipt(inv, kind) {
+async function shareReceipt(inv, kind, paper) {
   const t = withTotals(inv);
   if (!t.items.length) { toast("Tick at least one product first."); return "failed"; }
   let file;
   try {
-    file = await makeReceiptFile(t, { kind });
+    file = await makeReceiptFile(t, { kind, paper });
   } catch (e) {
     console.error(e);
     toast("Couldn't make the file. Please try again.");
@@ -33,14 +55,26 @@ async function shareReceipt(inv, kind) {
 }
 
 /**
- * The receipt as a File: kind "pdf" or "png"; paper 58 | 80 (defaults to the owner's paper setting).
- * Named like Invoice-0007-Hill-Top-Grocery.pdf.
+ * The invoice as a File, named like Invoice-0007-Hill-Top-Grocery.pdf:
+ *   kind "letter"  — the emailed / printed invoice: a one-page US Letter PDF
+ *   kind "thermal" — receipt size for a 58 / 80 mm thermal printer: a black-and-white PNG exactly 384 / 576 dots wide
+ *   kind "pdf" / "png" — the receipt-shaped PDF or picture (paper 58 | 80, default the owner's paper setting)
  */
 export async function makeReceiptFile(inv, { kind = "pdf", paper } = {}) {
   const t = withTotals(inv);
-  paper = paper === 58 || paper === 80 ? paper : Number(await settings.get("paper", 58)) === 80 ? 80 : 58;
-  const canvas = await renderReceiptCanvas(t, { paper, scale: 2 });
   const name = `Invoice-${invoiceNo(t.number)}-${fileSafe(t.store || "invoice")}`;
+  const title = `Invoice ${invoiceNo(t.number)}${t.store ? " - " + t.store : ""}`;
+  if (kind === "letter") {
+    const blob = await canvasToPdfBlob(await renderLetterCanvas(t), { page: LETTER_PT, title });
+    return new File([blob], `${name}.pdf`, { type: "application/pdf" });
+  }
+  paper = paper === 58 || paper === 80 ? paper : Number(await settings.get("paper", 58)) === 80 ? 80 : 58;
+  if (kind === "thermal") {
+    const c = await renderReceiptCanvas(t, { paper, scale: 1, mono: true });
+    const blob = await new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("png"))), "image/png"));
+    return new File([blob], `Receipt-${paper}mm-${invoiceNo(t.number)}-${fileSafe(t.store || "invoice")}.png`, { type: "image/png" });
+  }
+  const canvas = await renderReceiptCanvas(t, { paper, scale: 2 });
   if (kind === "pdf") {
     const blob = await canvasToPdfBlob(canvas, { widthMm: paper, title: `Invoice ${invoiceNo(t.number)}${t.store ? " - " + t.store : ""}` });
     return new File([blob], `${name}.pdf`, { type: "application/pdf" });

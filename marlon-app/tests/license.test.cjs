@@ -130,7 +130,7 @@ const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isM
     check(await A.evaluate(() => window.__prompted === true), "…and opens Chrome's install prompt");
     const before = (await (await fetch(`${BASE}/api/console/buyers`, { headers: { Authorization: `Bearer ${token}` } })).json()).buyers.find((b) => b.id === key).active;
     check(before === 0, "the install page itself doesn't use up a place");
-    await A.getByRole("button", { name: "Use it here in Chrome instead" }).click();
+    await A.getByRole("button", { name: "Use it here in this browser instead" }).click();
     await setUp(A);
     check(await A.textContent("#company-name") === BUSINESS.name && !A.url().includes("k="), "phone 1 opens the link: activated, sets up, the link's key leaves the address bar", A.url());
     const ids = await A.evaluate(async () => { const { settings } = await import("/js/db.js"); return { lic: (await settings.get("license")).device, usage: await settings.get("deviceId", null) }; });
@@ -147,7 +147,7 @@ const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isM
     watch(C, "phone C");
     await C.goto(link);
     await C.waitForSelector(".gate[data-reason='install']");
-    await C.getByRole("button", { name: "Use it here in Chrome instead" }).click();
+    await C.getByRole("button", { name: "Use it here in this browser instead" }).click();
     await C.waitForSelector(".gate[data-reason='full']");
     const ct = await C.textContent(".gate");
     check(/already in use/.test(ct) && /contact the seller on WhatsApp/.test(ct) && await C.locator("#setup-name").count() === 0, "phone 3 on a 2-device link: blocked, told to contact you", ct.replace(/\s+/g, " ").slice(0, 110));
@@ -187,7 +187,7 @@ const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isM
     await ctxA.setOffline(false);
     await C.goto(link);
     await C.waitForSelector(".gate[data-reason='install']");
-    await C.getByRole("button", { name: "Use it here in Chrome instead" }).click();
+    await C.getByRole("button", { name: "Use it here in this browser instead" }).click();
     await C.waitForSelector("#setup-name", { timeout: 8000 });
     check(true, "the freed place lets another phone in (phone 3 now activates)");
     const full = await post("/api/console/device-off", { id: key, device: ids.lic, off: false }, token);

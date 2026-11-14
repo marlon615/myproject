@@ -17,7 +17,7 @@ import { SignThanks, signatureArea } from "./sign-thanks.js";
 import { invoiceToText, invoiceToUrl } from "./codec.js";
 import { qrCanvas } from "./qr.js";
 import { printInvoice } from "./printer.js";
-import { shareInvoiceImage, shareInvoicePdf } from "./share.js";
+import { chooseReceiptSize, shareInvoicePdf } from "./share.js";
 import { hideDashboard, initDashboard, showDashboard } from "./dashboard.js";
 import { Listener, canListen, dictate } from "./voice.js";
 import { bestParse, bestParseSegments } from "./voice-parse.js";
@@ -34,7 +34,7 @@ const el = {
   signCard: $("sign-card"), signCanvas: $("sign-canvas"), signStatus: $("sign-status"), signTip: $("sign-tip"), signClear: $("sign-clear"),
   signDone: $("sign-done"), finish: $("finish-btn"), signPad: $("sign-pad"),
   qrCard: $("qr-card"), qrBox: $("qr-box"), qrCaption: $("qr-caption"), qrToggle: $("qr-toggle"),
-  print: $("print-btn"), sharePdf: $("share-pdf-btn"), shareImage: $("share-image-btn"),
+  print: $("print-btn"), sharePdf: $("share-pdf-btn"), receiptSize: $("receipt-size-btn"),
   newBtn: $("new-btn"), saveStatus: $("save-status"),
   bar: $("total-bar"), barCount: $("bar-count"), barAmount: $("bar-amount"),
   update: $("update-banner"), updateBtn: $("update-btn"), brandBar: $("brand-bar"),
@@ -578,7 +578,7 @@ function wireEvents() {
   // Print and share — called straight from the tap so Bluetooth/share keep the user's gesture.
   el.print.addEventListener("click", (e) => output(e.currentTarget, printInvoice));
   el.sharePdf.addEventListener("click", (e) => output(e.currentTarget, shareInvoicePdf));
-  el.shareImage.addEventListener("click", (e) => output(e.currentTarget, shareInvoiceImage));
+  el.receiptSize.addEventListener("click", (e) => output(e.currentTarget, chooseReceiptSize));
 
   // A signed invoice with no payment recorded goes through the payment page first (it can be skipped).
   el.newBtn.addEventListener("click", () => {

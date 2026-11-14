@@ -7,7 +7,7 @@
 import { settings } from "./db.js";
 import { makeQr, qrRaster } from "./qr.js";
 import { itemCountText, receiptModel } from "./receipt.js";
-import { shareInvoicePdf } from "./share.js";
+import { chooseReceiptSize } from "./share.js";
 import { choiceSheet, toast } from "./ui.js";
 import { asciiFold, h, loadImage } from "./util.js";
 
@@ -156,11 +156,11 @@ async function explainUnsupported(inv) {
     title: "Print with your printer's app",
     message: h("div", {},
       h("p", {}, isIOS ? "iPhone browsers can't connect to Bluetooth printers directly." : "This browser can't connect to Bluetooth printers directly."),
-      h("p", {}, "Share the receipt as a PDF and choose your printer's app. Most receipt printers come with one. Or open this app in the free Bluefy browser, which can print directly."),
+      h("p", {}, "Share a receipt-size copy and choose your printer's app. Most receipt printers come with one. Or open this app in the free Bluefy browser, which can print directly."),
     ),
-    choices: [{ label: "Not now", value: null }, { label: "Share PDF instead", value: "share", primary: true }],
+    choices: [{ label: "Not now", value: null }, { label: "Share receipt size", value: "share", primary: true }],
   });
-  if (choice === "share") await shareInvoicePdf(inv);
+  if (choice === "share") await chooseReceiptSize(inv);
   return { ok: false, reason: "unsupported" };
 }
 

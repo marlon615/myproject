@@ -2,7 +2,8 @@
 import { receiptModel, renderReceiptCanvas } from "/js/receipt.js";
 import { canvasToPdfBlob } from "/js/pdf.js";
 import { buildEscPos, printInvoice, savedPrinterName, forgetPrinter } from "/js/printer.js";
-import { shareInvoicePdf, shareInvoiceImage } from "/js/share.js";
+import { shareInvoicePdf, shareInvoiceImage, makeReceiptFile } from "/js/share.js";
+import { renderLetterCanvas } from "/js/letter.js";
 import { invoiceToUrl } from "/js/codec.js";
 import { settings, init } from "/js/db.js";
 import { setBusiness } from "/js/util.js";
@@ -23,7 +24,7 @@ window.sample = (n = 3, signed = true) => {
   const names = ["Mango Juice", "Small Patty", "Coconut Water Café", "Carrot Juice", "Ginger Beer", "Hard Dough Bread", "Large Patty", "Pineapple Juice 1L", "Fruit Punch Bottles", "Sweet Potato", "Yellow Yam", "Eggs", "Scallion", "Thyme Bundle", "Rice", "Sorrel Drink 1L Bottle", "Ginger Beer Crate", "Sweet Potato Pudding"];
   return { id: "inv_test", number: 7, seller: "Island Fresh Distributors", sellerAddress: "8 Harbour Street\nKingston", sellerPhone: "876 555 0123",
     store: "Hill Top Grocery & Wholesale", address: "5 Hope Road\nKingston 6, St Andrew", date: "2026-11-10",
-    items: names.slice(0, n).map((name, i) => ({ productId: "p" + i, name, qty: i === 1 ? 24 : 12 + i, price: i === 2 ? null : 350 + i * 25 })),
+    items: Array.from({ length: n }, (_, i) => (i < names.length ? names[i] : `${names[i % names.length]} ${Math.floor(i / names.length) + 1}`)).map((name, i) => ({ productId: "p" + i, name, qty: i === 1 ? 24 : 12 + i, price: i === 2 ? null : 350 + i * 25 })),
     signature: signed ? signature() : null, signedAt: signed ? "2026-11-10T19:45:00Z" : null };
 };
 window.T = {
@@ -34,6 +35,9 @@ window.T = {
   print: (n) => printInvoice(window.sample(n)),
   share: (kind) => (kind === "png" ? shareInvoiceImage : shareInvoicePdf)(window.sample(3)),
   setPaper: (p) => settings.set("paper", p),
+  letterB64: async (n) => toB64(await makeReceiptFile(window.sample(n), { kind: "letter" })),
+  letterPng: async (n) => { const c = await renderLetterCanvas(window.sample(n)); return { w: c.width, h: c.height, png: c.toDataURL("image/png") }; },
+  thermal: async (n, paper) => { const f = await makeReceiptFile(window.sample(n), { kind: "thermal", paper }); const url = URL.createObjectURL(f); return { name: f.name, type: f.type, url }; },
   savedPrinterName, forgetPrinter,
 };
 init().then(() => { window.ready = true; });

@@ -37,11 +37,26 @@ function cleanUrl() {
   } catch { /* fine */ }
 }
 
+const UA = () => navigator.userAgent || "";
+/** A real iPhone or iPad (iPads can say "Macintosh"; only they have touch) — never an Android phone. */
+const isIOS = () => !/Android/i.test(UA()) && (/iPhone|iPad|iPod/.test(UA()) || (/Macintosh/.test(UA()) && navigator.maxTouchPoints > 1));
+const isAndroid = () => /Android/i.test(UA()) || navigator.userAgentData?.platform === "Android";
+const installed = () => navigator.standalone === true || ["standalone", "fullscreen", "minimal-ui"].some((m) => matchMedia(`(display-mode: ${m})`).matches);
 /** iPhone/iPad, in Safari (or another iPhone browser) rather than from the home screen. */
-const iosBrowser = () => navigator.standalone === false;
+const iosBrowser = () => isIOS() && !installed();
 /** An Android phone, in the browser rather than opened as an installed app. */
-const androidBrowser = () => /Android/i.test(navigator.userAgent)
-  && !["standalone", "fullscreen", "minimal-ui"].some((m) => matchMedia(`(display-mode: ${m})`).matches);
+const androidBrowser = () => isAndroid() && !installed();
+/** Which browser, for the right steps. In-app browsers (Facebook, Instagram…) can't add to the Home Screen. */
+function browserName() {
+  const ua = UA();
+  if (/FBAN|FBAV|FB_IAB|Instagram|Line\/|Snapchat|TikTok|musical_ly|; wv\)/.test(ua)) return "inapp";
+  if (/SamsungBrowser/.test(ua)) return "samsung";
+  if (/EdgA|EdgiOS/.test(ua)) return "edge";
+  if (/Firefox|FxiOS/.test(ua)) return "firefox";
+  if (/OPR\/|Opera/.test(ua)) return "opera";
+  if (/CriOS/.test(ua)) return "chrome-ios";
+  return isIOS() ? "safari" : "chrome";
+}
 
 // Chrome on Android can offer its own "Install app" button; keep its offer for the install page.
 let installOffer = null;
@@ -180,6 +195,23 @@ function show(reason, contact, retry = () => location.reload()) {
   return { ok: false, reason };
 }
 
+/** The steps for this phone and this browser. */
+function installSteps(ios) {
+  const li = (t) => h("li", {}, t);
+  const open = li("Open Marlon from your Home Screen.");
+  switch (browserName()) {
+    case "inapp": return [li(ios ? "This app's built-in browser can't add Marlon to your Home Screen." : "This app's built-in browser can't install Marlon."),
+      li(ios ? "Tap the menu (⋯ or the compass) and choose “Open in Safari”." : "Tap the menu (⋮) and choose “Open in Chrome” (or “Open in browser”)."), li("Then follow the steps there.")];
+    case "safari": return [li("Tap the Share button (the square with an arrow) at the bottom of Safari."), li("Choose “Add to Home Screen”, then “Add”."), open];
+    case "chrome-ios": return [li("Tap the Share button (the square with an arrow) at the top right of Chrome."), li("Choose “Add to Home Screen”, then “Add”."), open];
+    case "samsung": return [li("Tap the menu (☰) at the bottom right of Samsung Internet."), li("Choose “Add page to”, then “Home screen”, then “Add”."), open];
+    case "firefox": return [li("Tap the menu (⋮) in Firefox."), li("Choose “Add to Home screen” (or “Install”), then “Add”."), open];
+    case "edge": return [li("Tap the menu (⋯) at the bottom of Edge."), li("Choose “Add to phone”, then “Install”."), open];
+    case "opera": return [li("Tap the menu (⋮) in Opera."), li("Choose “Add to” → “Home screen”, then “Add”."), open];
+    default: return [li("Tap the menu (⋮) at the top right of Chrome."), li("Choose “Add to Home screen” or “Install app”, then “Install”."), open];
+  }
+}
+
 /**
  * The install page: add Marlon to the Home Screen first; the personal link goes with it (the manifest's start_url).
  *   iPhone:  Safari and a Home Screen app keep separate storage, so using it in Safari too would take a second place.
@@ -189,13 +221,7 @@ function showInstall(key, platform) {
   const manifest = document.querySelector('link[rel="manifest"]');
   if (manifest) manifest.href = `/manifest.webmanifest?k=${key}`;
   const ios = platform === "ios";
-  const steps = ios
-    ? [h("li", {}, "Tap the Share button (the square with an arrow) at the bottom of Safari."),
-      h("li", {}, "Choose “Add to Home Screen”, then “Add”."),
-      h("li", {}, "Open Marlon from your Home Screen.")]
-    : [h("li", {}, "Tap the menu (⋮) at the top right of Chrome."),
-      h("li", {}, "Choose “Add to Home screen” or “Install app”, then confirm."),
-      h("li", {}, "Open Marlon from your Home Screen.")];
+  const steps = installSteps(ios);
   const installBtn = ios ? null : h("button", { type: "button", class: "btn btn-primary btn-block gate-install", hidden: !installOffer, onclick: async () => {
     if (!installOffer) return;
     const offer = installOffer;
@@ -214,7 +240,7 @@ function showInstall(key, platform) {
     h("ol", { class: "gate-steps" }, steps),
     done,
     h("button", { type: "button", class: "link-btn gate-here", onclick: async () => { const r = await activate(key); if (r.ok) location.reload(); } },
-      ios ? "Use it here in Safari instead (this counts as one of your phones)" : "Use it here in Chrome instead")));
+      ios ? `Use it here in ${browserName() === "chrome-ios" ? "Chrome" : "Safari"} instead (this counts as one of your phones)` : "Use it here in this browser instead")));
   root.hidden = false;
   return { ok: false, reason: "install" }; // the app opens from the Home Screen (or after "use it here")
 }

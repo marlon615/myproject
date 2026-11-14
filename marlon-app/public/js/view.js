@@ -77,7 +77,7 @@ async function savePdf(button, inv) {
   if (button.getAttribute("aria-busy") === "true") return;
   button.setAttribute("aria-busy", "true");
   try {
-    const file = await makeReceiptFile(asInvoice(inv), { kind: "pdf", paper: 80 });
+    const file = await makeReceiptFile(asInvoice(inv), { kind: "letter" });
     await deliverFile(file, `Invoice ${invoiceNo(inv.number)} · ${inv.seller}`);
   } catch (e) {
     console.error(e);
