@@ -1092,11 +1092,16 @@ function businessSection() {
   const address = h("textarea", { rows: "2", maxlength: "200", autocomplete: "street-address", "aria-label": "Address" });
   address.value = business.address;
   const phone = h("input", { type: "tel", value: business.phone, maxlength: "40", autocomplete: "tel", "aria-label": "Phone" });
+  // Team reps: their own name, which the boss sees on their invoices.
+  const repName = h("input", { type: "text", maxlength: "60", autocomplete: "name", "aria-label": "Your name" });
+  const repField = h("label", { class: "dash-field", hidden: true }, h("span", { class: "dash-field-label" }, "Your name (your boss sees it)"), repName);
+  Promise.all([settings.get("license", null), profile.get()]).then(([lic, me]) => { if (lic?.team) { repField.hidden = false; repName.value = me?.repName || ""; } }, () => {});
   const save = async (e) => {
     e.preventDefault();
     if (!name.value.trim()) { toast("Type your company name first."); name.focus(); return; }
     try {
-      const saved = await profile.set({ name: name.value, address: address.value, phone: phone.value, setupAt: (await profile.get())?.setupAt });
+      if (!repField.hidden && !repName.value.trim()) { toast("Type your name first."); repName.focus(); return; }
+      const saved = await profile.set({ name: name.value, address: address.value, phone: phone.value, setupAt: (await profile.get())?.setupAt, ...(repField.hidden ? {} : { repName: repName.value }) });
       setBusiness(saved);
     } catch (err) {
       toast(err.message || "Couldn't save that. Please try again.");
@@ -1108,7 +1113,7 @@ function businessSection() {
   };
   return settingsSection("dash-h-business", "Your business",
     h("form", { class: "dash-business", onsubmit: save },
-      field("Company name", name), field("Address", address), field("Phone", phone),
+      repField, field("Company name", name), field("Address", address), field("Phone", phone),
       h("p", { class: "dash-help" }, "Shown at the top of the app and on every new receipt, PDF and QR page. Invoices already written keep the details they had."),
       h("button", { type: "submit", class: "btn btn-primary" }, "Save")));
 }

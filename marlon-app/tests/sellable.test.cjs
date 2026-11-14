@@ -45,6 +45,8 @@ const dbCount = (page, store) => page.evaluate((s) => new Promise((ok) => {
     const page = await ctx.newPage();
     page.on("pageerror", (e) => errors.push(e.message));
     page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+    const teamSends = [];
+    page.on("request", (r) => { if (r.url().includes("/api/team/")) teamSends.push(r.url()); });
     // Without a personal link: blocked (a shared link no longer works for everyone).
     await page.goto(`${srv.url}/`);
     await page.waitForSelector(".gate[data-reason='nolink']");
@@ -220,6 +222,7 @@ const dbCount = (page, store) => page.evaluate((s) => new Promise((ok) => {
     await page.waitForFunction(() => window.__appReady === true);
     check(await page.textContent("#company-name") === "Island Fresh Ltd" && await page.locator(".prod-row", { hasText: "Bulla Cake" }).count() === 0, "the first phone still has only its own business");
     await other.close();
+    check(teamSends.length === 0, "a solo business never sends its invoices anywhere (that's only the team version)", teamSends.join(" "));
     check(errors.length === 0, "no console errors", errors.join(" | "));
     await ctx.close();
   } finally {

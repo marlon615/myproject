@@ -4,7 +4,7 @@
  * newest version; the open app reloads itself if it's still on the splash, or offers "Refresh" otherwise.
  * VERSION is stamped by scripts/stamp-sw.cjs.
  */
-const VERSION = "9a1d5a78d274";
+const VERSION = "9a4084327138";
 const CACHE = `marlon-app-${VERSION}`;
 
 // On Cloudflare "/index.html" redirects to "/" and "/v.html" to "/v", so the pages are cached by those URLs.
@@ -41,6 +41,9 @@ const PRECACHE = [
   "/js/setup.js",
   "/js/usage.js",
   "/js/license.js",
+  "/js/team.js",
+  "/boss",
+  "/js/boss.js",
   "/js/ink-script.js",
   "/js/thankyou-strokes.js",
   "/js/vendor/qrcode.js",
@@ -74,6 +77,7 @@ self.addEventListener("message", (event) => {
 
 const isViewer = (path) => path === "/v" || path === "/v/" || path === "/v.html";
 const isApp = (path) => path === "/" || path === "/index.html";
+const isBoss = (path) => path === "/boss" || path === "/boss.html";
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
@@ -89,8 +93,8 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (req.mode === "navigate") {
-    if (isViewer(url.pathname) || isApp(url.pathname)) {
-      const key = isViewer(url.pathname) ? "/v" : "/";
+    if (isViewer(url.pathname) || isApp(url.pathname) || isBoss(url.pathname)) {
+      const key = isViewer(url.pathname) ? "/v" : isBoss(url.pathname) ? "/boss" : "/";
       event.respondWith(caches.match(key, { ignoreSearch: true }).then((hit) => hit || fetch(req)));
     } else {
       // Unknown page: ask the network (its 404 page), or open the app when offline.

@@ -9,7 +9,7 @@ const crypto = require("crypto");
 
 const PUBLIC = path.join(__dirname, "..", "public");
 const SW = path.join(PUBLIC, "sw.js");
-const fileFor = (url) => path.join(PUBLIC, url === "/" ? "index.html" : url === "/v" ? "v.html" : url.slice(1));
+const fileFor = (url) => path.join(PUBLIC, url === "/" ? "index.html" : url === "/v" ? "v.html" : url === "/boss" ? "boss.html" : url.slice(1));
 
 const sw = fs.readFileSync(SW, "utf8");
 const list = /const PRECACHE = \[([\s\S]*?)\];/.exec(sw);

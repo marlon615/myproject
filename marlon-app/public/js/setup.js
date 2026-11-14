@@ -15,7 +15,7 @@ const readDraft = () => { try { return JSON.parse(localStorage.getItem(DRAFT_KEY
 const writeDraft = (d) => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch { /* private mode: fine */ } };
 const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch { /* fine */ } };
 
-export function runSetup(root) {
+export function runSetup(root, { team = false } = {}) {
   return new Promise((resolve) => {
     const draft = readDraft() || {};
     const field = (label, control, hint = null) => h("label", { class: "setup-field" },
@@ -24,6 +24,8 @@ export function runSetup(root) {
     const name = h("input", { type: "text", id: "setup-name", autocomplete: "organization", autocapitalize: "words", maxlength: "80", required: true, placeholder: "e.g. Island Fresh Distributors" });
     const address = h("textarea", { id: "setup-address", rows: "2", autocomplete: "street-address", autocapitalize: "words", maxlength: "200", placeholder: "Street, town" });
     const phone = h("input", { type: "tel", id: "setup-phone", autocomplete: "tel", inputmode: "tel", maxlength: "40", placeholder: "e.g. 876 555 0123" });
+    const repName = team ? h("input", { type: "text", id: "setup-rep", autocomplete: "name", autocapitalize: "words", maxlength: "60", required: true, placeholder: "e.g. Andre Brown" }) : null;
+    if (repName) repName.value = draft.repName || "";
     name.value = draft.name || "";
     address.value = draft.address || "";
     phone.value = draft.phone || "";
@@ -44,7 +46,7 @@ export function runSetup(root) {
     (draft.products?.length ? draft.products : [{}, {}, {}]).forEach(addRow);
 
     const readAll = () => ({
-      name: name.value, address: address.value, phone: phone.value,
+      name: name.value, address: address.value, phone: phone.value, repName: repName ? repName.value : undefined,
       products: [...list.querySelectorAll(".setup-prow")].map((li) => ({
         name: li.querySelector(".setup-pname").value, price: li.querySelector(".setup-pprice").value, unit: li.querySelector(".setup-punit").value,
       })),
@@ -60,6 +62,7 @@ export function runSetup(root) {
         h("p", { class: "setup-lead" }, "It takes a minute. Everything you type here stays on this phone.")),
       h("section", { class: "card setup-card", "aria-labelledby": "setup-h-business" },
         h("h2", { class: "setup-h", id: "setup-h-business" }, "Your business"),
+        repName ? field("Your name", repName, "Your boss sees this name on the invoices you make.") : null,
         field("Company name", name, "Shows at the top of the app and on every receipt."),
         field("Address", address),
         field("Phone", phone)),
@@ -69,7 +72,9 @@ export function runSetup(root) {
         list,
         h("button", { type: "button", class: "btn btn-ghost setup-add", onclick: () => { addRow().querySelector("input").focus(); } }, "+ Add another product")),
       h("p", { class: "setup-note" }, "You can change all of this later: owner dashboard → Settings."),
-      h("p", { class: "setup-note setup-privacy" }, "Your customers, invoices and prices never leave this phone. The app only sends anonymous counts (how many invoices, no names or amounts) so its maker can see how many businesses use it. You can turn that off in Settings."),
+      team
+        ? h("p", { class: "setup-note setup-privacy" }, "Team version: every invoice you make is saved on this phone first, then sent to your company's boss dashboard whenever there's internet (it waits while there's no signal).")
+        : h("p", { class: "setup-note setup-privacy" }, "Your customers, invoices and prices never leave this phone. The app only sends anonymous counts (how many invoices, no names or amounts) so its maker can see how many businesses use it. You can turn that off in Settings."),
       error,
       start);
 
@@ -79,6 +84,12 @@ export function runSetup(root) {
       e.preventDefault();
       const all = readAll();
       error.hidden = true;
+      if (repName && !tidy(all.repName)) {
+        error.textContent = "Type your name first (your boss sees it on your invoices).";
+        error.hidden = false;
+        repName.focus();
+        return;
+      }
       if (!tidy(all.name)) {
         error.textContent = "Type your company name first.";
         error.hidden = false;
@@ -108,7 +119,7 @@ export function runSetup(root) {
           seen.add(key);
           await products.add(p.name, { price: p.price, unit: p.unit });
         }
-        const saved = await profile.set({ name: all.name, address: all.address, phone: all.phone });
+        const saved = await profile.set({ name: all.name, address: all.address, phone: all.phone, ...(repName ? { repName: all.repName } : {}) });
         clearDraft();
         resolve(saved);
       } catch (err) {

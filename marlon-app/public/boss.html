@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#000000">
+  <title>Boss dashboard · Marlon</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/base.css">
+  <style>
+    body { background: var(--bg); }
+    .boss-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: calc(10px + var(--safe-top)) 16px 10px; background: #000; color: #f3efe4; }
+    .boss-bar strong { font-family: var(--font-display); font-size: 20px; }
+    .boss-bar span { color: #6cc495; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+    .boss { max-width: 760px; margin: 0 auto; padding: 18px 16px calc(40px + var(--safe-bottom)); display: grid; gap: 14px; }
+    .boss h1 { margin: 0; font-family: var(--font-display); font-size: clamp(24px, 7vw, 32px); line-height: 1.15; }
+    .boss h2 { margin: 0 0 8px; font-size: 1.05rem; }
+    .boss-lead, .boss-note { margin: 0; color: var(--ink-2); }
+    .boss-note { font-size: .88rem; color: var(--muted); }
+    .boss-card { padding: 16px; }
+    .boss-gate { display: grid; gap: 12px; max-width: 420px; }
+    .boss-gate label { display: grid; gap: 6px; font-size: .85rem; font-weight: 650; color: var(--ink-2); }
+    .boss-error { margin: 0; color: var(--danger); font-weight: 650; }
+    .boss-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .boss-tile { padding: 12px; min-width: 0; }
+    .boss-tile p { margin: 0; }
+    .boss-tile-label { font-size: .8rem; font-weight: 650; color: var(--ink-2); }
+    .boss-tile-value { font-family: var(--font-display); font-size: clamp(17px, 5vw, 24px); font-weight: 700; margin-top: 2px !important; overflow-wrap: anywhere; }
+    .boss-tile-sub { font-size: .78rem; color: var(--muted); }
+    .boss-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .boss-table th, .boss-table td { padding: 7px 6px; border-bottom: 1px solid var(--line); text-align: right; }
+    .boss-table th:first-child, .boss-table td:first-child { text-align: left; }
+    .boss-table tfoot td { font-weight: 800; border-top: 2px solid var(--line-strong); }
+    .boss-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+    .boss-filters select { min-height: 42px; }
+    .boss-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .boss-inv { padding: 14px; display: grid; gap: 6px; }
+    .boss-inv-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+    .boss-inv-head strong { font-size: 1.02rem; }
+    .boss-inv-meta { margin: 0; color: var(--ink-2); font-size: .88rem; }
+    .boss-items { margin: 0; padding: 0; list-style: none; font-size: .9rem; color: var(--ink-2); display: grid; gap: 2px; }
+    .boss-items li { display: flex; justify-content: space-between; gap: 10px; }
+    .boss-badge { justify-self: start; font-size: 12px; font-weight: 800; letter-spacing: .04em; padding: 3px 9px; border-radius: 999px; }
+    .boss-badge.is-paid { background: #e3f3e9; color: #17633f; }
+    .boss-badge.is-unpaid { background: var(--danger-bg, #fbe9e7); color: var(--danger); }
+    .boss-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .num { font-variant-numeric: tabular-nums; }
+  </style>
+  <script type="module" src="/js/boss.js"></script>
+</head>
+<body>
+  <header class="boss-bar"><strong>Marlon</strong><span>Boss dashboard</span></header>
+  <main class="boss" id="boss">
+    <p class="boss-note">Loading…</p>
+  </main>
+</body>
+</html>

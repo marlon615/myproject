@@ -28,11 +28,27 @@ import { DurableObject } from "cloudflare:workers";
 import { FILES, RULES } from "./assets.generated.js";
 
 const KINDS = ["open", "setup", "invoice", "voice", "print", "pdf", "picture"];
+const BOSS_PLACES = 2; // boss phones per team (on iPhone, the browser and the Home Screen icon count as two)
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const todayUTC = () => new Date().toISOString().slice(0, 10);
 const addDays = (iso, n) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const hex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
 const randomHex = (n) => hex(crypto.getRandomValues(new Uint8Array(n)));
+
+/** Only the fields the boss dashboard shows, with sane sizes (a rep's phone sends these; nothing else is kept). */
+function cleanInvoice(inv) {
+  if (!inv || typeof inv !== "object" || typeof inv.id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(inv.id)) return null;
+  const txt = (v, n = 200) => String(v ?? "").slice(0, n);
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const p = inv.payment && typeof inv.payment === "object" ? inv.payment : null;
+  return {
+    id: inv.id, number: num(inv.number), date: /^\d{4}-\d{2}-\d{2}$/.test(inv.date || "") ? inv.date : null,
+    store: txt(inv.store, 120), address: txt(inv.address, 300), total: num(inv.total) ?? 0, signed: Boolean(inv.signed),
+    items: (Array.isArray(inv.items) ? inv.items.slice(0, 300) : []).map((it) => ({ name: txt(it?.name, 80), qty: num(it?.qty), unit: txt(it?.unit, 10), price: num(it?.price), total: num(it?.total) ?? 0 })),
+    payment: p ? { status: p.status === "paid" ? "paid" : "unpaid", method: txt(p.method, 10), termsDays: num(p.termsDays), dueDate: txt(p.dueDate, 10), paidAt: txt(p.paidAt, 30) } : null,
+    updatedAt: txt(inv.updatedAt, 30),
+  };
+}
 
 /** "iPhone", "Android · Chrome", "Windows · Edge"… so the owner can tell a buyer's phones apart. */
 function deviceLabel(ua) {
@@ -65,6 +81,20 @@ export class Stats extends DurableObject {
       amount_cents INTEGER NOT NULL, created TEXT NOT NULL, off INTEGER NOT NULL DEFAULT 0)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS buyer_devices (buyer TEXT NOT NULL, device TEXT NOT NULL, label TEXT NOT NULL DEFAULT '',
       first_at TEXT NOT NULL, last_at TEXT NOT NULL, off INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (buyer, device))`);
+    // Teams (added later: new columns are added to existing tables, nothing is lost).
+    const addColumn = (table, column, decl) => {
+      if (!this.sql.exec(`PRAGMA table_info(${table})`).toArray().some((c) => c.name === column)) this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+    };
+    addColumn("buyers", "kind", "TEXT NOT NULL DEFAULT 'solo'");
+    addColumn("buyers", "boss_key", "TEXT");
+    addColumn("buyers", "boss_salt", "TEXT");
+    addColumn("buyers", "boss_hash", "TEXT");
+    addColumn("buyers", "boss_fails", "TEXT NOT NULL DEFAULT '[]'");
+    addColumn("buyer_devices", "role", "TEXT NOT NULL DEFAULT 'rep'");
+    addColumn("buyer_devices", "rep_name", "TEXT NOT NULL DEFAULT ''");
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS team_invoices (buyer TEXT NOT NULL, device TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
+      updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS boss_sessions (token TEXT PRIMARY KEY, buyer TEXT NOT NULL, device TEXT NOT NULL, expires INTEGER NOT NULL)`);
   }
 
   #meta(k) { return this.sql.exec("SELECT v FROM meta WHERE k = ?", k).toArray()[0]?.v ?? null; }
@@ -155,19 +185,24 @@ export class Stats extends DurableObject {
   contact() { return this.#meta("contact") || ""; }
   setContact(text) { this.#setMeta("contact", text); return this.contact(); }
 
-  createBuyer(name, devices, amountCents) {
+  /** kind "solo" (one business) or "team" (a company: `devices` rep phones, plus a boss link for the boss's phone). */
+  createBuyer(name, devices, amountCents, kind = "solo") {
     const id = randomHex(16);
-    this.sql.exec("INSERT INTO buyers (id, name, devices, amount_cents, created) VALUES (?, ?, ?, ?, ?)", id, name, devices, amountCents, new Date().toISOString());
+    const bossKey = kind === "team" ? randomHex(16) : null;
+    this.sql.exec("INSERT INTO buyers (id, name, devices, amount_cents, created, kind, boss_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      id, name, devices, amountCents, new Date().toISOString(), kind, bossKey);
     return this.#buyer(id);
   }
 
   #buyer(id) {
     const b = this.sql.exec("SELECT * FROM buyers WHERE id = ?", id).toArray()[0];
     if (!b) return null;
-    const devices = this.sql.exec("SELECT device, label, first_at, last_at, off FROM buyer_devices WHERE buyer = ? ORDER BY first_at", id).toArray()
-      .map((d) => ({ device: d.device, label: d.label, firstAt: d.first_at, lastAt: d.last_at, off: Boolean(d.off) }));
-    return { id: b.id, name: b.name, devices: b.devices, amountCents: b.amount_cents, created: b.created, off: Boolean(b.off), phones: devices,
-      active: devices.filter((d) => !d.off).length };
+    const all = this.sql.exec("SELECT device, label, first_at, last_at, off, role, rep_name FROM buyer_devices WHERE buyer = ? ORDER BY first_at", id).toArray()
+      .map((d) => ({ device: d.device, label: d.label, firstAt: d.first_at, lastAt: d.last_at, off: Boolean(d.off), role: d.role, repName: d.rep_name }));
+    const devices = all.filter((d) => d.role !== "boss"), bosses = all.filter((d) => d.role === "boss");
+    return { id: b.id, name: b.name, kind: b.kind || "solo", devices: b.devices, amountCents: b.amount_cents, created: b.created, off: Boolean(b.off),
+      phones: devices, active: devices.filter((d) => !d.off).length, bossKey: b.boss_key || null, bossPhones: bosses, bossPlaces: BOSS_PLACES,
+      invoices: b.kind === "team" ? this.sql.exec("SELECT COUNT(*) AS n FROM team_invoices WHERE buyer = ?", id).toArray()[0].n : 0 };
   }
 
   buyers() {
@@ -184,6 +219,13 @@ export class Stats extends DurableObject {
   /** Switching a phone back on needs a free place (the buyer may have used it for another phone meanwhile). */
   setDeviceOff(id, device, off) {
     const b = this.#buyer(id);
+    const boss = b?.bossPhones.find((x) => x.device === device);
+    if (boss) {
+      if (!off && boss.off && b.bossPhones.filter((x) => !x.off).length >= BOSS_PLACES) return { error: "full" };
+      this.sql.exec("UPDATE buyer_devices SET off = ? WHERE buyer = ? AND device = ?", off ? 1 : 0, id, device);
+      if (off) this.sql.exec("DELETE FROM boss_sessions WHERE buyer = ? AND device = ?", id, device);
+      return { buyer: this.#buyer(id) };
+    }
     const d = b?.phones.find((x) => x.device === device);
     if (!d) return { error: "unknown" };
     if (!off && d.off && b.active >= b.devices) return { error: "full" };
@@ -204,13 +246,98 @@ export class Stats extends DurableObject {
     if (d) {
       if (d.off) return { ok: false, reason: "off" };
       this.sql.exec("UPDATE buyer_devices SET last_at = ? WHERE buyer = ? AND device = ?", now, id, device);
-      return { ok: true };
+      return { ok: true, team: b.kind === "team" };
     }
     if (onlyKnown) return { ok: false, reason: "off" };
     if (b.active >= b.devices) return { ok: false, reason: "full" };
     this.sql.exec("INSERT INTO buyer_devices (buyer, device, label, first_at, last_at) VALUES (?, ?, ?, ?, ?)", id, device, label, now, now);
-    return { ok: true };
+    return { ok: true, team: b.kind === "team" };
   }
+
+  // ── Teams: reps send their invoices; the boss sees them all ───────────
+
+  /** Invoices from a rep phone (saved there first). Only an active rep of an active team; the same id overwrites. */
+  teamSync(id, device, repName, invoices) {
+    const b = this.#buyer(id);
+    if (!b || b.kind !== "team") return { ok: false, reason: "unknown" };
+    const d = b.phones.find((x) => x.device === device);
+    if (b.off || !d || d.off) return { ok: false, reason: "off" };
+    const now = new Date().toISOString();
+    this.sql.exec("UPDATE buyer_devices SET last_at = ?, rep_name = ? WHERE buyer = ? AND device = ?", now, repName, id, device);
+    const stored = [];
+    for (const inv of invoices) {
+      this.sql.exec(`INSERT INTO team_invoices (buyer, device, id, data, updated) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(buyer, id) DO UPDATE SET data = excluded.data, updated = excluded.updated, device = excluded.device`, id, device, inv.id, JSON.stringify(inv), now);
+      stored.push(inv.id);
+    }
+    return { ok: true, stored };
+  }
+
+  #bossBuyer(bossKey) {
+    const r = this.sql.exec("SELECT id FROM buyers WHERE boss_key = ?", bossKey).toArray()[0];
+    return r ? this.#buyer(r.id) : null;
+  }
+
+  /** The boss's phone opening the boss link (BOSS_PLACES phones: on iPhone, Safari and the Home Screen count apart). */
+  bossActivate(bossKey, device, label) {
+    const b = this.#bossBuyer(bossKey);
+    if (!b) return { ok: false, reason: "unknown" };
+    if (b.off) return { ok: false, reason: "off" };
+    const d = b.bossPhones.find((x) => x.device === device);
+    const now = new Date().toISOString();
+    const claimed = Boolean(this.sql.exec("SELECT boss_hash FROM buyers WHERE id = ?", b.id).toArray()[0].boss_hash);
+    if (d) {
+      if (d.off) return { ok: false, reason: "off" };
+      this.sql.exec("UPDATE buyer_devices SET last_at = ? WHERE buyer = ? AND device = ?", now, b.id, device);
+      return { ok: true, claimed, company: b.name };
+    }
+    if (b.bossPhones.filter((x) => !x.off).length >= BOSS_PLACES) return { ok: false, reason: "full" };
+    this.sql.exec("INSERT INTO buyer_devices (buyer, device, label, first_at, last_at, role) VALUES (?, ?, ?, ?, ?, 'boss')", b.id, device, label, now, now);
+    return { ok: true, claimed, company: b.name };
+  }
+
+  #bossDeviceOk(b, device) { const d = b?.bossPhones.find((x) => x.device === device); return Boolean(b && !b.off && d && !d.off); }
+
+  bossPasscode(bossKey, device, passcode, claim) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const b = this.#bossBuyer(bossKey);
+      if (!this.#bossDeviceOk(b, device)) return { error: "off" };
+      const row = this.sql.exec("SELECT boss_salt, boss_hash, boss_fails FROM buyers WHERE id = ?", b.id).toArray()[0];
+      const now = Date.now();
+      if (claim) {
+        if (row.boss_hash) return { error: "taken" };
+        const salt = randomHex(16);
+        this.sql.exec("UPDATE buyers SET boss_salt = ?, boss_hash = ?, boss_fails = '[]' WHERE id = ?", salt, await hashPasscode(passcode, salt), b.id);
+      } else {
+        const fails = JSON.parse(row.boss_fails || "[]").filter((t) => now - t < 15 * 60 * 1000);
+        if (fails.length >= 5) return { error: "wait", retryAfter: Math.ceil((15 * 60 * 1000 - (now - fails[0])) / 1000) };
+        if (!row.boss_hash) return { error: "unclaimed" };
+        if (!sameText(await hashPasscode(passcode, row.boss_salt), row.boss_hash)) {
+          fails.push(now);
+          this.sql.exec("UPDATE buyers SET boss_fails = ? WHERE id = ?", JSON.stringify(fails), b.id);
+          return { error: "wrong", left: Math.max(0, 5 - fails.length) };
+        }
+        this.sql.exec("UPDATE buyers SET boss_fails = '[]' WHERE id = ?", b.id);
+      }
+      const token = randomHex(32);
+      this.sql.exec("DELETE FROM boss_sessions WHERE expires < ?", now);
+      this.sql.exec("INSERT INTO boss_sessions (token, buyer, device, expires) VALUES (?, ?, ?, ?)", token, b.id, device, now + 12 * 60 * 60 * 1000);
+      return { token };
+    });
+  }
+
+  /** Everything the boss dashboard shows, for a signed-in boss phone that's still switched on. */
+  bossData(token) {
+    const s = this.sql.exec("SELECT buyer, device FROM boss_sessions WHERE token = ? AND expires > ?", token, Date.now()).toArray()[0];
+    if (!s) return { error: "signin" };
+    const b = this.#buyer(s.buyer);
+    if (!this.#bossDeviceOk(b, s.device)) return { error: "off" };
+    const invoices = this.sql.exec("SELECT device, data, updated FROM team_invoices WHERE buyer = ?", b.id).toArray()
+      .map((r) => ({ ...JSON.parse(r.data), rep: r.device, receivedAt: r.updated }));
+    return { company: b.name, reps: b.phones.map((d, i) => ({ device: d.device, name: d.repName || `Rep ${i + 1}`, label: d.label, off: d.off, lastSeen: d.lastAt })), invoices };
+  }
+
+  bossLogout(token) { this.sql.exec("DELETE FROM boss_sessions WHERE token = ?", token); }
 
   stats() {
     const today = todayUTC();
@@ -282,9 +409,53 @@ async function api(request, env, path) {
     const device = typeof body.device === "string" && /^[0-9a-f]{32}$/.test(body.device) ? body.device : null;
     if (!key || !device) return json({ ok: false, reason: "unknown", contact: await stub.contact() }, 403);
     const r = await stub.activate(key, device, deviceLabel(request.headers.get("User-Agent") || ""), { onlyKnown: path === "/api/check" });
-    return r.ok ? json({ ok: true }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
+    return r.ok ? json({ ok: true, team: Boolean(r.team) }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
   }
   if (path === "/api/contact" && request.method === "GET") return json({ contact: await stub.contact() });
+
+  // Teams.
+  const hex32 = (v) => (typeof v === "string" && /^[0-9a-f]{32}$/.test(v) ? v : null);
+  if (path === "/api/team/sync" && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 400000); } catch { return json({ error: "too big or not JSON" }, 400); }
+    const key = hex32(body.key), device = hex32(body.device);
+    const list = Array.isArray(body.invoices) ? body.invoices.slice(0, 50) : null;
+    if (!key || !device || !list) return json({ ok: false, reason: "unknown" }, 400);
+    const clean = list.map(cleanInvoice).filter(Boolean);
+    const r = await stub.teamSync(key, device, String(body.rep || "").replace(/\s+/g, " ").trim().slice(0, 60), clean);
+    return r.ok ? json({ ok: true, stored: r.stored }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
+  }
+  if (path === "/api/boss/activate" && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 1000); } catch { return json({ error: "bad request" }, 400); }
+    const boss = hex32(body.boss), device = hex32(body.device);
+    if (!boss || !device) return json({ ok: false, reason: "unknown", contact: await stub.contact() }, 403);
+    const r = await stub.bossActivate(boss, device, deviceLabel(request.headers.get("User-Agent") || ""));
+    return r.ok ? json(r) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
+  }
+  if ((path === "/api/boss/claim" || path === "/api/boss/login") && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 1000); } catch { return json({ error: "bad request" }, 400); }
+    const boss = hex32(body.boss), device = hex32(body.device);
+    const passcode = typeof body.passcode === "string" ? body.passcode : "";
+    if (!boss || !device) return json({ error: "bad request" }, 400);
+    if (passcode.length < 6 || passcode.length > 200) return json({ error: "The passcode needs at least 6 characters." }, 400);
+    const r = await stub.bossPasscode(boss, device, passcode, path.endsWith("claim"));
+    if (r.token) return json({ token: r.token });
+    if (r.error === "off") return json({ error: "This phone's access has been switched off.", reason: "off", contact: await stub.contact() }, 403);
+    if (r.error === "taken") return json({ error: "A boss passcode is already set. Enter it to open the dashboard." }, 409);
+    if (r.error === "unclaimed") return json({ error: "No boss passcode is set yet." }, 409);
+    if (r.error === "wait") return json({ error: "Too many wrong tries. Wait a few minutes, then try again." }, 429, { "Retry-After": String(r.retryAfter) });
+    return json({ error: `That passcode isn't right.${r.left ? ` ${r.left} more tr${r.left === 1 ? "y" : "ies"} before a short wait.` : ""}` }, 401);
+  }
+  const bossToken = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (path === "/api/boss/data" && request.method === "GET") {
+    const r = await stub.bossData(bossToken);
+    if (r.error === "signin") return json({ error: "Please enter your passcode again." }, 401);
+    if (r.error === "off") return json({ error: "This phone's access has been switched off.", reason: "off", contact: await stub.contact() }, 403);
+    return json(r);
+  }
+  if (path === "/api/boss/logout" && request.method === "POST") { await stub.bossLogout(bossToken); return new Response(null, { status: 204 }); }
 
   const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   if (path.startsWith("/api/console/") && !["/api/console/state", "/api/console/claim", "/api/console/login", "/api/console/logout"].includes(path)
@@ -299,8 +470,10 @@ async function api(request, env, path) {
     if (!name) return json({ error: "Type the buyer's name." }, 400);
     if (!Number.isInteger(devices) || devices < 1 || devices > 1000) return json({ error: "Choose how many devices (1 or more)." }, 400);
     if (String(body.amount ?? "").trim() === "" || !Number.isFinite(amount) || amount < 0 || amount > 1e9) return json({ error: "Type how much the buyer paid (0 or more)." }, 400);
-    const buyer = await stub.createBuyer(name, devices, Math.round(amount * 100));
-    return json({ buyer, link: `${new URL(request.url).origin}/?k=${buyer.id}` });
+    const kind = body.kind === "team" ? "team" : "solo";
+    const buyer = await stub.createBuyer(name, devices, Math.round(amount * 100), kind);
+    const origin = new URL(request.url).origin;
+    return json({ buyer, link: `${origin}/?k=${buyer.id}`, bossLink: buyer.bossKey ? `${origin}/boss?b=${buyer.bossKey}` : null });
   }
   if ((path === "/api/console/buyer-off" || path === "/api/console/device-off") && request.method === "POST") {
     let body;

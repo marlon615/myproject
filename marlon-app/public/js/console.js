@@ -176,6 +176,10 @@ function linkBox(link) {
 /** "New buyer link": name, how many devices (1, 2, 3 or another number) and how much was paid — all needed. */
 function newBuyerForm(onCreated) {
   const name = el("input", { type: "text", id: "con-buyer-name", maxlength: "80", autocomplete: "off", autocapitalize: "words", required: true });
+  const kinds = [["solo", "Solo", "one business"], ["team", "Team", "a boss and sales reps"]].map(([v, label, sub]) => el("label", { class: "con-chip con-kind" },
+    el("input", { type: "radio", name: "con-kind", value: v, checked: v === "solo" }), el("span", {}, label, el("small", {}, ` · ${sub}`))));
+  const kind = () => kinds.map((c) => c.querySelector("input")).find((i) => i.checked)?.value || "solo";
+  const devicesLegend = el("legend", {}, "How many devices is it for?");
   const choices = ["1", "2", "3", "other"].map((v) => el("label", { class: "con-chip" },
     el("input", { type: "radio", name: "con-devices", value: v }), el("span", {}, v === "other" ? "Another number" : v)));
   const other = el("input", { type: "number", id: "con-devices-other", min: "1", max: "1000", step: "1", inputmode: "numeric", placeholder: "How many?", hidden: true, "aria-label": "Number of devices" });
@@ -186,6 +190,7 @@ function newBuyerForm(onCreated) {
   const devices = () => { const v = picked(); if (v === "other") { const n = Number(other.value); return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : null; } return v ? Number(v) : null; };
   const paid = () => { const t = amount.value.replace(/[$,\s]/g, ""); return /^\d+(\.\d{1,2})?$/.test(t) ? Number(t) : null; };
   const update = () => {
+    devicesLegend.textContent = kind() === "team" ? "How many sales reps (rep phones)?" : "How many devices is it for?";
     other.hidden = picked() !== "other";
     other.disabled = other.hidden; // a number left in it doesn't count (or block the form) once another choice is picked
     submit.disabled = !(name.value.trim() && devices() !== null && paid() !== null);
@@ -196,21 +201,39 @@ function newBuyerForm(onCreated) {
     if (submit.disabled) return;
     submit.disabled = true;
     error.hidden = true;
-    const r = await api("/api/console/buyers", { method: "POST", auth: true, body: { name: name.value.trim(), devices: devices(), amount: paid() } }).catch(() => ({ ok: false, data: { error: "No connection. Try again when you're online." } }));
+    const r = await api("/api/console/buyers", { method: "POST", auth: true, body: { name: name.value.trim(), devices: devices(), amount: paid(), kind: kind() } }).catch(() => ({ ok: false, data: { error: "No connection. Try again when you're online." } }));
     if (r.status === 401) { setToken(""); start(); return; }
     if (!r.ok) { error.textContent = r.data.error || "That didn't work. Please try again."; error.hidden = false; update(); return; }
     onCreated(r.data);
   } },
   el("h2", { id: "con-h-new" }, "New buyer link"),
-  el("label", { class: "con-field" }, "Buyer's name", name),
-  el("fieldset", { class: "con-field con-devices" }, el("legend", {}, "How many devices is it for?"), el("div", { class: "con-chips" }, choices), other),
+  el("fieldset", { class: "con-field" }, el("legend", {}, "Solo or Team?"), el("div", { class: "con-chips" }, kinds)),
+  el("label", { class: "con-field" }, "Buyer's name (for a team: the company)", name),
+  el("fieldset", { class: "con-field con-devices" }, devicesLegend, el("div", { class: "con-chips" }, choices), other),
   el("label", { class: "con-field" }, "How much did they pay?", el("span", { class: "con-money" }, el("span", { "aria-hidden": "true" }, "$"), amount)),
-  el("p", { class: "con-note" }, "The link works on the first phones that open it, up to this number. Any other phone is blocked and told to contact you."),
+  el("p", { class: "con-note" }, "The link works on the first phones that open it, up to this number. Any other phone is blocked and told to contact you. A team also gets a boss link for the boss's phone."),
   error, submit);
   return form;
 }
 
+const bossLinkFor = (key) => `${location.origin}/boss?b=${key}`;
+
+function phoneList(b, list, refresh, { boss = false } = {}) {
+  if (!list.length) return el("p", { class: "con-note" }, boss ? "The boss hasn't opened the boss link yet." : "No phone has opened this link yet.");
+  return el("ul", { class: "con-phones" }, list.map((d, i) => el("li", { class: d.off ? "con-phone is-off" : "con-phone" },
+    el("div", {}, el("strong", {}, `${i + 1}. ${boss ? "Boss · " : d.repName ? `${d.repName} · ` : ""}${d.label || "Device"}`),
+      el("span", { class: "con-phone-meta" }, `${d.off ? "Switched off" : "Active"} · since ${dateText(d.firstAt)} · last seen ${dateText(d.lastAt)}`)),
+    el("button", { type: "button", class: d.off ? "btn" : "btn btn-ghost con-danger", onclick: async () => {
+      const who = boss ? `${b.name}'s boss phone` : d.repName ? `${d.repName}'s phone` : `${b.name}'s ${d.label || "device"}`;
+      if (!d.off && !confirm(`Switch off ${who}? It stops working the next time it's online${boss ? "" : ", and frees a place for another phone"}.`)) return;
+      const r = await api("/api/console/device-off", { method: "POST", auth: true, body: { id: b.id, device: d.device, off: !d.off } }).catch(() => ({ ok: false, data: {} }));
+      if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
+      refresh();
+    } }, d.off ? "Switch on" : "Switch off"))));
+}
+
 function buyerCard(b, refresh) {
+  if (b.kind === "team") return teamCard(b, refresh);
   const toggleBuyer = el("button", { type: "button", class: b.off ? "btn" : "btn btn-ghost con-danger", onclick: async () => {
     if (!b.off && !confirm(`Switch off ${b.name}? All their phones stop opening Marlon the next time they're online.`)) return;
     const r = await api("/api/console/buyer-off", { method: "POST", auth: true, body: { id: b.id, off: !b.off } }).catch(() => ({ ok: false, data: {} }));
@@ -235,6 +258,25 @@ function buyerCard(b, refresh) {
     el("div", { class: "con-actions" }, toggleBuyer));
 }
 
+function teamCard(b, refresh) {
+  const toggle = el("button", { type: "button", class: b.off ? "btn" : "btn btn-ghost con-danger", onclick: async () => {
+    if (!b.off && !confirm(`Switch off the whole company ${b.name}? The boss and every rep stop working the next time they're online.`)) return;
+    const r = await api("/api/console/buyer-off", { method: "POST", auth: true, body: { id: b.id, off: !b.off } }).catch(() => ({ ok: false, data: {} }));
+    if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
+    refresh();
+  } }, b.off ? "Switch company on again" : "Switch off whole company");
+  return el("article", { class: b.off ? "card con-card con-buyer con-team is-off" : "card con-card con-buyer con-team", "data-id": b.id },
+    el("div", { class: "con-buyer-head" },
+      el("h3", {}, b.name, el("span", { class: "con-badge con-badge-team" }, "Team"), b.off ? el("span", { class: "con-badge" }, "Switched off") : null),
+      el("strong", { class: "num" }, money(b.amountCents))),
+    el("p", { class: "con-buyer-meta" }, `${b.active} of ${b.devices} rep phone${b.devices === 1 ? "" : "s"} in use · ${b.invoices} invoice${b.invoices === 1 ? "" : "s"} sent to the boss · created ${dateText(b.created)}`),
+    el("h4", { class: "con-sub" }, "Boss phone"), phoneList(b, b.bossPhones, refresh, { boss: true }),
+    el("h4", { class: "con-sub" }, "Rep phones"), phoneList(b, b.phones, refresh),
+    el("details", { class: "con-buyer-link" }, el("summary", {}, "Their links"),
+      el("p", { class: "con-note" }, "Rep link:"), linkBox(linkFor(b.id)), el("p", { class: "con-note" }, "Boss link:"), linkBox(bossLinkFor(b.bossKey))),
+    el("div", { class: "con-actions" }, toggle));
+}
+
 function contactForm(contact, refresh) {
   const input = el("input", { type: "text", id: "con-contact", maxlength: "200", value: contact || "", placeholder: "e.g. your name and WhatsApp number" });
   return el("form", { class: "card con-card", "aria-labelledby": "con-h-contact", onsubmit: async (e) => {
@@ -257,8 +299,13 @@ function buyersSection(data, refresh) {
       tile("Buyers", data.buyers.length, `${fmt(data.buyers.filter((b) => b.off).length)} switched off`),
       tile("Phones active", phonesActive, "on all buyers")),
     newBuyerForm((r) => {
-      refresh(el("div", { class: "card con-card con-created" }, el("h2", {}, `Link for ${r.buyer.name}`),
-        el("p", { class: "con-note" }, `${r.buyer.devices} device${r.buyer.devices === 1 ? "" : "s"} · paid ${money(r.buyer.amountCents)}. Send this link to the buyer:`), linkBox(r.link)));
+      refresh(r.bossLink
+        ? el("div", { class: "card con-card con-created" }, el("h2", {}, `Team links for ${r.buyer.name}`),
+          el("p", { class: "con-note" }, `${r.buyer.devices} rep phone${r.buyer.devices === 1 ? "" : "s"} · paid ${money(r.buyer.amountCents)}.`),
+          el("h3", {}, "Rep link — send to each sales rep"), el("div", { class: "con-rep-link" }, linkBox(r.link)),
+          el("h3", {}, "Boss link — send to the boss only"), el("div", { class: "con-boss-link" }, linkBox(r.bossLink)))
+        : el("div", { class: "card con-card con-created" }, el("h2", {}, `Link for ${r.buyer.name}`),
+          el("p", { class: "con-note" }, `${r.buyer.devices} device${r.buyer.devices === 1 ? "" : "s"} · paid ${money(r.buyer.amountCents)}. Send this link to the buyer:`), linkBox(r.link)));
     }),
     el("section", { class: "con-buyers", "aria-labelledby": "con-h-buyers" },
       el("h2", { id: "con-h-buyers" }, "Buyers"),

@@ -43,6 +43,26 @@ nobody ever sees anyone else's data. The owner's own app
   - Settings: business details, products and prices, backup and restore, printer, anonymous counts on or off.
 - **Offline:** works with no internet after the first open. Updates install by themselves.
 
+## Team version
+
+When creating a buyer in the console, choose **Solo** (one business, as above) or **Team** (a company with one boss
+and several sales reps). A team gets two links:
+- **Rep link** (`/?k=…`): works on as many rep phones as you set. Reps use Marlon just like a solo business, and
+  type their own name at setup. Every invoice is saved on the phone first. Whenever there's internet, it's sent to
+  the boss automatically (new and changed invoices within about 10 seconds). With no signal it waits and goes as soon
+  as there's a connection. Only the boss dashboard's fields are sent, not the signature picture. The same invoice
+  sent again just updates it.
+- **Boss link** (`/boss?b=…`): the boss's private dashboard, on up to 2 boss phones (on iPhone the browser and the
+  Home Screen icon count separately). The first visit sets the boss's own passcode (5 wrong tries per 15 minutes).
+  It shows:
+  - every invoice from every rep, with the rep, customer, products, total, and paid or not paid;
+  - totals for today, this week (Monday to Sunday) and this month, per rep and for the whole company;
+  - when offline, the last data it loaded.
+
+In the console a team shows its boss phones and each rep phone by name. Switch off one rep (that phone is blocked
+and can't send) or the whole company (the boss and every rep are blocked). Team invoices are kept on the server,
+in the same Durable Object; solo businesses still send nothing.
+
 ## The maker's console
 
 **Buyers:**

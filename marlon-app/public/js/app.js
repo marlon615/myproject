@@ -6,6 +6,7 @@ import { init as initDb, invoices, products, profile, settings } from "./db.js";
 import { runSetup } from "./setup.js";
 import { track } from "./usage.js";
 import { ensureAccess } from "./license.js";
+import { startTeamSync } from "./team.js";
 import {
   business, setBusiness, UNITS, UNIT_NAMES, debounce, defaultUnitFor, fillUsualPrice, h, invoiceNo, itemsMissingPrice, lineTotal, money,
   normalizeUnit, parseAmount, priceInputText, qtyText, storeKey, sumTotals, todayISO, uid, withTotals,
@@ -86,7 +87,7 @@ async function start() {
     el.brandBar.classList.add("is-setup");
     el.setup.hidden = false;
     signalReady();
-    me = await runSetup(el.setup);
+    me = await runSetup(el.setup, { team: access.team });
     el.setup.hidden = true;
     el.setup.replaceChildren();
     el.main.hidden = false;
@@ -95,6 +96,7 @@ async function start() {
   }
   setBusiness(me);
   renderCompany();
+  if (access.team) startTeamSync(); // team rep: invoices go to the boss whenever there's internet
   track("open");
   state.qrMode = (await settings.get("qrMode", "link")) === "text" ? "text" : "link";
   state.products = await products.all();

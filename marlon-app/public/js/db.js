@@ -248,6 +248,7 @@ export const profile = {
   async get() { return settings.get("business", null); },
   async set(b) {
     const clean = { name: tidy(b.name).replace(/\n/g, " "), address: tidy(b.address || ""), phone: tidy(b.phone || "").replace(/\n/g, " "), setupAt: b.setupAt || new Date().toISOString() };
+    if (b.repName !== undefined) clean.repName = tidy(b.repName).replace(/\n/g, " ").slice(0, 60); // team reps: their own name
     if (!clean.name) throw new Error("Type your company name first.");
     await settings.set("business", clean);
     return clean;

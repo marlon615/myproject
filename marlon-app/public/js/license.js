@@ -72,7 +72,7 @@ export async function ensureAccess(container) {
     if (saved.state === "off") return recheckOff(saved);
     cleanUrl();
     checkLater(saved); // when online: is this phone still switched on? (never holds up opening the app)
-    return { ok: true };
+    return { ok: true, team: Boolean(saved.team) };
   }
   if (!urlKey) return show("nolink", await contactText());
   if (iosBrowser()) return showInstall(urlKey, "ios");
@@ -90,9 +90,9 @@ async function activate(key) {
     return show("offline", "", () => location.reload());
   }
   if (r.ok) {
-    await settings.set("license", { key, device, state: "on", at: new Date().toISOString() });
+    await settings.set("license", { key, device, state: "on", team: Boolean(r.team), at: new Date().toISOString() });
     cleanUrl();
-    return { ok: true, activated: true };
+    return { ok: true, activated: true, team: Boolean(r.team) };
   }
   await settings.set("licenseContact", r.contact || "");
   return show(r.reason === "full" ? "full" : "off", r.contact || "");
@@ -103,9 +103,9 @@ async function recheckOff(saved) {
   try {
     const r = await call("/api/check", { key: saved.key, device: saved.device });
     if (r.ok) {
-      await settings.set("license", { ...saved, state: "on" });
+      await settings.set("license", { ...saved, state: "on", team: Boolean(r.team) });
       cleanUrl();
-      return { ok: true };
+      return { ok: true, team: Boolean(r.team) };
     }
     await settings.set("licenseContact", r.contact || "");
   } catch { /* offline: stays blocked */ }
@@ -117,7 +117,8 @@ function checkLater(saved) {
     if (navigator.onLine === false) return;
     try {
       const r = await call("/api/check", { key: saved.key, device: saved.device });
-      if (r.ok || r.reason === undefined) return;
+      if (r.ok) { if (Boolean(r.team) !== Boolean(saved.team)) await settings.set("license", { ...saved, team: Boolean(r.team) }); return; }
+      if (r.reason === undefined) return;
       await settings.set("license", { ...saved, state: "off" });
       await settings.set("licenseContact", r.contact || "");
       show("off", r.contact || "");
