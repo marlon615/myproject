@@ -47,15 +47,19 @@ nobody ever sees anyone else's data. The owner's own app
 
 When creating a buyer in the console, choose **Solo** (one business, as above) or **Team** (a company with one boss
 and several sales reps). A team gets two links:
-- **Rep link** (`/?k=…`): works on as many rep phones as you set. Reps use Marlon just like a solo business, and
-  type their own name at setup. Every invoice is saved on the phone first. Whenever there's internet, it's sent to
-  the boss automatically (new and changed invoices within about 10 seconds). With no signal it waits and goes as soon
-  as there's a connection. Only the boss dashboard's fields are sent, not the signature picture. The same invoice
-  sent again just updates it.
+- **Rep links** (`/?k=…`), one per rep. Each locks to the first phone that opens it, so passing it on does nothing.
+  "Copy all rep links + boss link" puts them in one numbered message. "Replace link" kills a rep's link (and
+  switches off the phone on it) and makes a new one. Teams made before personal rep links keep their shared rep
+  link. Reps use Marlon like a solo business and type their own name at setup. Every invoice is saved on the phone
+  first. Whenever there's internet, it's sent to the boss automatically (new and changed invoices within about
+  10 seconds). With no signal it waits and goes as soon as there's a connection. The phone also asks once a minute
+  whether the boss marked any of its invoices paid.
 - **Boss link** (`/boss?b=…`): the boss's private dashboard, on up to 2 boss phones (on iPhone the browser and the
   Home Screen icon count separately). The first visit sets the boss's own passcode (5 wrong tries per 15 minutes).
   It shows:
   - every invoice from every rep, with the rep, customer, products, total, and paid or not paid;
+  - **Mark paid**, the only change the boss can make: he ticks a rep's unpaid invoice as paid. It shows as paid
+    on the rep's phone too, and a rep's phone can never undo it. The boss can't write or edit invoices;
   - totals for today, this week (Monday to Sunday) and this month, per rep and for the whole company;
   - when offline, the last data it loaded.
 

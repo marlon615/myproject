@@ -218,6 +218,41 @@ function newBuyerForm(onCreated) {
 
 const bossLinkFor = (key) => `${location.origin}/boss?b=${key}`;
 
+/** Every rep link as one numbered message (plus the boss link), ready to send to the boss. */
+function allRepLinks(company, links, bossLink) {
+  const text = `Marlon for ${company}\n\nBoss link (for the boss only):\n${bossLink}\n\nRep links — one per rep, each works on one phone only:\n${links.map((l, i) => `Rep ${i + 1}: ${l}`).join("\n")}`;
+  const copy = el("button", { type: "button", class: "btn btn-primary con-copy-all", onclick: (e) => copyText(text, e.currentTarget) }, `Copy all ${links.length} rep links + boss link`);
+  const share = navigator.share ? el("button", { type: "button", class: "btn btn-ghost", onclick: () => navigator.share({ title: `Marlon for ${company}`, text }).catch(() => {}) }, "Share") : null;
+  return el("div", { class: "con-replinks" },
+    el("div", { class: "con-actions" }, copy, share),
+    el("ol", { class: "con-replist" }, links.map((l, i) => el("li", { class: "con-rep-link" }, el("span", {}, `Rep ${i + 1}`), linkBox(l)))));
+}
+
+/** A team's reps: one row per rep link, with the phone that took it (if any). */
+function slotList(b, refresh) {
+  return el("ul", { class: "con-phones con-slots" }, b.slots.map((slot) => {
+    const d = slot.phone;
+    const link = `${location.origin}/?k=${slot.key}`;
+    const copy = el("button", { type: "button", class: "btn btn-ghost", onclick: (e) => copyText(link, e.currentTarget) }, "Copy link");
+    const replace = el("button", { type: "button", class: "btn btn-ghost con-danger", onclick: async () => {
+      if (!confirm(`Replace rep ${slot.n}'s link? The old link stops working at once${d ? " and the phone on it is switched off" : ""}. Then send the new link to the rep.`)) return;
+      const r = await api("/api/console/replace-rep-link", { method: "POST", auth: true, body: { id: b.id, n: slot.n } }).catch(() => ({ ok: false, data: {} }));
+      if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
+      refresh();
+    } }, "Replace link");
+    const toggle = d ? el("button", { type: "button", class: d.off ? "btn" : "btn btn-ghost con-danger", onclick: async () => {
+      if (!d.off && !confirm(`Switch off ${d.repName || `rep ${slot.n}`}'s phone? It stops working the next time it's online.`)) return;
+      const r = await api("/api/console/device-off", { method: "POST", auth: true, body: { id: b.id, device: d.device, off: !d.off } }).catch(() => ({ ok: false, data: {} }));
+      if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
+      refresh();
+    } }, d.off ? "Switch on" : "Switch off") : null;
+    return el("li", { class: d?.off ? "con-phone con-slot is-off" : "con-phone con-slot", "data-n": slot.n },
+      el("div", {}, el("strong", {}, `Rep ${slot.n}${d ? ` · ${d.repName || "no name yet"} · ${d.label || "Device"}` : ""}`),
+        el("span", { class: "con-phone-meta" }, d ? `${d.off ? "Switched off" : "Active"} · since ${dateText(d.firstAt)} · last seen ${dateText(d.lastAt)}` : "Link not opened yet")),
+      el("div", { class: "con-slot-actions" }, toggle, copy, replace));
+  }));
+}
+
 function phoneList(b, list, refresh, { boss = false } = {}) {
   if (!list.length) return el("p", { class: "con-note" }, boss ? "The boss hasn't opened the boss link yet." : "No phone has opened this link yet.");
   return el("ul", { class: "con-phones" }, list.map((d, i) => el("li", { class: d.off ? "con-phone is-off" : "con-phone" },
@@ -271,9 +306,11 @@ function teamCard(b, refresh) {
       el("strong", { class: "num" }, money(b.amountCents))),
     el("p", { class: "con-buyer-meta" }, `${b.active} of ${b.devices} rep phone${b.devices === 1 ? "" : "s"} in use · ${b.invoices} invoice${b.invoices === 1 ? "" : "s"} sent to the boss · created ${dateText(b.created)}`),
     el("h4", { class: "con-sub" }, "Boss phone"), phoneList(b, b.bossPhones, refresh, { boss: true }),
-    el("h4", { class: "con-sub" }, "Rep phones"), phoneList(b, b.phones, refresh),
+    el("h4", { class: "con-sub" }, "Reps"), b.slots.length ? slotList(b, refresh) : phoneList(b, b.phones, refresh),
     el("details", { class: "con-buyer-link" }, el("summary", {}, "Their links"),
-      el("p", { class: "con-note" }, "Rep link:"), linkBox(linkFor(b.id)), el("p", { class: "con-note" }, "Boss link:"), linkBox(bossLinkFor(b.bossKey))),
+      b.slots.length
+        ? allRepLinks(b.name, b.slots.map((x) => `${location.origin}/?k=${x.key}`), bossLinkFor(b.bossKey))
+        : [el("p", { class: "con-note" }, "Rep link (shared, from before personal rep links):"), linkBox(linkFor(b.id)), el("p", { class: "con-note" }, "Boss link:"), linkBox(bossLinkFor(b.bossKey))]),
     el("div", { class: "con-actions" }, toggle));
 }
 
@@ -301,9 +338,11 @@ function buyersSection(data, refresh) {
     newBuyerForm((r) => {
       refresh(r.bossLink
         ? el("div", { class: "card con-card con-created" }, el("h2", {}, `Team links for ${r.buyer.name}`),
-          el("p", { class: "con-note" }, `${r.buyer.devices} rep phone${r.buyer.devices === 1 ? "" : "s"} · paid ${money(r.buyer.amountCents)}.`),
-          el("h3", {}, "Rep link — send to each sales rep"), el("div", { class: "con-rep-link" }, linkBox(r.link)),
-          el("h3", {}, "Boss link — send to the boss only"), el("div", { class: "con-boss-link" }, linkBox(r.bossLink)))
+          el("p", { class: "con-note" }, `${r.buyer.devices} sales rep${r.buyer.devices === 1 ? "" : "s"} · paid ${money(r.buyer.amountCents)}.`),
+          el("h3", {}, "Boss link — for the boss only"), el("div", { class: "con-boss-link" }, linkBox(r.bossLink)),
+          el("h3", {}, `${r.repLinks.length} rep links — one for each rep`),
+          el("p", { class: "con-note" }, "Each link works on one phone only: the first phone that opens it. Give each rep their own link."),
+          allRepLinks(r.buyer.name, r.repLinks, r.bossLink))
         : el("div", { class: "card con-card con-created" }, el("h2", {}, `Link for ${r.buyer.name}`),
           el("p", { class: "con-note" }, `${r.buyer.devices} device${r.buyer.devices === 1 ? "" : "s"} · paid ${money(r.buyer.amountCents)}. Send this link to the buyer:`), linkBox(r.link)));
     }),

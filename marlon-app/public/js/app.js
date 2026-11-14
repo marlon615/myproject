@@ -96,7 +96,10 @@ async function start() {
   }
   setBusiness(me);
   renderCompany();
-  if (access.team) startTeamSync(); // team rep: invoices go to the boss whenever there's internet
+  if (access.team) {
+    startTeamSync(); // team rep: invoices go to the boss whenever there's internet
+    document.addEventListener("team:paid", (e) => toast(`Your boss marked ${e.detail.changed} invoice${e.detail.changed === 1 ? "" : "s"} as paid.`));
+  }
   track("open");
   state.qrMode = (await settings.get("qrMode", "link")) === "text" ? "text" : "link";
   state.products = await products.all();

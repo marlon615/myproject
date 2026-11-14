@@ -4,6 +4,8 @@
  *  - The first time, the boss sets his own passcode; after that it asks for it (5 wrong tries per 15 minutes).
  *  - Shows every invoice from every rep: which rep, the customer, the products, the total, paid or not paid,
  *    with totals for today, this week (Monday to Sunday) and this month per rep and for the whole company.
+ *  - The boss can tick any rep's invoice as paid ("Mark paid"); it then shows as paid on the rep's phone too.
+ *    That's the only change the boss can make: no writing or editing invoices.
  *  - Refreshes every 30 seconds while open. Offline, it shows what it last loaded (and says when that was).
  */
 const root = document.getElementById("boss");
@@ -101,6 +103,23 @@ function gate(claimed, company, message = "") {
 
 // ── The dashboard ────────────────────────────────────────────────────────
 
+/** The one change the boss can make: tick a rep's invoice as paid (it then shows as paid on the rep's phone too). */
+async function markPaid(inv, rep, button, data) {
+  const what = `No. ${String(inv.number || "").padStart(4, "0")} · ${inv.store || "no customer name"} · ${money(inv.total)}`;
+  if (!confirm(`Mark this invoice as paid?\n\n${what}\nby ${rep || "a rep"}\n\nIt will show as paid on ${rep || "the rep"}'s phone too.`)) return;
+  button.disabled = true;
+  let r;
+  try { r = await call("/api/boss/paid", { method: "POST", body: { id: inv.id }, auth: true }); } catch { r = null; }
+  if (!r) { button.disabled = false; alert("No connection. Try again when you're online."); return; }
+  if (r.status === 401) { put(TOKEN, null, sessionStorage); start(); return; }
+  if (r.status === 403) { put(TOKEN, null, sessionStorage); blocked("Switched off", "This phone's access to the boss dashboard has been switched off.", r.data.contact); return; }
+  if (!r.ok) { button.disabled = false; alert(r.data.error || "That didn't work. Please try again."); return; }
+  const i = data.invoices.findIndex((x) => x.id === inv.id);
+  if (i >= 0) data.invoices[i] = { ...data.invoices[i], payment: r.data.invoice.payment };
+  put(CACHE, data);
+  render(data, false);
+}
+
 let refreshTimer = 0;
 async function load() {
   clearTimeout(refreshTimer);
@@ -161,7 +180,9 @@ function render(data, offline) {
         el("div", { class: "boss-inv-head" }, el("strong", {}, inv.store || "No customer name"), el("strong", { class: "num" }, money(inv.total))),
         el("p", { class: "boss-inv-meta" }, `No. ${String(inv.number || "").padStart(4, "0")} · ${dateText(inv.date)} · by ${repName.get(inv.rep) || "a rep"}`),
         el("ul", { class: "boss-items" }, inv.items.map((it) => el("li", {}, el("span", {}, `${qtyText(it.qty, it.unit)} × ${it.name}`), el("span", { class: "num" }, it.price === null ? "no price" : money(it.total))))),
-        el("span", { class: `boss-badge ${isPaid(inv) ? "is-paid" : "is-unpaid"}` }, isPaid(inv) ? "Paid" : inv.payment?.dueDate ? `Not paid · due ${dateText(inv.payment.dueDate)}` : "Not paid")))) :
+        el("div", { class: "boss-pay" },
+          el("span", { class: `boss-badge ${isPaid(inv) ? "is-paid" : "is-unpaid"}` }, isPaid(inv) ? (inv.payment?.markedBy === "boss" ? "Paid · marked by you" : "Paid") : inv.payment?.dueDate ? `Not paid · due ${dateText(inv.payment.dueDate)}` : "Not paid"),
+          isPaid(inv) ? null : el("button", { type: "button", class: "btn boss-mark-paid", onclick: (e) => markPaid(inv, repName.get(inv.rep), e.currentTarget, data) }, "Mark paid"))))) :
         el("p", { class: "boss-note" }, all.length ? "No invoices match." : "No invoices yet. They appear here as soon as your reps' phones are online.")),
     el("p", { class: "boss-note" }, `Updated ${new Date(data.loadedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. New invoices appear within about a minute of a rep's phone being online.`),
     el("div", { class: "boss-actions" },

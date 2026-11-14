@@ -8,6 +8,8 @@
  *
  * What's sent: the invoice number, date, customer (store and address), products (name, amount, unit, price,
  * line total), total, signed yes/no and payment (paid or not, due date). Not the signature picture.
+ * Back from the server: invoices the boss marked paid, which then show as paid on this phone too (once a minute
+ * while the app is open, and with every send).
  *
  *   startTeamSync()          // on a team rep's phone, after the app has opened
  *   syncNow() → { sent, waiting }
@@ -18,6 +20,24 @@ import { withTotals } from "./util.js";
 const SENT = "teamSent"; // invoice id → what was last sent (exactly), so only changes go again
 let running = null;
 let started = false;
+let lastAsked = 0; // when this phone last asked the server what the boss marked paid
+const ASK_EVERY = 60000;
+
+/** The boss marked some of this phone's invoices paid: show it here too (the next send carries it back). */
+async function applyBossPaid(list) {
+  let changed = 0;
+  for (const { id, paidAt } of list || []) {
+    const inv = await invoices.get(id);
+    if (!inv || inv.payment?.status === "paid") continue;
+    const payment = inv.payment
+      ? { ...inv.payment, status: "paid", paidAt, markedBy: "boss" }
+      : { status: "paid", method: "boss", termsDays: null, dueDate: null, recordedAt: paidAt, paidAt, markedBy: "boss" };
+    await invoices.put({ ...inv, payment });
+    changed++;
+  }
+  if (changed) document.dispatchEvent(new CustomEvent("team:paid", { detail: { changed } }));
+  return changed;
+}
 
 /** What the boss sees of an invoice. Drafts with nothing on them yet aren't sent. */
 function forBoss(inv) {
@@ -27,7 +47,8 @@ function forBoss(inv) {
     id: t.id, number: t.number, date: t.date, store: t.store || "", address: t.address || "", total: t.total,
     signed: Boolean(t.signature),
     items: t.items.map((it) => ({ name: it.name, qty: it.qty, unit: it.unit || "each", price: it.price, total: it.total })),
-    payment: t.payment ? { status: t.payment.status, method: t.payment.method || "", termsDays: t.payment.termsDays ?? null, dueDate: t.payment.dueDate || "", paidAt: t.payment.paidAt || "" } : null,
+    payment: t.payment ? { status: t.payment.status, method: t.payment.method || "", termsDays: t.payment.termsDays ?? null, dueDate: t.payment.dueDate || "", paidAt: t.payment.paidAt || "",
+      ...(t.payment.markedBy === "boss" ? { markedBy: "boss" } : {}) } : null,
     updatedAt: t.updatedAt || "",
   };
 }
@@ -47,8 +68,10 @@ export async function syncNow() {
       if (sent[b.id] !== text) pending.push({ b, text });
     }
     let done = 0;
+    // Nothing to send: still ask (once a minute) whether the boss marked anything paid.
+    if (!pending.length && Date.now() - lastAsked >= ASK_EVERY) pending.push(null);
     for (let i = 0; i < pending.length; i += 50) {
-      const batch = pending.slice(i, i + 50);
+      const batch = pending.slice(i, i + 50).filter(Boolean);
       let res;
       try {
         res = await fetch("/api/team/sync", {
@@ -57,12 +80,14 @@ export async function syncNow() {
         });
       } catch { break; } // no signal: try again later
       if (!res.ok) break; // switched off (the licence check blocks the app) or a server hiccup: try later
-      const { stored = [] } = await res.json().catch(() => ({}));
+      lastAsked = Date.now();
+      const { stored = [], paid = [] } = await res.json().catch(() => ({}));
+      await applyBossPaid(paid);
       const now = (await settings.get(SENT, {})) || {};
       for (const x of batch) if (stored.includes(x.b.id)) { now[x.b.id] = x.text; done++; }
       await settings.set(SENT, now);
     }
-    return { sent: done, waiting: pending.length - done };
+    return { sent: done, waiting: pending.filter(Boolean).length - done };
   })().finally(() => { running = null; });
   return running;
 }
@@ -75,5 +100,5 @@ export function startTeamSync() {
   setInterval(kick, 8000);                         // new or changed invoices go within a few seconds
   window.addEventListener("online", kick);          // the signal is back: send what's waiting
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") kick(); });
-  window.__teamSync = syncNow;                      // (used by the tests)
+  window.__teamSync = () => { lastAsked = 0; return syncNow(); }; // (used by the tests: ask right away)
 }

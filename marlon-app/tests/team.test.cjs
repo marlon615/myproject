@@ -75,7 +75,7 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     // ── Upgrade: the previous Worker (no teams) saves a buyer; the new Worker keeps it ─────────────────────────
     const oldDir = fs.mkdtempSync(path.join(os.tmpdir(), "marlon-old-worker-"));
     fs.mkdirSync(path.join(oldDir, "worker"));
-    fs.writeFileSync(path.join(oldDir, "worker", "index.js"), execFileSync("git", ["show", "007242c:marlon-app/worker/index.js"], { cwd: APP }));
+    fs.writeFileSync(path.join(oldDir, "worker", "index.js"), execFileSync("git", ["show", "b5c9a8b:marlon-app/worker/index.js"], { cwd: APP }));
     fs.copyFileSync(path.join(APP, "worker", "assets.generated.js"), path.join(oldDir, "worker", "assets.generated.js"));
     fs.copyFileSync(path.join(APP, "wrangler.toml"), path.join(oldDir, "wrangler.toml"));
     w = startWorker(stateDir, oldDir);
@@ -84,6 +84,8 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     const oldBuyer = await (await post("/api/console/buyers", { name: "Old Solo Shop", devices: 1, amount: 99 }, token0)).json();
     const oldPhone = "c".repeat(32);
     check((await post("/api/activate", { key: oldBuyer.buyer.id, device: oldPhone })).status === 200, "previous version: a solo buyer and phone saved");
+    const oldTeam = await (await post("/api/console/buyers", { name: "Old Team Co", devices: 3, amount: 10, kind: "team" }, token0)).json();
+    check((await post("/api/activate", { key: oldTeam.buyer.id, device: "e".repeat(32) })).status === 200, "previous version: a team with the old shared rep link, one rep phone in");
     await w.stop();
     fs.rmSync(oldDir, { recursive: true, force: true });
     w = startWorker(stateDir);
@@ -93,11 +95,15 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     const list0 = await (await fetch(`${BASE}/api/console/buyers`, { headers: { Authorization: `Bearer ${token}` } })).json();
     const kept = list0.buyers.find((b) => b.id === oldBuyer.buyer.id);
     const recheck = await (await post("/api/check", { key: oldBuyer.buyer.id, device: oldPhone })).json();
-    check(kept && kept.kind === "solo" && kept.phones.length === 1 && list0.totalCents === 9900 && recheck.ok && recheck.team === false,
+    check(kept && kept.kind === "solo" && kept.phones.length === 1 && list0.totalCents === 10900 && recheck.ok && recheck.team === false,
       "after the upgrade: the old buyer, its phone and the money total are all kept, and it still works as solo", JSON.stringify({ kind: kept?.kind, phones: kept?.phones.length, total: list0.totalCents, recheck }));
+    const legacy = await (await post("/api/activate", { key: oldTeam.buyer.id, device: "f".repeat(32) })).json();
+    check(legacy.ok && legacy.team, "after the upgrade: a team made before personal rep links keeps its shared rep link working", JSON.stringify(legacy));
     const soloSync = await post("/api/team/sync", { key: oldBuyer.buyer.id, device: oldPhone, rep: "x", invoices: [{ id: "inv_x", total: 1, items: [] }] });
     check(soloSync.status === 403, "a solo buyer can't send invoices anywhere", `HTTP ${soloSync.status}`);
     await post("/api/console/contact", { contact: "the seller on WhatsApp 876 555 0100" }, token);
+    const big = await (await post("/api/console/buyers", { name: "Big Team Ltd", devices: 25, amount: 2500, kind: "team" }, token)).json();
+    check(big.repLinks.length === 25 && new Set(big.repLinks).size === 25 && Boolean(big.bossLink), "a 25-rep team gets 25 separate rep links and one boss link", `${big.repLinks.length} rep links`);
 
     // ── The console: Solo or Team ───────────────────────────────────────────────────────────────────────────────
     const owner = await browser.newContext({ ...PHONE });
@@ -116,11 +122,16 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     await con.screenshot({ path: path.join(OUT, "team-1-new-team.png") });
     await con.click(".con-new button[type=submit]");
     await con.waitForSelector(".con-created .con-boss-link .con-link");
-    const repLink = await con.inputValue(".con-created .con-rep-link .con-link");
+    const repLinks = await con.locator(".con-created .con-rep-link .con-link").evaluateAll((xs) => xs.map((x) => x.value));
     const bossLink = await con.inputValue(".con-created .con-boss-link .con-link");
-    check(/\/\?k=[0-9a-f]{32}$/.test(repLink) && /\/boss\?b=[0-9a-f]{32}$/.test(bossLink), "a team gets two links: one for the reps, one for the boss", `${repLink} | ${bossLink}`);
+    check(repLinks.length === 2 && new Set(repLinks).size === 2 && repLinks.every((l) => /\/\?k=[0-9a-f]{32}$/.test(l)) && /\/boss\?b=[0-9a-f]{32}$/.test(bossLink),
+      "a 2-rep team gets a boss link and a separate personal link for each rep", `${repLinks.join(" | ")} | ${bossLink}`);
+    await con.locator(".con-created .con-copy-all").click();
+    const copied = await con.waitForFunction(() => /Copied/.test(document.querySelector(".con-created .con-copy-all")?.textContent || ""), null, { timeout: 3000 }).then(() => true, () => false);
+    check(copied, "'Copy all rep links + boss link' copies them as one message to send");
+    const repLink = repLinks[0];
     await con.screenshot({ path: path.join(OUT, "team-2-links.png") });
-    const teamId = new URL(repLink).searchParams.get("k");
+    const teamId = (await (await fetch(`${BASE}/api/console/buyers`, { headers: { Authorization: `Bearer ${token}` } })).json()).buyers.find((b) => b.name === "Island Fresh Distributors").id;
 
     // ── Rep A: name at setup, works offline, sends when online ──────────────────────────────────────────────────
     const ctxA = await browser.newContext({ ...PHONE });
@@ -153,16 +164,16 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     const ctxB = await browser.newContext({ ...PHONE });
     const B = await ctxB.newPage();
     watch(B, "rep B");
-    await B.goto(repLink);
+    await B.goto(repLinks[1]);
     await B.waitForSelector("#setup-rep");
     await B.fill("#setup-rep", "Bianca Grant");
     await setUp(B);
     await makeInvoice(B, "Corner Shop", [["Ginger Beer", 24, 150]]);
     const ctxC = await browser.newContext({ ...PHONE });
     const C = await ctxC.newPage();
-    await C.goto(repLink);
+    await C.goto(repLinks[0]);
     await C.waitForSelector(".gate[data-reason='full']");
-    check(true, "a third phone on a 2-rep team is blocked");
+    check(/already in use/.test(await C.textContent(".gate")), "Andre's link passed to someone else: their phone is blocked (it's locked to Andre's phone)");
     await ctxC.close();
     for (let i = 0; i < 40 && (n = await countOf()) < 3; i++) await A.waitForTimeout(500);
     check(n === 3, "every invoice from both reps reaches the server (no doubles)", `${n} invoices`);
@@ -199,6 +210,27 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     await boss.selectOption("#boss-status", "unpaid");
     check(await boss.locator(".boss-inv").count() === 2, "…or just the ones not paid yet");
     await boss.selectOption("#boss-status", "all");
+    // ── The boss marks a rep's invoice paid; it shows on the rep's phone ───────────────────────────────────────
+    check(await boss.locator("input, textarea").count() === 0 && await boss.locator(".boss-inv", { hasText: "Bay Market" }).locator(".boss-mark-paid").count() === 0,
+      "the boss can't type anything (no invoice writing); 'Mark paid' only shows on invoices not paid yet");
+    boss.once("dialog", (d) => d.accept());
+    await boss.locator(".boss-inv", { hasText: "Hill Top Grocery" }).locator(".boss-mark-paid").click();
+    await boss.waitForFunction(() => /Paid · marked by you/.test([...document.querySelectorAll(".boss-inv")].find((x) => /Hill Top/.test(x.textContent))?.textContent || ""));
+    check(true, "the boss ticks Andre's Hill Top Grocery invoice as paid");
+    await boss.screenshot({ path: path.join(OUT, "team-3b-boss-marked-paid.png") });
+    await A.evaluate(() => window.__teamSync());
+    const onRep = await A.evaluate(async () => (await (await import("/js/db.js")).invoices.all()).find((i) => i.store === "Hill Top Grocery").payment);
+    check(onRep?.status === "paid" && onRep.markedBy === "boss", "…and it shows as paid on Andre's phone", JSON.stringify(onRep));
+    const repView = await A.evaluate(async () => { const { paymentState } = await import("/js/payment.js"); const db = await import("/js/db.js"); return paymentState((await db.invoices.all()).find((i) => i.store === "Hill Top Grocery")).text; });
+    check(/marked by your boss/.test(repView), "the rep's own dashboard says it was marked paid by the boss", repView);
+    const aLic = await A.evaluate(async () => (await (await import("/js/db.js")).settings.get("license")));
+    const stale = await post("/api/team/sync", { key: aLic.key, device: aLic.device, rep: "Andre Brown", invoices: [{ id: (await A.evaluate(async () => (await (await import("/js/db.js")).invoices.all()).find((i) => i.store === "Hill Top Grocery").id)), store: "Hill Top Grocery", total: 2760, items: [], payment: { status: "unpaid" } }] });
+    check(stale.ok, "an old 'not paid' copy sent from a phone is accepted…");
+    await boss.click("text=Refresh");
+    await boss.waitForTimeout(400);
+    check(/Paid · marked by you/.test(await boss.locator(".boss-inv", { hasText: "Hill Top Grocery" }).innerText()), "…but can't undo the boss's 'paid'");
+    const write = await fetch(`${BASE}/api/boss/invoices`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    check(write.status === 404, "there's no way for the boss to write invoices (the server has no such thing)", `HTTP ${write.status}`);
     // A change on a rep's phone (paid) reaches the boss.
     await markPaid(B, "Corner Shop");
     await B.waitForTimeout(9500);
@@ -237,7 +269,7 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     await team.screenshot({ path: path.join(OUT, "team-4-console-team.png") });
     con.once("dialog", (d) => d.accept());
     await team.locator(".con-phone", { hasText: "Andre Brown" }).getByRole("button", { name: "Switch off" }).click();
-    await con.waitForFunction(() => /1 of 2 rep phones in use/.test(document.querySelector(".con-team")?.textContent || ""));
+    await con.waitForFunction(() => /1 of 2 rep phones in use/.test([...document.querySelectorAll(".con-team")].find((x) => /Island Fresh/.test(x.textContent))?.textContent || ""));
     await A.reload();
     await A.waitForSelector(".gate[data-reason='off']", { timeout: 8000 });
     const repA = await A.evaluate(async () => (await (await import("/js/db.js")).settings.get("license")));
@@ -246,9 +278,22 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     await B.reload();
     await B.waitForFunction(() => window.__appReady === true);
     check(await B.locator("#invoice-screen").isVisible(), "…while the other rep keeps working");
+    // Replace a rep's link: the old link dies and the phone on it is switched off; the new link works on a new phone.
     con.once("dialog", (d) => d.accept());
-    await con.locator(".con-team").getByRole("button", { name: "Switch off whole company" }).click();
-    await con.waitForSelector(".con-team.is-off");
+    await con.locator(".con-team", { hasText: "Island Fresh Distributors" }).locator(".con-slot[data-n='2']").getByRole("button", { name: "Replace link" }).click();
+    await con.waitForFunction(() => /Link not opened yet/.test([...document.querySelectorAll(".con-team")].find((x) => /Island Fresh/.test(x.textContent))?.querySelector(".con-slot[data-n='2']")?.textContent || ""));
+    await B.reload();
+    await B.waitForSelector(".gate[data-reason='off']", { timeout: 8000 });
+    const dead = await post("/api/activate", { key: new URL(repLinks[1]).searchParams.get("k"), device: "9".repeat(32) });
+    check((await dead.json()).reason === "unknown", "Replace link: the old link stops working and the phone on it is switched off");
+    const fresh = (await (await fetch(`${BASE}/api/console/buyers`, { headers: { Authorization: `Bearer ${token}` } })).json()).buyers.find((b) => b.id === teamId).slots.find((x) => x.n === 2).key;
+    check((await (await post("/api/activate", { key: fresh, device: "8".repeat(32) })).json()).ok, "…and the new link works on the rep's new phone");
+    await con.reload();
+    await con.waitForSelector(".con-team");
+    await con.locator(".con-team", { hasText: "Island Fresh Distributors" }).screenshot({ path: path.join(OUT, "team-4b-console-reps.png") });
+    con.once("dialog", (d) => d.accept());
+    await con.locator(".con-team", { hasText: "Island Fresh Distributors" }).getByRole("button", { name: "Switch off whole company" }).click();
+    await con.locator(".con-team.is-off", { hasText: "Island Fresh Distributors" }).waitFor();
     await boss.reload();
     await boss.waitForSelector("[data-reason='blocked']", { timeout: 8000 });
     await B.reload();

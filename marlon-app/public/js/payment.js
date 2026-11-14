@@ -59,6 +59,7 @@ export function paymentState(inv, today = todayISO()) {
   if (!p) return { kind: "none", text: "No payment set", short: "No payment set" };
   if (p.status === "paid") {
     const when = p.paidAt ? prettyDate(p.paidAt.slice(0, 10)) : "";
+    if (p.markedBy === "boss") return { kind: "paid", text: `Paid · marked by your boss${when ? ` on ${when}` : ""}`, short: "Paid · by boss" };
     if (p.method === "cash") return { kind: "paid", text: `Paid in cash${when ? ` · ${when}` : ""}`, short: "Paid · cash" };
     return { kind: "paid", text: `Paid${when ? ` on ${when}` : ""} (was ${p.termsDays} days, due ${dueText(p.dueDate, today)})`, short: "Paid" };
   }
