@@ -59,7 +59,7 @@ async function start() {
   if (!me?.boss) { blocked("Open your boss link", "The boss dashboard opens only from the boss link you got with your team's Marlon. Open that link on this phone.", ""); return; }
   if (!me.device) me.device = randomId();
   put(STORE, me);
-  if (fromUrl) history.replaceState(null, "", "/boss");
+  // (The boss link stays in the address, so a Home Screen icon made from this page opens the same dashboard.)
   let r;
   try { r = await call("/api/boss/activate", { method: "POST", body: me }); } catch { r = null; }
   if (!r) { const cached = get(CACHE); if (cached) { render(cached, true); return; } blocked("Connect to the internet", "The boss dashboard needs the internet to load your team's invoices.", ""); return; }

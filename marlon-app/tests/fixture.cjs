@@ -28,7 +28,7 @@ const BUSINESS = Object.freeze({
 async function setUp(page, b = BUSINESS) {
   await page.waitForFunction(() => window.__appReady === true, null, { timeout: 15000 });
   await page.waitForSelector("#setup-name", { timeout: 15000 });
-  await page.fill("#setup-name", b.name);
+  if (await page.getAttribute("#setup-name", "readonly") === null) await page.fill("#setup-name", b.name); // a team rep's company is filled in and locked
   await page.fill("#setup-address", b.address || "");
   await page.fill("#setup-phone", b.phone || "");
   const rows = () => page.locator(".setup-prow");

@@ -265,14 +265,22 @@ export class Stats extends DurableObject {
     if (d) {
       if (d.off) return { ok: false, reason: "off" };
       this.sql.exec("UPDATE buyer_devices SET last_at = ? WHERE buyer = ? AND device = ?", now, id, device);
-      return { ok: true, team: b.kind === "team" };
+      return { ok: true, team: b.kind === "team", company: b.kind === "team" ? b.name : "" };
     }
     if (onlyKnown) return { ok: false, reason: "off" };
     // A rep's personal link belongs to the first phone that opened it: any other phone is turned away.
     if (slot && b.phones.some((x) => x.slotKey === slot)) return { ok: false, reason: "full" };
     if (b.active >= b.devices) return { ok: false, reason: "full" };
     this.sql.exec("INSERT INTO buyer_devices (buyer, device, label, first_at, last_at, slot_key) VALUES (?, ?, ?, ?, ?, ?)", id, device, label, now, now, slot);
-    return { ok: true, team: b.kind === "team" };
+    return { ok: true, team: b.kind === "team", company: b.kind === "team" ? b.name : "" };
+  }
+
+  /** What a link is, without using it up (shown before switching a phone to it). */
+  linkInfo(key) {
+    const { b, slot } = this.#resolve(key);
+    if (!b) return { ok: false };
+    const n = slot ? b.slots.find((x) => x.key === slot)?.n : null;
+    return { ok: true, kind: b.kind, company: b.kind === "team" ? b.name : "", rep: n ?? null };
   }
 
   // ── Teams: reps send their invoices; the boss sees them all ───────────
@@ -467,9 +475,15 @@ async function api(request, env, path) {
     const device = typeof body.device === "string" && /^[0-9a-f]{32}$/.test(body.device) ? body.device : null;
     if (!key || !device) return json({ ok: false, reason: "unknown", contact: await stub.contact() }, 403);
     const r = await stub.activate(key, device, deviceLabel(request.headers.get("User-Agent") || ""), { onlyKnown: path === "/api/check" });
-    return r.ok ? json({ ok: true, team: Boolean(r.team) }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
+    return r.ok ? json({ ok: true, team: Boolean(r.team), company: r.company || "" }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
   }
   if (path === "/api/contact" && request.method === "GET") return json({ contact: await stub.contact() });
+  if (path === "/api/link-info" && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 500); } catch { return json({ ok: false }, 400); }
+    const key = typeof body.key === "string" && /^[0-9a-f]{32}$/.test(body.key) ? body.key : null;
+    return json(key ? await stub.linkInfo(key) : { ok: false });
+  }
 
   // Teams.
   const hex32 = (v) => (typeof v === "string" && /^[0-9a-f]{32}$/.test(v) ? v : null);
@@ -618,6 +632,7 @@ export default {
     if (path === "/manifest.webmanifest" && k && /^[0-9a-f]{32}$/.test(k) && FILES[path]) {
       const m = JSON.parse(FILES[path].text);
       m.start_url = `/?k=${k}`;
+      m.id = `/?k=${k}`; // each personal link installs as its own app (its own storage), never as another link's app
       return new Response(JSON.stringify(m), { headers: { "Content-Type": FILES[path].type, "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" } });
     }
     const key = path.endsWith("/") ? path + "index.html" : FILES[path] ? path : FILES[path + ".html"] ? path + ".html" : null;

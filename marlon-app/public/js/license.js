@@ -15,7 +15,7 @@
  *   Android: Chrome's menu → "Add to Home screen" / "Install app" (or Chrome's own Install button when it offers
  *            one); "use it here in Chrome" costs nothing extra, since Chrome and the installed app share storage.
  */
-import { settings } from "./db.js";
+import { eraseEverything, exportBackup, settings } from "./db.js";
 import { h } from "./util.js";
 
 const KEY = /^[0-9a-f]{32}$/;
@@ -68,11 +68,13 @@ export async function ensureAccess(container) {
   const saved = await settings.get("license", null);
   const urlKey = keyFromUrl();
 
+  // This phone already uses Marlon through another link: ask before switching (never ignore the link silently).
+  if (saved?.key && saved.device && urlKey && urlKey !== saved.key) return showSwitch(saved, urlKey);
   if (saved?.key && saved.device) {
     if (saved.state === "off") return recheckOff(saved);
     cleanUrl();
     checkLater(saved); // when online: is this phone still switched on? (never holds up opening the app)
-    return { ok: true, team: Boolean(saved.team) };
+    return { ok: true, team: Boolean(saved.team), company: saved.company || "" };
   }
   if (!urlKey) return show("nolink", await contactText());
   if (iosBrowser()) return showInstall(urlKey, "ios");
@@ -90,9 +92,9 @@ async function activate(key) {
     return show("offline", "", () => location.reload());
   }
   if (r.ok) {
-    await settings.set("license", { key, device, state: "on", team: Boolean(r.team), at: new Date().toISOString() });
+    await settings.set("license", { key, device, state: "on", team: Boolean(r.team), company: r.company || "", at: new Date().toISOString() });
     cleanUrl();
-    return { ok: true, activated: true, team: Boolean(r.team) };
+    return { ok: true, activated: true, team: Boolean(r.team), company: r.company || "" };
   }
   await settings.set("licenseContact", r.contact || "");
   return show(r.reason === "full" ? "full" : "off", r.contact || "");
@@ -135,6 +137,33 @@ const TEXT = {
   off: ["Marlon is switched off on this phone", "This phone's access to Marlon has been switched off."],
   offline: ["Connect to the internet once", "The first time, Marlon needs the internet for a moment to activate this phone. After that it works offline."],
 };
+
+/** Another personal link opened on a phone already set up: say what each is, and switch only if asked. */
+async function showSwitch(saved, newKey) {
+  let info = null;
+  try { info = await call("/api/link-info", { key: newKey }); } catch { /* offline */ }
+  const current = (await settings.get("business", null))?.name || "your business";
+  const target = info?.ok ? (info.kind === "team" ? `${info.company}${info.rep ? ` (rep ${info.rep})` : " (team)"}` : "another business") : "another Marlon link";
+  const keep = () => { cleanUrl(); location.replace(location.pathname); };
+  const sw = async () => {
+    if (!confirm(`Switch this phone to ${target}?\n\nThis erases ${current}'s invoices, customers and products from this phone.`)) return;
+    await eraseEverything();
+    try { localStorage.removeItem("marlon.setupDraft"); } catch { /* fine */ }
+    location.replace(`/?k=${newKey}`);
+  };
+  root.replaceChildren(h("div", { class: "gate card", dataset: { reason: "switch" } },
+    h("p", { class: "gate-kicker" }, "Marlon"),
+    h("h1", { class: "gate-title" }, "This phone already uses Marlon"),
+    h("p", { class: "gate-lead" }, `It's set up for ${current}. The link you just opened is for ${target}.`),
+    h("p", { class: "gate-lead" }, `Switching erases ${current}'s invoices, customers and products from this phone, so save a backup first if you need them.`),
+    h("button", { type: "button", class: "btn btn-primary btn-block gate-switch", onclick: sw }, `Switch to ${target}`),
+    h("button", { type: "button", class: "btn btn-block gate-backup", onclick: async () => {
+      try { const blob = new Blob([JSON.stringify(await exportBackup(), null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "marlon-backup.json"; a.click(); } catch { alert("Couldn't make the backup."); }
+    } }, "Save a backup first"),
+    h("button", { type: "button", class: "link-btn gate-keep", onclick: keep }, `Keep ${current}`)));
+  root.hidden = false;
+  return { ok: false, reason: "switch" };
+}
 
 /** The gate screen in place of the app. */
 function show(reason, contact, retry = () => location.reload()) {

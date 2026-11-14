@@ -185,6 +185,7 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     await boss.goto(bossLink);
     await boss.waitForSelector("#boss-pass2");
     check(/Island Fresh Distributors/.test(await boss.textContent("#boss")), "the boss link opens the boss dashboard on his phone, asking him to set his passcode");
+    check(/\/boss\?b=[0-9a-f]{32}$/.test(boss.url()), "the boss link stays in the address (a Home Screen icon made from it opens the same dashboard)", boss.url());
     await boss.fill("#boss-pass", "boss-secret-1");
     await boss.fill("#boss-pass2", "boss-secret-1");
     await boss.click("button[type=submit]");
@@ -288,6 +289,37 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     check((await dead.json()).reason === "unknown", "Replace link: the old link stops working and the phone on it is switched off");
     const fresh = (await (await fetch(`${BASE}/api/console/buyers`, { headers: { Authorization: `Bearer ${token}` } })).json()).buyers.find((b) => b.id === teamId).slots.find((x) => x.n === 2).key;
     check((await (await post("/api/activate", { key: fresh, device: "8".repeat(32) })).json()).ok, "…and the new link works on the rep's new phone");
+    // ── One phone, already set up as a solo business, opens a rep link: it asks, then switches to the team ───────
+    const solo = await (await post("/api/console/buyers", { name: "Test Company", devices: 2, amount: 1 }, token)).json();
+    const ctxS = await browser.newContext({ ...PHONE });
+    const S = await ctxS.newPage();
+    watch(S, "solo-then-rep phone");
+    await S.goto(solo.link);
+    await setUp(S, { name: "Test Company", address: "", phone: "", products: [{ name: "Juice", price: "100", unit: "each" }] });
+    const freshSlot = new URL(big.repLinks[1]).searchParams.get("k"); // Big Team Ltd's Rep 2 link, not opened yet
+    await S.goto(`${BASE}/?k=${freshSlot}`);
+    await S.waitForSelector(".gate[data-reason='switch']");
+    const sw = (await S.textContent(".gate")).replace(/\s+/g, " ");
+    check(/set up for Test Company/.test(sw) && /Big Team Ltd \(rep 2\)/.test(sw), "a phone already set up as Test Company that opens Rep 2's link: it says so and asks (no longer silently opens Test Company)", sw.slice(0, 160));
+    await S.screenshot({ path: path.join(OUT, "team-6-switch.png") });
+    S.once("dialog", (d) => d.accept());
+    await S.click(".gate-switch");
+    await S.waitForSelector("#setup-rep", { timeout: 10000 });
+    check(await S.inputValue("#setup-name") === "Big Team Ltd" && await S.getAttribute("#setup-name", "readonly") !== null && await S.locator(".prod-row").count() === 0,
+      "after switching: it opens as a rep of the team (company filled in and locked), with Test Company's products gone");
+    await S.fill("#setup-rep", "Carla Reid");
+    await setUp(S, { name: "Big Team Ltd", address: "", phone: "", products: [{ name: "Mango Juice", price: "250", unit: "each" }] });
+    check(await S.textContent("#company-name") === "Big Team Ltd", "…and works as that rep");
+    const m = await (await fetch(`${BASE}/manifest.webmanifest?k=${freshSlot}`)).json();
+    check(m.id === `/?k=${freshSlot}` && m.start_url === `/?k=${freshSlot}`, "on an iPhone, each personal link installs as its own Home Screen app (its own identity and storage)", JSON.stringify({ id: m.id, start: m.start_url }));
+    // Keep: opening another link and choosing to keep the current business changes nothing.
+    await S.goto(solo.link);
+    await S.waitForSelector(".gate[data-reason='switch']");
+    await S.click(".gate-keep");
+    await S.waitForFunction(() => window.__appReady === true && document.getElementById("company-name")?.textContent === "Big Team Ltd", null, { timeout: 8000 });
+    check(!S.url().includes("k="), "choosing 'Keep' leaves the phone as it was");
+    // The boss page keeps its link in the address (so a Home Screen icon of it opens the same dashboard).
+    await ctxS.close();
     await con.reload();
     await con.waitForSelector(".con-team");
     await con.locator(".con-team", { hasText: "Island Fresh Distributors" }).screenshot({ path: path.join(OUT, "team-4b-console-reps.png") });

@@ -15,7 +15,7 @@ const readDraft = () => { try { return JSON.parse(localStorage.getItem(DRAFT_KEY
 const writeDraft = (d) => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch { /* private mode: fine */ } };
 const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch { /* fine */ } };
 
-export function runSetup(root, { team = false } = {}) {
+export function runSetup(root, { team = false, company = "" } = {}) {
   return new Promise((resolve) => {
     const draft = readDraft() || {};
     const field = (label, control, hint = null) => h("label", { class: "setup-field" },
@@ -27,6 +27,7 @@ export function runSetup(root, { team = false } = {}) {
     const repName = team ? h("input", { type: "text", id: "setup-rep", autocomplete: "name", autocapitalize: "words", maxlength: "60", required: true, placeholder: "e.g. Andre Brown" }) : null;
     if (repName) repName.value = draft.repName || "";
     name.value = draft.name || "";
+    if (team && company) { name.value = company; name.readOnly = true; } // a team rep works for the team's company
     address.value = draft.address || "";
     phone.value = draft.phone || "";
 
@@ -63,7 +64,7 @@ export function runSetup(root, { team = false } = {}) {
       h("section", { class: "card setup-card", "aria-labelledby": "setup-h-business" },
         h("h2", { class: "setup-h", id: "setup-h-business" }, "Your business"),
         repName ? field("Your name", repName, "Your boss sees this name on the invoices you make.") : null,
-        field("Company name", name, "Shows at the top of the app and on every receipt."),
+        field("Company name", name, team && company ? "Your team's company (set by your boss's Marlon)." : "Shows at the top of the app and on every receipt."),
         field("Address", address),
         field("Phone", phone)),
       h("section", { class: "card setup-card", "aria-labelledby": "setup-h-products" },

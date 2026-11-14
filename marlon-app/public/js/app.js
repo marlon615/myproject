@@ -87,7 +87,7 @@ async function start() {
     el.brandBar.classList.add("is-setup");
     el.setup.hidden = false;
     signalReady();
-    me = await runSetup(el.setup, { team: access.team });
+    me = await runSetup(el.setup, { team: access.team, company: access.company });
     el.setup.hidden = true;
     el.setup.replaceChildren();
     el.main.hidden = false;
