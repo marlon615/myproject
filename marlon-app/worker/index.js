@@ -225,6 +225,20 @@ export class Stats extends DurableObject {
     return { buyers: list, totalCents, contact: this.contact() };
   }
 
+  /** Deletes a buyer or team completely: its phones, rep links, boss phones, passcode, sessions and team invoices. */
+  deleteBuyer(id) {
+    if (!this.#buyer(id)) return false;
+    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
+    this.sql.exec("DELETE FROM buyers WHERE id = ?", id);
+    return true;
+  }
+
+  /** What's left anywhere for a buyer (used by the tests to prove a delete leaves nothing). */
+  leftovers(id) {
+    const n = (t, col = "buyer") => this.sql.exec(`SELECT COUNT(*) AS n FROM ${t} WHERE ${col} = ?`, id).toArray()[0].n;
+    return { buyers: n("buyers", "id"), devices: n("buyer_devices"), slots: n("team_slots"), invoices: n("team_invoices"), paid: n("boss_paid"), sessions: n("boss_sessions") };
+  }
+
   setBuyerOff(id, off) {
     this.sql.exec("UPDATE buyers SET off = ? WHERE id = ?", off ? 1 : 0, id);
     return this.#buyer(id);
@@ -647,6 +661,15 @@ async function api(request, env, path) {
     if (r.error === "replaced") return json({ error: "This rep's link was replaced, so this phone can't come back. Send the new link instead." }, 409);
     if (r.error === "released") return json({ error: "The boss switched this rep off and freed their link, so this phone can't come back." }, 409);
     return r.buyer ? json({ buyer: r.buyer }) : json({ error: "not found" }, 404);
+  }
+  if (path === "/api/console/delete-buyer" && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 500); } catch { return json({ error: "bad request" }, 400); }
+    const id = hex32(body.id);
+    if (!id) return json({ error: "bad request" }, 400);
+    const left = await stub.leftovers(id);
+    if (!(await stub.deleteBuyer(id))) return json({ error: "not found" }, 404);
+    return json({ ok: true, removed: left, left: await stub.leftovers(id) });
   }
   if (path === "/api/console/replace-rep-link" && request.method === "POST") {
     let body;

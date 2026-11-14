@@ -218,6 +218,20 @@ function newBuyerForm(onCreated) {
 
 const bossLinkFor = (key) => `${location.origin}/boss?b=${key}`;
 
+/** "Delete": removes a buyer or team completely (after "Are you sure?"); its links stop working. */
+function deleteButton(b, refresh) {
+  const team = b.kind === "team";
+  return el("button", { type: "button", class: "btn btn-ghost con-danger con-delete", onclick: async () => {
+    const what = team
+      ? `the team ${b.name}: its boss link, all ${b.devices} rep links, every phone and all ${b.invoices} invoice${b.invoices === 1 ? "" : "s"} sent to the boss`
+      : `${b.name}: its link and every phone on it`;
+    if (!confirm(`Are you sure?\n\nDelete ${what}.\n\nThe links stop working and any phone using them is blocked the next time it's online. ${money(b.amountCents)} comes off Money collected. This can't be undone.`)) return;
+    const r = await api("/api/console/delete-buyer", { method: "POST", auth: true, body: { id: b.id } }).catch(() => ({ ok: false, data: {} }));
+    if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
+    refresh();
+  } }, team ? "Delete team" : "Delete buyer");
+}
+
 /** Every rep link as one numbered message (plus the boss link), ready to send to the boss. */
 function allRepLinks(company, links, bossLink) {
   const text = `Marlon for ${company}\n\nBoss link (for the boss only):\n${bossLink}\n\nRep links — one per rep, each works on one phone only:\n${links.map((l, i) => `Rep ${i + 1}: ${l}`).join("\n")}`;
@@ -290,7 +304,7 @@ function buyerCard(b, refresh) {
     el("p", { class: "con-buyer-meta" }, `${b.active} of ${b.devices} device${b.devices === 1 ? "" : "s"} in use · created ${dateText(b.created)}`),
     phones,
     el("details", { class: "con-buyer-link" }, el("summary", {}, "Their personal link"), linkBox(linkFor(b.id))),
-    el("div", { class: "con-actions" }, toggleBuyer));
+    el("div", { class: "con-actions" }, toggleBuyer, deleteButton(b, refresh)));
 }
 
 function teamCard(b, refresh) {
@@ -311,7 +325,7 @@ function teamCard(b, refresh) {
       b.slots.length
         ? allRepLinks(b.name, b.slots.map((x) => `${location.origin}/?k=${x.key}`), bossLinkFor(b.bossKey))
         : [el("p", { class: "con-note" }, "Rep link (shared, from before personal rep links):"), linkBox(linkFor(b.id)), el("p", { class: "con-note" }, "Boss link:"), linkBox(bossLinkFor(b.bossKey))]),
-    el("div", { class: "con-actions" }, toggle));
+    el("div", { class: "con-actions" }, toggle, deleteButton(b, refresh)));
 }
 
 function contactForm(contact, refresh) {
