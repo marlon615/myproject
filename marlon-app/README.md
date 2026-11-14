@@ -1,0 +1,99 @@
+# Marlon: delivery invoices on any phone (the sellable copy)
+
+An offline delivery-invoice app that installs on a phone's home screen. This copy is the one to sell: it starts
+completely blank, and each business sets itself up on its own phone.
+
+- **Live:** https://marlon-app.marlon615.workers.dev
+- **Maker's console (only for you):** https://marlon-app.marlon615.workers.dev/console
+- **Customer QR links:** `…/v#…`. The whole invoice travels inside the link after `#`, which browsers never send to
+  a server.
+
+**Buyers get in only through a personal link** that the maker creates in the console (`/?k=<key>`). Each link
+works on up to the number of devices the buyer paid for: the first phones to open it take the places, and any other
+phone is blocked and told to contact the maker. Opening the plain address without a link is blocked too.
+
+- After the first activation (which needs the internet once), the app works offline.
+- When online, the app checks that its phone is still switched on.
+- On iPhone, the link asks to "Add to Home Screen" first. Safari and a home-screen app keep separate storage, so one
+  iPhone would otherwise use two places. The personal link travels with the home-screen app through the manifest's
+  `start_url`.
+
+A business's details, products, customers and invoices are kept only on its own phone (IndexedDB, per browser), so
+nobody ever sees anyone else's data. The owner's own app
+(`marlon-invoices.marlon615.workers.dev`, folder `../invoices`) is a separate app and is not touched by this copy.
+
+## What a business gets
+
+- **First open:** the "Marlon" splash, then a setup screen. The business types its company name, address and phone,
+  and adds its products, each with a usual price and how it's sold (each, per dozen, per bag, per lb). The company
+  name then shows at the top of the app.
+- **Invoices:** store, address, date and a tickable product list. Ticking a product fills in its usual price, which can
+  be changed on any invoice. Line totals and the grand total add themselves up. Then the customer signs with a finger.
+- **Voice entry:** say the store, the address and the products ("two dozen mango juice, fifty pounds sweet potato at
+  one twenty"). Products are matched by sound against the business's own list. A review screen shows what the phone
+  heard, highlights anything unclear and fills in usual prices where none was said.
+- **Signing:** "Thank you, <store>" is written while the customer signs. Then Done shows a checkmark with a gentle tap.
+- **QR code** for the customer (a link, or plain text for phones with no internet). Also PDF, picture, and Bluetooth
+  thermal printing (58 or 80 mm, ESC/POS). Receipts carry the business's name, address and phone at the top and end
+  with "Thank you, <store>".
+- **Owner dashboard,** locked with a PIN:
+  - totals, unpaid invoices with due dates, and history;
+  - the private payment page (Cash, 7 days, 14 days);
+  - "Your business in numbers";
+  - Settings: business details, products and prices, backup and restore, printer, anonymous counts on or off.
+- **Offline:** works with no internet after the first open. Updates install by themselves.
+
+## The maker's console
+
+**Buyers:**
+- **New buyer link** asks for the buyer's name, the number of devices (1, 2, 3 or another number) and the amount
+  paid. It can't be created until all three are filled in.
+- The console then shows the link to send, with a Copy button.
+- Every buyer is listed with their name, devices in use, amount paid, date and each phone (type, since when, last
+  seen).
+- You can switch off one phone, which frees its place, or a whole buyer, and switch them back on.
+- **Money collected** adds up every buyer's amount.
+- "What blocked phones are told" sets the contact shown on blocked phones.
+
+**Limits:**
+- A switched-off phone is blocked the next time it opens with internet. A phone that stays offline keeps working
+  until then.
+- A new phone, or a browser whose data was cleared, counts as a new device. Switch off the old one to free its place.
+- The server never activates more phones than a link allows. Someone technical who copies the app's files could get
+  around the lock on their own phone.
+
+**Anonymous counts:**
+
+`/console` is for the maker only. The first visit sets its passcode: **open it and set the passcode before sending
+the link to anyone.** After that only that passcode opens it. Five wrong tries in 15 minutes and it waits.
+
+The console shows:
+- businesses set up;
+- businesses using it today, this week and this month;
+- invoices made;
+- voice entries;
+- receipts printed or shared;
+- two 30-day charts.
+
+These are counts only. Each phone sends a random id plus "what happened, which day" (`open`, `setup`, `invoice`,
+`voice`, `print`, `pdf`, `picture`). It never sends names, customers, products, prices or amounts. Nothing is sent
+before setup is finished, and a business can turn counting off in Settings. A business using two phones counts as
+two.
+
+**Forgot the passcode, or someone opened /console first?** Raise `CONSOLE_GENERATION` in `wrangler.toml` and deploy.
+The passcode can then be set again, and every count is kept.
+
+## Develop
+
+```bash
+node tests/serve.cjs 8790        # local server that mimics the live site, with a stand-in for /api (open http://localhost:8790)
+npm test                         # every tests/*.test.cjs (Playwright + Node; worker.test.cjs runs the real Worker locally)
+npm run deploy                   # stamps the service-worker version, packs public/ into the Worker, deploys
+```
+
+Hosting is a Cloudflare Worker (`worker/index.js`):
+- It serves the files from `public/`, which `scripts/build-worker.cjs` packs in at deploy time.
+- It applies `public/_headers`, maps `/` to index.html, `/v` to v.html and `/console` to console.html, and uses ETags.
+- One Durable Object (SQLite), `Stats`, keeps the console's counts and passcode.
+
+The tests use a made-up business (`tests/fixture.cjs`), because the app itself ships with no products.

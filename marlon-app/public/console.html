@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0f1411">
+  <title>Maker's console · Marlon</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/css/base.css">
+  <style>
+    :root { --chart: #1a8a4c; --chart-grid: #e8e4da; }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --chart: #3a9e68; --chart-grid: #2b2f28; } }
+    :root[data-theme="dark"] { --chart: #3a9e68; --chart-grid: #2b2f28; }
+    body { background: var(--bg); }
+    .con-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: calc(10px + var(--safe-top)) 16px 10px; background: #0f1411; color: #f3efe4; }
+    .con-bar strong { font-family: var(--font-display); font-size: 20px; letter-spacing: .01em; }
+    .con-bar span { color: #6cc495; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+    .con { max-width: 760px; margin: 0 auto; padding: 18px 16px calc(40px + var(--safe-bottom)); display: grid; gap: 16px; }
+    .con h1 { margin: 0; font-family: var(--font-display); font-size: clamp(26px, 7vw, 34px); line-height: 1.15; }
+    .con-lead { margin: 4px 0 0; color: var(--ink-2); }
+    .con-card { padding: 16px; }
+    .con-gate { display: grid; gap: 12px; max-width: 420px; }
+    .con-gate label { display: grid; gap: 6px; font-size: .85rem; font-weight: 650; color: var(--ink-2); }
+    .con-error { margin: 0; color: var(--danger); font-weight: 650; }
+    .con-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    @media (min-width: 620px) { .con-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+    .con-tile { padding: 14px; min-width: 0; }
+    .con-tile p { margin: 0; }
+    .con-tile-label { font-size: .84rem; font-weight: 650; color: var(--ink-2); }
+    .con-tile-value { margin: 2px 0 0 !important; font-family: var(--font-display); font-size: 30px; font-weight: 700; line-height: 1.1; }
+    .con-tile-sub { font-size: .82rem; color: var(--muted); }
+    .con-chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+    .con-chart-head h2 { margin: 0; font-size: 1rem; }
+    .con-chart { position: relative; }
+    .con-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .con-chart .bar { fill: var(--chart); }
+    .con-chart .bar.is-hover { opacity: .75; }
+    .con-chart .grid { stroke: var(--chart-grid); stroke-width: 1; }
+    .con-chart text { fill: var(--muted); font: 11px var(--font); }
+    .con-tip { position: absolute; pointer-events: none; transform: translate(-50%, calc(-100% - 8px)); padding: 6px 9px; border-radius: 8px;
+      background: var(--paper); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 13px; white-space: nowrap; color: var(--ink-2); }
+    .con-tip strong { color: var(--ink); }
+    .con-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+    .con-table th, .con-table td { padding: 5px 6px; border-bottom: 1px solid var(--line); text-align: left; }
+    .con-table td:last-child, .con-table th:last-child { text-align: right; }
+    .con-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .con-note { margin: 0; color: var(--muted); font-size: .88rem; }
+    .con-section { margin: 10px 0 0; font-size: 1.15rem; }
+    .con-tiles-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .con-tiles-3 .con-tile:first-child { grid-column: 1 / -1; }
+    @media (min-width: 620px) { .con-tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .con-tiles-3 .con-tile:first-child { grid-column: auto; } }
+    .con-new, .con-created { display: grid; gap: 12px; }
+    .con-new h2, .con-created h2, .con-buyers > h2, .con-card > h2 { margin: 0; font-size: 1.1rem; }
+    .con-field { display: grid; gap: 6px; font-size: .88rem; font-weight: 650; color: var(--ink-2); border: 0; padding: 0; margin: 0; min-width: 0; }
+    .con-field legend { padding: 0; margin-bottom: 6px; }
+    .con-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .con-chip { position: relative; }
+    .con-chip input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+    .con-chip span { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border: 1.5px solid var(--line-strong); border-radius: 999px; background: var(--paper); font-weight: 700; color: var(--ink); }
+    .con-chip input:checked + span { background: var(--brand); border-color: var(--brand); color: #fff; }
+    .con-chip input:focus-visible + span { outline: 3px solid var(--focus, #3a9e68); outline-offset: 2px; }
+    #con-devices-other { margin-top: 8px; max-width: 160px; }
+    .con-money { display: flex; align-items: center; gap: 4px; padding-left: 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--paper); max-width: 220px; }
+    .con-money input { border: 0; box-shadow: none; padding-left: 2px; min-width: 0; }
+    .con-linkbox { display: grid; gap: 8px; }
+    .con-link { font-size: 14px; }
+    .con-buyers { display: grid; gap: 12px; }
+    .con-buyer { display: grid; gap: 8px; }
+    .con-buyer.is-off { opacity: .75; }
+    .con-buyer-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+    .con-buyer-head h3 { margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .con-buyer-meta { margin: 0; color: var(--ink-2); font-size: .9rem; }
+    .con-badge { font-size: 11.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: var(--danger-bg, #fbe9e7); color: var(--danger); }
+    .con-phones { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .con-phone { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper-2); }
+    .con-phone > div { display: grid; gap: 2px; min-width: 0; }
+    .con-phone-meta { font-size: .82rem; color: var(--muted); }
+    .con-phone.is-off strong { text-decoration: line-through; color: var(--muted); }
+    .con-danger { color: var(--danger); }
+    .con-buyer-link summary { cursor: pointer; color: var(--brand); font-weight: 650; font-size: .92rem; padding: 4px 0; }
+    .link-btn { background: none; border: 0; padding: 4px 0; color: var(--brand); font: inherit; font-size: 14px; font-weight: 650; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  </style>
+  <script type="module" src="/js/console.js"></script>
+</head>
+<body>
+  <header class="con-bar"><strong>Marlon</strong><span>Maker's console</span></header>
+  <main class="con" id="console">
+    <div>
+      <h1>Your buyers and your app</h1>
+      <p class="con-lead">Only for you, the maker: your buyers and their personal links, the money collected, and anonymous counts of how the app is used. A business's own data (customers, products, invoices) never reaches you.</p>
+    </div>
+    <p class="con-note" id="con-loading">Loading…</p>
+  </main>
+</body>
+</html>
