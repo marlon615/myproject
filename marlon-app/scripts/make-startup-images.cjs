@@ -47,7 +47,7 @@ const fileFor = (d) => `launch-${d.w * d.dpr}x${d.h * d.dpr}.png`;
       const page = await ctx.newPage();
       await page.goto(`${srv.url}/?splash`);
       await page.waitForSelector("#splash", { state: "visible" });
-      await page.addStyleTag({ content: "#splash .splash-name { visibility: hidden !important; }" }); // the frame before the letters
+      await page.addStyleTag({ content: "#splash .splash-name, #splash .splash-sparks { visibility: hidden !important; }" }); // the frame before the letters
       await page.waitForTimeout(300);
       const file = path.join(OUT, fileFor(d));
       await page.screenshot({ path: file });

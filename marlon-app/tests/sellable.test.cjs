@@ -55,8 +55,9 @@ const dbCount = (page, store) => page.evaluate((s) => new Promise((ok) => {
     await page.waitForSelector("#splash");
     const splashText = await page.evaluate(() => document.getElementById("splash").textContent.replace(/\s+/g, " ").trim());
     check(splashText === "Marlon", "first open from the personal link: the opening animation shows only 'Marlon'", JSON.stringify(splashText));
-    const building = await page.evaluate(() => [...document.querySelectorAll("#splash .splash-name path")].map((p) => getComputedStyle(p).animationName));
-    check(building.length === 6 && building.every((n) => n === "splash-letter"), "…its six letters build in one by one", building.join(","));
+    await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-burst"), null, { timeout: 3000 });
+    check(await page.locator("#splash canvas.splash-sparks").count() === 1 && await page.evaluate(() => getComputedStyle(document.querySelector("#splash .splash-name svg")).animationName) === "splash-word",
+      "…with the sparkle burst and the whole word appearing at once");
     await page.waitForSelector("#splash", { state: "detached", timeout: 9000 });
     const gone = await page.evaluate(() => performance.now());
     check(gone <= 2700, "…and goes into the app after about two seconds", `${gone.toFixed(0)}ms after opening`);
@@ -107,10 +108,10 @@ const dbCount = (page, store) => page.evaluate((s) => new Promise((ok) => {
     await ctx.setOffline(true);
     for (let n = 1; n <= 2; n++) {
       await page.goto(`${srv.url}/?splash`);
-      await page.waitForSelector("#splash .splash-name path");
-      const names = await page.evaluate(() => [...document.querySelectorAll("#splash .splash-name path")].map((p) => getComputedStyle(p).animationName).join(","));
+      await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-burst"), null, { timeout: 3000 });
+      const played = await page.locator("#splash canvas.splash-sparks").count() === 1;
       await page.waitForSelector("#splash", { state: "detached", timeout: 6000 });
-      check(/splash-letter/.test(names) && await page.textContent("#company-name") === BUSINESS.name, `opening ${n} with no internet: the animation plays, then the app`);
+      check(played && await page.textContent("#company-name") === BUSINESS.name, `opening ${n} with no internet: the sparkle animation plays, then the app`);
     }
     await ctx.setOffline(false);
 
@@ -129,6 +130,8 @@ const dbCount = (page, store) => page.evaluate((s) => new Promise((ok) => {
     check(srv.pings.every((p) => !p.headers.cookie), "no cookies are sent with the counts");
 
     // Counts wait while offline, then go.
+    // Let any counts from earlier steps finish arriving first.
+    for (let quiet = 0, n = srv.pings.length; quiet < 6; ) { await page.waitForTimeout(100); if (srv.pings.length === n) quiet++; else { n = srv.pings.length; quiet = 0; } }
     const before = srv.pings.length;
     await ctx.setOffline(true);
     await page.fill("#store", "Bay Market");

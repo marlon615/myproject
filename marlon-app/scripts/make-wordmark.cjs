@@ -4,7 +4,7 @@
  * the typeface's own spacing and kerning so it matches "arlon" exactly.
  *
  * Writes the inline SVG into every <!-- wordmark:start --> … <!-- wordmark:end --> block (the brand bar), and a
- * one-path-per-letter version into <!-- splashmark:start --> … <!-- splashmark:end --> (the opening animation),
+ * whole-word version with a shimmer overlay into <!-- splashmark:start --> … <!-- splashmark:end --> (the opening animation),
  * in public/index.html and tests/harness/splash-harness.html. (Receipts, PDFs and the customer page show each
  * business's own name instead of the wordmark, so there's no wordmark module in this copy.)
  * Usage: node scripts/make-wordmark.cjs
@@ -27,9 +27,9 @@ const vb = [f1(bb.x1 - pad), f1(bb.y1 - pad), f1(bb.x2 - bb.x1 + 2 * pad), f1(bb
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(" ")}" role="img" aria-label="Marlon"><title>Marlon</title><!-- Wordmark from Bodoni Moda outlines (SIL Open Font License 1.1). --><path fill="currentColor" d="${d}"/></svg>`;
 
-// The splash version: one <path> per letter (same outlines, same spacing), so the letters can build in one by one.
-const letters = font.getPaths("Marlon", 0, BASE, S, { kerning: true }).map((g) => g.toPathData(1));
-const splashSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(" ")}" role="img" aria-label="Marlon"><title>Marlon</title><!-- Wordmark from Bodoni Moda outlines (SIL Open Font License 1.1). -->${letters.map((ld) => `<path fill="currentColor" d="${ld}"/>`).join("")}</svg>`;
+// The splash version: the whole word at once, plus a copy of it filled with a moving band of light (the shimmer).
+const bandW = Math.round(vb[2] * 0.32);
+const splashSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(" ")}" role="img" aria-label="Marlon"><title>Marlon</title><!-- Wordmark from Bodoni Moda outlines (SIL Open Font License 1.1). --><defs><clipPath id="splash-clip"><path d="${d}"/></clipPath><linearGradient id="splash-shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffd56b" stop-opacity="0"/><stop offset=".35" stop-color="#ffd56b" stop-opacity=".85"/><stop offset=".5" stop-color="#ffffff" stop-opacity="1"/><stop offset=".65" stop-color="#ffd56b" stop-opacity=".85"/><stop offset="1" stop-color="#ffd56b" stop-opacity="0"/></linearGradient></defs><path class="splash-word" fill="currentColor" d="${d}"/><g clip-path="url(#splash-clip)"><rect class="splash-shine" x="${vb[0] - bandW * 1.5}" y="${vb[1] - vb[3]}" width="${bandW}" height="${vb[3] * 3}" fill="url(#splash-shine)"/></g></svg>`;
 
 const ROOT = path.join(__dirname, "..");
 for (const rel of ["public/index.html", "tests/harness/splash-harness.html"]) {
@@ -41,5 +41,5 @@ for (const rel of ["public/index.html", "tests/harness/splash-harness.html"]) {
   if (!blocks && !splashBlocks) throw new Error(`${rel}: add <!-- wordmark:start --><!-- wordmark:end --> (or splashmark) where the wordmark goes first`);
   fs.writeFileSync(file, html.replace(re, () => `<!-- wordmark:start -->${svg}<!-- wordmark:end -->`)
     .replace(reSplash, () => `<!-- splashmark:start -->${splashSvg}<!-- splashmark:end -->`));
-  console.log(`${rel}: ${blocks} wordmark${blocks === 1 ? "" : "s"}, ${splashBlocks} splash wordmark (${letters.length} letters)`);
+  console.log(`${rel}: ${blocks} wordmark${blocks === 1 ? "" : "s"}, ${splashBlocks} splash wordmark (whole word + shimmer)`);
 }

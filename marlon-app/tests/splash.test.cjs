@@ -1,4 +1,4 @@
-/** Opening animation: only "Marlon", the letters build in one by one, about two seconds, smooth fade, never into a blank page. */
+/** Opening animation: dark, a sparkle burst, the whole word "Marlon" with a glow and a shimmer, about two seconds, smooth fade, never into a blank page. */
 const { chromium } = require("playwright");
 const { start } = require("./serve.cjs");
 const path = require("path");
@@ -35,16 +35,33 @@ async function state(page) {
       page.on("pageerror", (e) => errors.push(e.message));
       page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
       await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=0`);
-      // The letters build in one after another: early on, the first letter is further along than the last.
-      await page.waitForFunction(() => { const p = document.querySelectorAll("#splash .splash-name path"); return p.length === 6 && Number(getComputedStyle(p[0]).opacity) > 0.3; }, null, { timeout: 3000 });
-      const early = await page.evaluate(() => [...document.querySelectorAll("#splash .splash-name path")].map((p) => Number(getComputedStyle(p).opacity)));
-      check(early.length === 6 && early[0] > early[5] + 0.2 && early[5] < 0.5, "the letters of 'Marlon' build in one after another", early.map((o) => o.toFixed(2)).join(" "));
-      await page.screenshot({ path: path.join(out, "splash-building.png") });
-      await page.waitForTimeout(450);
-      await page.screenshot({ path: path.join(out, "splash-building-2.png") });
-      await page.waitForFunction(() => [...document.querySelectorAll("#splash .splash-name path")].every((p) => Number(getComputedStyle(p).opacity) === 1), null, { timeout: 3000 });
+      // Stage 1: dark, before the burst — no word yet.
+      const first = await page.evaluate(() => ({ word: Number(getComputedStyle(document.querySelector("#splash .splash-name svg")).opacity), canvas: !!document.querySelector("#splash canvas.splash-sparks"), t: performance.now() }));
+      check(first.canvas && first.word === 0, "it starts dark, with nothing showing yet", JSON.stringify(first));
+      await page.screenshot({ path: path.join(out, "splash-0-dark.png") });
+      // Stage 2: the burst — sparkles everywhere, the whole word at once (not letter by letter).
+      await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-burst"), null, { timeout: 2000 });
+      await page.waitForTimeout(160);
+      const sparks = await page.evaluate(() => {
+        const c = document.querySelector("#splash canvas.splash-sparks"); const x = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let lit = 0, gold = 0; for (let i = 0; i < x.length; i += 16) { if (x[i + 3] > 40) { lit++; if (x[i] > 200 && x[i + 1] > 150 && x[i + 2] < 190) gold++; } }
+        return { lit, gold };
+      });
+      check(sparks.lit > 200 && sparks.gold > 20, "the burst: gold and white sparkles from the centre", JSON.stringify(sparks));
+      check(await page.locator("#splash .splash-name path").count() === 2, "the whole word appears at once (one shape, plus its shimmer), no letter-by-letter spelling");
+      await page.screenshot({ path: path.join(out, "splash-1-burst.png") });
+      await page.waitForTimeout(250);
+      const spread = await page.evaluate(() => {
+        const c = document.querySelector("#splash canvas.splash-sparks"), W = c.width, H = c.height, x = c.getContext("2d").getImageData(0, 0, W, H).data;
+        let edge = 0; for (let y = 0; y < H; y += 4) for (let xx = 0; xx < W; xx += 4) { const i = (y * W + xx) * 4; if (x[i + 3] > 40 && (xx < W * 0.15 || xx > W * 0.85 || y < H * 0.15 || y > H * 0.85)) edge++; }
+        return edge;
+      });
+      check(spread > 10, "…flying out to the edges", `${spread} lit points near the edges`);
+      await page.screenshot({ path: path.join(out, "splash-2-flying.png") });
+      // Stage 3: the shimmer sweeps across the word while the sparks fall and twinkle.
+      await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-shimmer"), null, { timeout: 2000 });
       let s = await state(page);
-      check(s.present && s.opacity === 1 && !s.leaving && s.inert && s.htmlLocked, "the whole name is shown before anything fades; page behind is inert", `t=${s.now.toFixed(0)}ms`);
+      check(s.present && s.opacity === 1 && !s.leaving && s.inert && s.htmlLocked, "everything stays fully visible until the fade; page behind is inert", `t=${s.now.toFixed(0)}ms`);
       const name = await page.evaluate(() => {
         const n = document.querySelector("#splash .splash-name");
         const svg = n && n.querySelector("svg");
@@ -59,11 +76,26 @@ async function state(page) {
       const vw = 390, vh = 844;
       const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
       check(Math.abs(cx - vw / 2) < 4 && cy > vh * 0.3 && cy < vh * 0.6 && box.height >= 60, "name is large and centered", `center=(${cx.toFixed(0)},${cy.toFixed(0)}) h=${box.height.toFixed(0)}`);
-      await page.screenshot({ path: path.join(out, "splash-light.png") });
+      const wordBox = await page.locator("#splash .splash-name svg").boundingBox();
+      const band = [];
+      for (let i = 0; i < 2; i++) {
+        await page.waitForTimeout(i ? 100 : 60);
+        const shot = await page.screenshot({ clip: wordBox });
+        band.push(await page.evaluate(async (b64) => {
+          const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
+          const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; const x = c.getContext("2d"); x.drawImage(img, 0, 0);
+          const d = x.getImageData(0, 0, c.width, c.height).data; let sum = 0, n = 0;
+          for (let y = 0; y < c.height; y += 3) for (let xx = 0; xx < c.width; xx += 3) { const k = (y * c.width + xx) * 4; if (d[k] > 200 && d[k + 2] < d[k] - 60) { sum += xx / c.width; n++; } }
+          return n > 20 ? sum / n : null;
+        }, shot.toString("base64")));
+      }
+      const seen = band.filter((v) => v !== null);
+      check(seen.length >= 2 && seen.every((v, i) => i === 0 || v > seen[i - 1]), "then a gold shimmer of light sweeps across the word, left to right", band.map((v) => (v === null ? "-" : v.toFixed(2))).join(" → "));
       // Sample during the fade to make sure it is gradual, not a jump.
       await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-leaving") ?? true, null, { timeout: 3000 });
       const leaveAt = await page.evaluate(() => performance.now());
-      check(leaveAt >= 1450 && leaveAt <= 2000, "it fades out at about 1.5 s, once the name has built", `${leaveAt.toFixed(0)}ms`);
+      check(leaveAt >= 1450 && leaveAt <= 1900, "it fades out at about 1.5 s", `${leaveAt.toFixed(0)}ms`);
+      await page.screenshot({ path: path.join(out, "splash-4-fading.png") });
       await page.waitForTimeout(200);
       s = await state(page);
       check(s.present ? s.opacity > 0.05 && s.opacity < 0.95 : false, "fade is gradual (mid-fade opacity between 0 and 1)", `opacity=${s.opacity.toFixed(2)}`);
@@ -123,8 +155,9 @@ async function state(page) {
       await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=0`);
       const dur = await page.evaluate(() => getComputedStyle(document.getElementById("splash")).transitionDuration);
       check(/0\.25s/.test(dur), "reduced motion keeps a short fade (not removed by the global rule)", dur);
-      const anim = await page.evaluate(() => getComputedStyle(document.querySelector("#splash .splash-name path")).animationName);
-      check(anim === "splash-fade", "reduced motion: the letters only fade in (no rising or blurring)", anim);
+      await page.waitForTimeout(400);
+      const rm = await page.evaluate(() => ({ anim: getComputedStyle(document.querySelector("#splash .splash-name svg")).animationName, sparks: !!document.querySelector("#splash canvas") }));
+      check(rm.anim === "splash-fade" && !rm.sparks, "reduced motion: no sparkles and no movement — the word just fades in", JSON.stringify(rm));
       await page.waitForFunction(() => !document.getElementById("splash"), null, { timeout: 7000 });
       const t = await page.evaluate(() => window.__splashDoneAt);
       check(t >= 1500 && t <= 2300, "reduced motion: into the app at about 1.5–2 s", `${t?.toFixed(0)}ms`);

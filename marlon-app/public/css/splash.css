@@ -1,7 +1,7 @@
-/* Opening animation: only the "Marlon" wordmark, large and centered, on its own. Always dark.
-   The letters build in one after another (rise, sharpen, fade in), the name settles, then the whole screen
-   fades into the app — about two seconds in all (timing in js/splash.js). Every time the app opens; it's all
-   in the page (no downloads), so it works offline.
+/* Opening animation: dark screen, then a burst of gold and white sparkles from the centre (drawn on a canvas by
+   js/splash.js) flies out to the edges, then drifts down twinkling. As it bursts, the whole word "Marlon" appears
+   at once with a soft glow and a gentle scale-up, then a shimmer of light sweeps across it; at about two seconds
+   the screen fades into the app. Every time the app opens; all in the page (no downloads), so it works offline.
    Load after base.css. Markup lives at the top of <body> in index.html. */
 
 #splash {
@@ -60,31 +60,26 @@ html.splash-active body { overflow: hidden; }
   width: min(80vw, 340px);
   height: auto;
   overflow: visible;
-  animation: splash-settle 1.4s cubic-bezier(.22, 1, .36, 1) both;
+  opacity: 0;
 }
-/* The letters build in, one after another. */
-.splash-name path {
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-  animation: splash-letter .62s cubic-bezier(.22, 1, .36, 1) both;
+/* The burst hits: the whole word appears at once, glowing, growing gently. */
+#splash.is-burst .splash-name svg { animation: splash-word 1.3s cubic-bezier(.22, 1, .36, 1) both; }
+/* The shimmer: a band of gold-white light, skewed, sweeping left to right inside the letters. */
+.splash-shine { opacity: 0; transform-box: view-box; transform: translateX(0) skewX(-18deg); }
+#splash.is-shimmer .splash-shine { animation: splash-shine .75s cubic-bezier(.4, 0, .2, 1) both; }
+@keyframes splash-shine {
+  0%   { opacity: 1; transform: translateX(0) skewX(-18deg); }
+  85%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(150%) skewX(-18deg); }
 }
-.splash-name path:nth-of-type(1) { animation-delay: .10s; }
-.splash-name path:nth-of-type(2) { animation-delay: .19s; }
-.splash-name path:nth-of-type(3) { animation-delay: .28s; }
-.splash-name path:nth-of-type(4) { animation-delay: .37s; }
-.splash-name path:nth-of-type(5) { animation-delay: .46s; }
-.splash-name path:nth-of-type(6) { animation-delay: .55s; }
-@keyframes splash-letter {
-  from { opacity: 0; transform: translateY(22%); filter: blur(6px); }
-  60%  { opacity: 1; filter: blur(0); }
-  to   { opacity: 1; transform: none; filter: none; }
+.splash-sparks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.splash-mark { position: relative; z-index: 1; }
+@keyframes splash-word {
+  0%   { opacity: 0; transform: scale(.86); filter: drop-shadow(0 0 0 rgba(255, 214, 120, 0)); }
+  25%  { opacity: 1; filter: drop-shadow(0 0 22px rgba(255, 214, 120, .55)); }
+  100% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 8px rgba(255, 226, 160, .22)); }
 }
-/* The whole name: a slight, slow settle and a soft glow that fades as the last letter lands. */
-@keyframes splash-settle {
-  from { transform: scale(.94); filter: drop-shadow(0 0 0 rgba(243, 239, 228, 0)); }
-  55%  { filter: drop-shadow(0 0 18px rgba(243, 239, 228, .28)); }
-  to   { transform: none; filter: drop-shadow(0 0 0 rgba(243, 239, 228, 0)); }
-}
+
 /* Fallback if the wordmark is plain text. */
 .splash-name:not(:has(svg)) {
   font-family: var(--font-display);
@@ -95,12 +90,11 @@ html.splash-active body { overflow: hidden; }
 }
 
 
-/* Reduced motion: keep a short, gentle cross-fade (opacity only, no movement).
-   The id selector outranks base.css's global "transition: none !important". */
+/* Reduced motion: no sparkles, no movement — the word simply fades in, then a short fade into the app. */
 @media (prefers-reduced-motion: reduce) {
   #splash { transition: opacity .25s linear, visibility 0s linear .25s !important; }
-  #splash .splash-name svg { animation: none !important; }
-  #splash .splash-name path { animation: splash-fade .5s ease both !important; animation-delay: .1s !important; }
+  #splash .splash-name svg { animation: splash-fade .5s ease .1s both !important; }
+  #splash .splash-sparks, #splash .splash-shine { display: none !important; }
   #splash.is-leaving .splash-mark { transform: translateY(-3vh) !important; transition: none !important; }
 }
 @keyframes splash-fade { from { opacity: 0; } to { opacity: 1; } }
