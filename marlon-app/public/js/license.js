@@ -89,7 +89,7 @@ export async function ensureAccess(container) {
     if (saved.state === "off") return recheckOff(saved);
     cleanUrl();
     checkLater(saved); // when online: is this phone still switched on? (never holds up opening the app)
-    return { ok: true, team: Boolean(saved.team), company: saved.company || "" };
+    return { ok: true, team: Boolean(saved.team), company: saved.company || "", repName: saved.repName || "" };
   }
   if (!urlKey) return show("nolink", await contactText());
   if (iosBrowser()) return showInstall(urlKey, "ios");
@@ -107,9 +107,9 @@ async function activate(key) {
     return show("offline", "", () => location.reload());
   }
   if (r.ok) {
-    await settings.set("license", { key, device, state: "on", team: Boolean(r.team), company: r.company || "", at: new Date().toISOString() });
+    await settings.set("license", { key, device, state: "on", team: Boolean(r.team), company: r.company || "", repName: r.repName || "", at: new Date().toISOString() });
     cleanUrl();
-    return { ok: true, activated: true, team: Boolean(r.team), company: r.company || "" };
+    return { ok: true, activated: true, team: Boolean(r.team), company: r.company || "", repName: r.repName || "" };
   }
   await settings.set("licenseContact", r.contact || "");
   return show(r.reason === "full" ? "full" : "off", r.contact || "");

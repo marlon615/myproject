@@ -247,8 +247,8 @@ function slotList(b, refresh) {
       refresh();
     } }, d.off ? "Switch on" : "Switch off") : null;
     return el("li", { class: d?.off ? "con-phone con-slot is-off" : "con-phone con-slot", "data-n": slot.n },
-      el("div", {}, el("strong", {}, `Rep ${slot.n}${d ? ` · ${d.repName || "no name yet"} · ${d.label || "Device"}` : ""}`),
-        el("span", { class: "con-phone-meta" }, d ? `${d.off ? "Switched off" : "Active"} · since ${dateText(d.firstAt)} · last seen ${dateText(d.lastAt)}` : "Link not opened yet")),
+      el("div", {}, el("strong", {}, `Rep ${slot.n}${d ? ` · ${d.repName || slot.name || "no name yet"} · ${d.label || "Device"}` : slot.name ? ` · ${slot.name}` : ""}`),
+        el("span", { class: "con-phone-meta" }, d ? `${d.off ? "Switched off" : "Active"} · since ${dateText(d.firstAt)} · last seen ${dateText(d.lastAt)}` : slot.name ? "Added by the boss · link not opened yet" : "Link not opened yet")),
       el("div", { class: "con-slot-actions" }, toggle, copy, replace));
   }));
 }

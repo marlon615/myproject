@@ -98,6 +98,9 @@ export class Stats extends DurableObject {
     // One personal link per rep ("slot"): it locks to the first phone that opens it, so passing it on does nothing.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS team_slots (key TEXT PRIMARY KEY, buyer TEXT NOT NULL, n INTEGER NOT NULL, created TEXT NOT NULL)`);
     addColumn("buyer_devices", "slot_key", "TEXT");
+    addColumn("team_slots", "name", "TEXT NOT NULL DEFAULT ''");          // the rep's name, as the boss typed it
+    addColumn("buyer_devices", "released", "INTEGER NOT NULL DEFAULT 0"); // switched off by the boss: its link is free again
+    addColumn("buyer_devices", "boss_name", "TEXT NOT NULL DEFAULT ''");  // the name the boss gave this rep (kept on old invoices)
     // Invoices the boss marked paid: a rep's phone can never undo that, and picks it up.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS boss_paid (buyer TEXT NOT NULL, id TEXT NOT NULL, paid_at TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
   }
@@ -204,10 +207,12 @@ export class Stats extends DurableObject {
   #buyer(id) {
     const b = this.sql.exec("SELECT * FROM buyers WHERE id = ?", id).toArray()[0];
     if (!b) return null;
-    const all = this.sql.exec("SELECT device, label, first_at, last_at, off, role, rep_name, slot_key FROM buyer_devices WHERE buyer = ? ORDER BY first_at", id).toArray()
-      .map((d) => ({ device: d.device, label: d.label, firstAt: d.first_at, lastAt: d.last_at, off: Boolean(d.off), role: d.role, repName: d.rep_name, slotKey: d.slot_key || null }));
-    const slots = this.sql.exec("SELECT key, n FROM team_slots WHERE buyer = ? ORDER BY n", id).toArray()
-      .map((r) => ({ n: r.n, key: r.key, phone: all.find((d) => d.slotKey === r.key) || null }));
+    const all = this.sql.exec("SELECT device, label, first_at, last_at, off, role, rep_name, slot_key, released, boss_name FROM buyer_devices WHERE buyer = ? ORDER BY first_at", id).toArray()
+      .map((d) => ({ device: d.device, label: d.label, firstAt: d.first_at, lastAt: d.last_at, off: Boolean(d.off), role: d.role,
+        repName: d.boss_name || d.rep_name, slotKey: d.slot_key || null, released: Boolean(d.released) }));
+    const slots = this.sql.exec("SELECT key, n, name FROM team_slots WHERE buyer = ? ORDER BY n", id).toArray()
+      .map((r) => ({ n: r.n, key: r.key, name: r.name || "", phone: all.find((d) => d.slotKey === r.key && !d.released) || null,
+        used: all.some((d) => d.slotKey === r.key) }));
     const devices = all.filter((d) => d.role !== "boss"), bosses = all.filter((d) => d.role === "boss");
     return { id: b.id, name: b.name, kind: b.kind || "solo", devices: b.devices, amountCents: b.amount_cents, created: b.created, off: Boolean(b.off),
       phones: devices, active: devices.filter((d) => !d.off).length, bossKey: b.boss_key || null, bossPhones: bosses, bossPlaces: BOSS_PLACES, slots,
@@ -239,6 +244,7 @@ export class Stats extends DurableObject {
     if (!d) return { error: "unknown" };
     if (!off && d.off && b.active >= b.devices) return { error: "full" };
     if (!off && d.slotKey && !b.slots.some((x) => x.key === d.slotKey)) return { error: "replaced" };
+    if (!off && d.released) return { error: "released" };
     this.sql.exec("UPDATE buyer_devices SET off = ? WHERE buyer = ? AND device = ?", off ? 1 : 0, id, device);
     return { buyer: this.#buyer(id) };
   }
@@ -269,10 +275,12 @@ export class Stats extends DurableObject {
     }
     if (onlyKnown) return { ok: false, reason: "off" };
     // A rep's personal link belongs to the first phone that opened it: any other phone is turned away.
-    if (slot && b.phones.some((x) => x.slotKey === slot)) return { ok: false, reason: "full" };
+    // (A rep the boss switched off has "released" the link: the next phone may take it.)
+    if (slot && b.phones.some((x) => x.slotKey === slot && !x.released)) return { ok: false, reason: "full" };
     if (b.active >= b.devices) return { ok: false, reason: "full" };
-    this.sql.exec("INSERT INTO buyer_devices (buyer, device, label, first_at, last_at, slot_key) VALUES (?, ?, ?, ?, ?, ?)", id, device, label, now, now, slot);
-    return { ok: true, team: b.kind === "team", company: b.kind === "team" ? b.name : "" };
+    const slotName = slot ? b.slots.find((x) => x.key === slot)?.name || "" : "";
+    this.sql.exec("INSERT INTO buyer_devices (buyer, device, label, first_at, last_at, slot_key, boss_name) VALUES (?, ?, ?, ?, ?, ?, ?)", id, device, label, now, now, slot, slotName);
+    return { ok: true, team: b.kind === "team", company: b.kind === "team" ? b.name : "", repName: slotName };
   }
 
   /** What a link is, without using it up (shown before switching a phone to it). */
@@ -400,10 +408,51 @@ export class Stats extends DurableObject {
     if (!this.#bossDeviceOk(b, s.device)) return { error: "off" };
     const invoices = this.sql.exec("SELECT device, data, updated FROM team_invoices WHERE buyer = ?", b.id).toArray()
       .map((r) => ({ ...JSON.parse(r.data), rep: r.device, receivedAt: r.updated }));
-    return { company: b.name, reps: b.phones.map((d, i) => ({ device: d.device, name: d.repName || `Rep ${i + 1}`, label: d.label, off: d.off, lastSeen: d.lastAt })), invoices };
+    return { company: b.name, places: b.devices, slots: this.#bossSlots(b),
+      reps: b.phones.map((d, i) => ({ device: d.device, name: d.repName || `Rep ${i + 1}`, label: d.label, off: d.off, lastSeen: d.lastAt })), invoices };
   }
 
   bossLogout(token) { this.sql.exec("DELETE FROM boss_sessions WHERE token = ?", token); }
+
+  #bossSession(token) {
+    const s = this.sql.exec("SELECT buyer, device FROM boss_sessions WHERE token = ? AND expires > ?", token, Date.now()).toArray()[0];
+    if (!s) return { error: "signin" };
+    const b = this.#buyer(s.buyer);
+    if (!this.#bossDeviceOk(b, s.device)) return { error: "off" };
+    return { b };
+  }
+
+  /** The boss's reps: one row per rep place the company paid for (the boss can't make more). */
+  #bossSlots(b) {
+    return b.slots.map((x) => ({ n: x.n, key: x.key, name: x.name || x.phone?.repName || "", used: x.used,
+      phone: x.phone ? { label: x.phone.label, since: x.phone.firstAt, lastSeen: x.phone.lastAt, off: x.phone.off } : null }));
+  }
+
+  /** "Add rep": gives a name to a free rep place (place n, or the first free one) and returns its link. */
+  bossAddRep(token, name, n = null) {
+    const { b, error } = this.#bossSession(token);
+    if (error) return { error };
+    if (!b.slots.length) return { error: "legacy" };
+    const free = (x) => !x.name && !x.phone;
+    const slot = n ? b.slots.find((x) => x.n === n && free(x)) : b.slots.find(free);
+    if (!slot) return { error: "full", places: b.devices };
+    this.sql.exec("UPDATE team_slots SET name = ? WHERE key = ?", name, slot.key);
+    return { ok: true, n: slot.n, key: slot.key, slots: this.#bossSlots(this.#buyer(b.id)) };
+  }
+
+  /**
+   * "Switch off" a rep (e.g. they left): their phone stops working and the place — the same link — is free for a
+   * new rep. Their invoices stay, under their name.
+   */
+  bossRepOff(token, n) {
+    const { b, error } = this.#bossSession(token);
+    if (error) return { error };
+    const slot = b.slots.find((x) => x.n === n);
+    if (!slot) return { error: "unknown" };
+    this.sql.exec("UPDATE buyer_devices SET off = 1, released = 1 WHERE buyer = ? AND slot_key = ? AND released = 0", b.id, slot.key);
+    this.sql.exec("UPDATE team_slots SET name = '' WHERE key = ?", slot.key);
+    return { ok: true, slots: this.#bossSlots(this.#buyer(b.id)) };
+  }
 
   stats() {
     const today = todayUTC();
@@ -475,7 +524,7 @@ async function api(request, env, path) {
     const device = typeof body.device === "string" && /^[0-9a-f]{32}$/.test(body.device) ? body.device : null;
     if (!key || !device) return json({ ok: false, reason: "unknown", contact: await stub.contact() }, 403);
     const r = await stub.activate(key, device, deviceLabel(request.headers.get("User-Agent") || ""), { onlyKnown: path === "/api/check" });
-    return r.ok ? json({ ok: true, team: Boolean(r.team), company: r.company || "" }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
+    return r.ok ? json({ ok: true, team: Boolean(r.team), company: r.company || "", repName: r.repName || "" }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
   }
   if (path === "/api/contact" && request.method === "GET") return json({ contact: await stub.contact() });
   if (path === "/api/link-info" && request.method === "POST") {
@@ -525,7 +574,8 @@ async function api(request, env, path) {
     const r = await stub.bossData(bossToken);
     if (r.error === "signin") return json({ error: "Please enter your passcode again." }, 401);
     if (r.error === "off") return json({ error: "This phone's access has been switched off.", reason: "off", contact: await stub.contact() }, 403);
-    return json(r);
+    const origin = new URL(request.url).origin;
+    return json({ ...r, slots: r.slots.map((x) => ({ ...x, link: `${origin}/?k=${x.key}`, key: undefined })) });
   }
   if (path === "/api/boss/paid" && request.method === "POST") {
     let body;
@@ -537,6 +587,28 @@ async function api(request, env, path) {
     if (r.error === "off") return json({ error: "This phone's access has been switched off.", reason: "off", contact: await stub.contact() }, 403);
     if (r.error === "unknown") return json({ error: "That invoice isn't here." }, 404);
     return json({ ok: true, invoice: r.invoice });
+  }
+  if ((path === "/api/boss/add-rep" || path === "/api/boss/rep-off") && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 500); } catch { return json({ error: "bad request" }, 400); }
+    const n = body.n === undefined || body.n === null ? null : Number(body.n);
+    if (n !== null && (!Number.isInteger(n) || n < 1)) return json({ error: "bad request" }, 400);
+    let r;
+    if (path === "/api/boss/add-rep") {
+      const name = typeof body.name === "string" ? body.name.replace(/\s+/g, " ").trim().slice(0, 60) : "";
+      if (!name) return json({ error: "Type the rep's name." }, 400);
+      r = await stub.bossAddRep(bossToken, name, n);
+    } else {
+      if (n === null) return json({ error: "bad request" }, 400);
+      r = await stub.bossRepOff(bossToken, n);
+    }
+    if (r.error === "signin") return json({ error: "Please enter your passcode again." }, 401);
+    if (r.error === "off") return json({ error: "This phone's access has been switched off.", reason: "off", contact: await stub.contact() }, 403);
+    if (r.error === "full") return json({ error: `All ${r.places} rep places your company paid for are in use. Switch off a rep to free a place, or contact the seller to add more.` }, 409);
+    if (r.error === "legacy") return json({ error: "This team uses one shared rep link, so reps can't be added here. Contact the seller." }, 409);
+    if (r.error === "unknown") return json({ error: "That rep place isn't here." }, 404);
+    const origin = new URL(request.url).origin;
+    return json({ ok: true, link: r.key ? `${origin}/?k=${r.key}` : null, n: r.n ?? n, slots: r.slots.map((x) => ({ ...x, link: `${origin}/?k=${x.key}`, key: undefined })) });
   }
   if (path === "/api/boss/logout" && request.method === "POST") { await stub.bossLogout(bossToken); return new Response(null, { status: 204 }); }
 
@@ -573,6 +645,7 @@ async function api(request, env, path) {
     const r = await stub.setDeviceOff(id, device, Boolean(body.off));
     if (r.error === "full") return json({ error: "All this buyer's places are in use. Switch another of their phones off first." }, 409);
     if (r.error === "replaced") return json({ error: "This rep's link was replaced, so this phone can't come back. Send the new link instead." }, 409);
+    if (r.error === "released") return json({ error: "The boss switched this rep off and freed their link, so this phone can't come back." }, 409);
     return r.buyer ? json({ buyer: r.buyer }) : json({ error: "not found" }, 404);
   }
   if (path === "/api/console/replace-rep-link" && request.method === "POST") {

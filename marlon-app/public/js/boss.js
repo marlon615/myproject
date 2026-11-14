@@ -5,7 +5,10 @@
  *  - Shows every invoice from every rep: which rep, the customer, the products, the total, paid or not paid,
  *    with totals for today, this week (Monday to Sunday) and this month per rep and for the whole company.
  *  - The boss can tick any rep's invoice as paid ("Mark paid"); it then shows as paid on the rep's phone too.
- *    That's the only change the boss can make: no writing or editing invoices.
+ *    The boss can't write or edit invoices.
+ *  - Reps: "Add rep" names one of the rep places the company paid for and gives its link (never more places);
+ *    "Switch off" a rep (e.g. they left): their phone stops working, their invoices stay under their name, and the
+ *    same link is free for a new rep ("Give to new rep").
  *  - Refreshes every 30 seconds while open. Offline, it shows what it last loaded (and says when that was).
  */
 const root = document.getElementById("boss");
@@ -103,6 +106,70 @@ function gate(claimed, company, message = "") {
 
 // ── The dashboard ────────────────────────────────────────────────────────
 
+/** The boss's reps: "Add rep" (only into the places the company paid for) and "Switch off" a rep (frees their link). */
+function repsSection(data) {
+  const slots = data.slots || [];
+  if (!slots.length) return el("section", { class: "card boss-card", id: "boss-team" }, el("h2", {}, "Reps"),
+    el("p", { class: "boss-note" }, "This team uses one shared rep link, so reps are added by the seller. Contact them to change your reps."));
+  const inUse = slots.filter((x) => x.name || x.phone).length;
+  const full = inUse >= slots.length;
+  const add = el("button", { type: "button", class: "btn btn-primary boss-add-rep", disabled: full, onclick: () => addRep(data, null) }, "+ Add rep");
+  const rows = slots.filter((x) => x.name || x.phone || x.used).map((x) => {
+    const status = x.phone ? `${x.phone.off ? "Switched off" : "Active"} · ${x.phone.label} · since ${dateText((x.phone.since || "").slice(0, 10))}` : x.name ? "Link not opened yet" : "Free · this link is ready for a new rep";
+    const copy = (x.name || x.phone) ? el("button", { type: "button", class: "btn btn-ghost boss-copy", onclick: (e) => copyText(x.link, e.currentTarget) }, "Copy link") : null;
+    const share = (x.name || x.phone) && navigator.share ? el("button", { type: "button", class: "btn btn-ghost", onclick: () => navigator.share({ title: "Marlon", text: `Your Marlon link${x.name ? `, ${x.name}` : ""}`, url: x.link }).catch(() => {}) }, "Share") : null;
+    const action = (x.name || x.phone)
+      ? el("button", { type: "button", class: "btn btn-ghost boss-rep-off", onclick: () => repOff(data, x) }, "Switch off")
+      : el("button", { type: "button", class: "btn boss-give", onclick: () => addRep(data, x.n) }, "Give to new rep");
+    return el("li", { class: "boss-rep", "data-n": x.n },
+      el("div", {}, el("strong", {}, `Rep ${x.n}${x.name ? ` · ${x.name}` : ""}`), el("span", { class: "boss-note" }, status)),
+      el("div", { class: "boss-rep-actions" }, action, copy, share));
+  });
+  return el("section", { class: "card boss-card", id: "boss-team" },
+    el("div", { class: "boss-rep-head" }, el("h2", {}, "Reps"), add),
+    el("p", { class: "boss-note", id: "boss-places" }, `${inUse} of ${slots.length} rep places in use${full ? " — all the places your company paid for. Switch off a rep to free a place, or contact the seller to add more." : "."}`),
+    el("div", { class: "boss-new-link", hidden: true }),
+    rows.length ? el("ul", { class: "boss-reps" }, rows) : el("p", { class: "boss-note" }, "No reps yet. Tap “Add rep”, type their name, then send them their link."));
+}
+
+async function copyText(text, button) {
+  try { await navigator.clipboard.writeText(text); } catch {
+    const t = el("textarea", {}, text); document.body.append(t); t.select(); try { document.execCommand("copy"); } catch { /* fine */ } t.remove();
+  }
+  const was = button.textContent; button.textContent = "Copied"; setTimeout(() => { button.textContent = was; }, 1500);
+}
+
+async function addRep(data, n) {
+  const name = (prompt(n ? `Give rep place ${n}'s link to a new rep. Their name:` : "The new rep's name:") || "").trim();
+  if (!name) return;
+  const r = await call("/api/boss/add-rep", { method: "POST", auth: true, body: { name, n } }).catch(() => null);
+  if (!r) { alert("No connection. Try again when you're online."); return; }
+  if (r.status === 401) { put(TOKEN, null, sessionStorage); start(); return; }
+  if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
+  data.slots = r.data.slots;
+  put(CACHE, data);
+  render(data, false);
+  const box = document.querySelector(".boss-new-link");
+  box.replaceChildren(el("p", {}, el("strong", {}, `${name}'s link (rep ${r.data.n}) — send it to ${name}:`)),
+    el("input", { type: "text", readonly: true, value: r.data.link, class: "boss-link-input", onfocus: (e) => e.target.select() }),
+    el("div", { class: "boss-rep-actions" },
+      el("button", { type: "button", class: "btn btn-primary", onclick: (e) => copyText(r.data.link, e.currentTarget) }, "Copy link"),
+      navigator.share ? el("button", { type: "button", class: "btn btn-ghost", onclick: () => navigator.share({ title: "Marlon", text: `Your Marlon link, ${name}`, url: r.data.link }).catch(() => {}) }, "Share") : null),
+    el("p", { class: "boss-note" }, "It works on one phone only: the first phone that opens it."));
+  box.hidden = false;
+  box.scrollIntoView({ block: "nearest" });
+}
+
+async function repOff(data, slot) {
+  const who = slot.name || `rep ${slot.n}`;
+  if (!confirm(`Switch off ${who}?\n\n${slot.phone ? `${who}'s phone stops working (the next time it's online). ` : ""}Their invoices stay on your dashboard under their name, and this link is freed so you can give it to a new rep.`)) return;
+  const r = await call("/api/boss/rep-off", { method: "POST", auth: true, body: { n: slot.n } }).catch(() => null);
+  if (!r) { alert("No connection. Try again when you're online."); return; }
+  if (r.status === 401) { put(TOKEN, null, sessionStorage); start(); return; }
+  if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
+  load();
+}
+
 /** The one change the boss can make: tick a rep's invoice as paid (it then shows as paid on the rep's phone too). */
 async function markPaid(inv, rep, button, data) {
   const what = `No. ${String(inv.number || "").padStart(4, "0")} · ${inv.store || "no customer name"} · ${money(inv.total)}`;
@@ -169,6 +236,7 @@ function render(data, offline) {
       el("div", { class: "card boss-tile" }, el("p", { class: "boss-tile-label" }, "This week"), el("p", { class: "boss-tile-value num", "data-total": "week" }, money(sum(all.filter(inRange(p.week)))))),
       el("div", { class: "card boss-tile" }, el("p", { class: "boss-tile-label" }, "This month"), el("p", { class: "boss-tile-value num", "data-total": "month" }, money(sum(all.filter(inRange(p.month))))))),
     el("p", { class: "boss-note" }, `Not paid: ${money(sum(unpaid))} on ${unpaid.length} invoice${unpaid.length === 1 ? "" : "s"}. Weeks run Monday to Sunday.`),
+    repsSection(data),
     el("section", { class: "card boss-card" }, el("h2", {}, "By rep"),
       el("table", { class: "boss-table", id: "boss-reps" },
         el("thead", {}, el("tr", {}, el("th", {}, "Rep"), el("th", {}, "Today"), el("th", {}, "This week"), el("th", {}, "This month"))),

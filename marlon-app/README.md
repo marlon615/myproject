@@ -58,7 +58,11 @@ and several sales reps). A team gets two links:
   Home Screen icon count separately). The first visit sets the boss's own passcode (5 wrong tries per 15 minutes).
   It shows:
   - every invoice from every rep, with the rep, customer, products, total, and paid or not paid;
-  - **Mark paid**, the only change the boss can make: he ticks a rep's unpaid invoice as paid. It shows as paid
+  - **Reps**: "Add rep" names one of the rep places the company paid for and shows its link to copy or share. It
+    can never go beyond the paid number. "Switch off" a rep (e.g. they left): their phone stops working, their
+    invoices stay under their name, and the same link is freed. "Give to new rep" hands it on with a new name, and
+    the old phone can never come back on it;
+  - **Mark paid**, one of the boss's only two changes: he ticks a rep's unpaid invoice as paid. It shows as paid
     on the rep's phone too, and a rep's phone can never undo it. The boss can't write or edit invoices;
   - totals for today, this week (Monday to Sunday) and this month, per rep and for the whole company;
   - when offline, the last data it loaded.
