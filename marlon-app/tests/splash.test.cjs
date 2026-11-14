@@ -1,4 +1,4 @@
-/** Opening animation: completely black, a cannon blast of gold confetti filling the screen, then "Marlon" whole (never before the blast settles), held ~1 s, then the app. */
+/** Opening animation: dark, "Marlon" thrown at the screen from far away, slams in full size with one small shake, holds 1 s, then the app — under 1.5 s. */
 const { chromium } = require("playwright");
 const { start } = require("./serve.cjs");
 const path = require("path");
@@ -35,32 +35,25 @@ async function state(page) {
       page.on("pageerror", (e) => errors.push(e.message));
       page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
       await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=0`);
-      // Black, then the blast; "Marlon" must not show at all until the blast has settled. Sampled every ~60 ms.
+      // The word flies in from far away: sampled as fast as possible.
       const samples = [];
-      while (true) {
-        const r = await page.evaluate(() => {
-          const sp = document.getElementById("splash"); if (!sp) return null;
-          const c = sp.querySelector("canvas.splash-sparks"); let lit = 0, quads = [0, 0, 0, 0];
-          if (c) { const W = c.width, H = c.height, d = c.getContext("2d").getImageData(0, 0, W, H).data;
-            for (let y = 0; y < H; y += 6) for (let x = 0; x < W; x += 6) { const k = (y * W + x) * 4; if (d[k + 3] > 60) { lit++; quads[(y < H / 2 ? 0 : 2) + (x < W / 2 ? 0 : 1)]++; } } }
-          return { t: performance.now(), word: Number(getComputedStyle(sp.querySelector(".splash-name svg")).opacity), lit, quads };
-        });
-        if (!r || r.word > 0.05) { if (r) samples.push(r); break; }
-        samples.push(r);
-        if (r.t > 1200 && !samples.find((x) => x.saved)) { r.saved = true; await page.screenshot({ path: path.join(out, "splash-1-blast.png") }); }
-        await page.waitForTimeout(40);
+      for (let i = 0; i < 40; i++) {
+        const r = await page.evaluate(() => { const sp = document.getElementById("splash"); if (!sp) return null; const svg = sp.querySelector(".splash-name svg");
+          return { t: performance.now(), op: Number(getComputedStyle(svg).opacity), w: svg.getBoundingClientRect().width, shake: getComputedStyle(sp).transform }; });
+        if (!r) break; samples.push(r);
+        if (r.t > 700) break;
+        await page.waitForTimeout(15);
       }
-      const before = samples.filter((x) => x.word <= 0.05);
-      const firstWord = samples[samples.length - 1];
-      check(before.length > 0 && before[0].t < 300 && before[0].lit === 0, "it starts completely black, nothing showing", `t=${before[0]?.t.toFixed(0)}ms lit=${before[0]?.lit}`);
-      const flash = before.find((x) => x.t > 300 && x.t < 600 && x.lit > 20000);
-      check(Boolean(flash), "the blast starts with a flash across the screen", flash ? `${flash.lit} lit points at ${flash.t.toFixed(0)}ms` : "no flash");
-      const after = before.filter((x) => x.t > 800).reduce((m, x) => (x.lit > m.lit ? x : m), { lit: 0 });
-      check(after.lit > 400 && after.quads.every((q) => q > 40), "then confetti fills the whole screen (all four quarters), after the flash has gone", `${after.lit} confetti points at ${after.t?.toFixed(0)}ms, quarters ${after.quads}`);
-      check(firstWord.t >= 1450, "'Marlon' is not visible at all until the blast has settled", `first visible at ${firstWord.t.toFixed(0)}ms; ${before.length} samples before showed no name`);
-      await page.waitForTimeout(400);
+      const full = Math.max(...samples.map((x) => x.w));
+      const grow = samples.filter((x) => x.op > 0 && x.w < full * 0.98);
+      check(samples[0].op === 0 || samples[0].w < full * 0.3, "it starts dark, the word not yet there", JSON.stringify(samples[0]));
+      check(grow.length >= 2 && grow[0].w < full * 0.5 && grow.every((x, i) => i === 0 || x.w >= grow[i - 1].w), "the word flies at the screen from far away, growing fast", grow.map((x) => `${x.t.toFixed(0)}ms:${(100 * x.w / full).toFixed(0)}%`).join(" "));
+      const landed = samples.find((x) => x.w >= full * 0.99);
+      check(landed && landed.t < 600, "…and slams into place full size", landed ? `full size at ${landed.t.toFixed(0)}ms` : "never full size");
+      const moved = samples.filter((x) => x.shake !== "none" && x.shake !== "matrix(1, 0, 0, 1, 0, 0)");
+      check(moved.length >= 1 && moved.every((x) => x.t >= landed.t - 40 && x.t <= landed.t + 220), "…with one small shake of the screen as it lands", moved.map((x) => `${x.t.toFixed(0)}ms ${x.shake}`).join(" | "));
       await page.screenshot({ path: path.join(out, "splash-2-name.png") });
-      check(await page.locator("#splash .splash-name path.splash-word").count() === 1, "the name appears whole, all at once (one shape, no spelling out)");
+      check(await page.locator("#splash canvas, #splash rect, #splash .splash-shine").count() === 0, "no sparkles, confetti or gold band anywhere");
       let s = await state(page);
       check(s.present && s.opacity === 1 && !s.leaving && s.inert && s.htmlLocked, "everything stays fully visible until the fade; page behind is inert", `t=${s.now.toFixed(0)}ms`);
       const name = await page.evaluate(() => {
@@ -80,15 +73,15 @@ async function state(page) {
       // Sample during the fade to make sure it is gradual, not a jump.
       await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-leaving") ?? true, null, { timeout: 3000 });
       const leaveAt = await page.evaluate(() => performance.now());
-      check(leaveAt - firstWord.t >= 850 && leaveAt - firstWord.t <= 1250, "the name is held for about one second, then the fade into the app", `fade at ${leaveAt.toFixed(0)}ms, ${(leaveAt - firstWord.t).toFixed(0)}ms after the name`);
+      check(leaveAt - landed.t >= 950 && leaveAt - landed.t <= 1250, "the word holds for one second, then the app opens", `fade at ${leaveAt.toFixed(0)}ms, ${(leaveAt - landed.t).toFixed(0)}ms after it landed`);
       await page.screenshot({ path: path.join(out, "splash-4-fading.png") });
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(50);
       s = await state(page);
-      check(s.present ? s.opacity > 0.05 && s.opacity < 0.95 : false, "fade is gradual (mid-fade opacity between 0 and 1)", `opacity=${s.opacity.toFixed(2)}`);
+      check(s.present ? s.opacity < 0.95 : true, "a quick fade into the app", `opacity=${s.opacity.toFixed(2)}`);
       check(!s.inert, "page becomes usable as soon as the fade begins");
       await page.waitForFunction(() => !document.getElementById("splash"), null, { timeout: 3000 });
       s = await state(page);
-      check(!s.present && !s.htmlLocked && s.doneAt !== null && s.doneAt <= 3400, "into the app after about three seconds in all", `done at ${s.doneAt?.toFixed(0)}ms`);
+      check(!s.present && !s.htmlLocked && s.doneAt !== null && s.doneAt < 1500, "the whole thing is under 1.5 seconds", `done at ${s.doneAt?.toFixed(0)}ms`);
       const themeAfter = await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content);
       check(themeAfter === "#17633f", "status bar colour restored afterwards", themeAfter);
       await page.click("#b", { timeout: 1000 });
@@ -140,13 +133,13 @@ async function state(page) {
       const page = await ctx.newPage();
       await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=0`);
       const dur = await page.evaluate(() => getComputedStyle(document.getElementById("splash")).transitionDuration);
-      check(/0\.25s/.test(dur), "reduced motion keeps a short fade (not removed by the global rule)", dur);
+      check(/0\.12s/.test(dur), "reduced motion keeps a short fade (not removed by the global rule)", dur);
       await page.waitForTimeout(400);
       const rm = await page.evaluate(() => ({ anim: getComputedStyle(document.querySelector("#splash .splash-name svg")).animationName, sparks: !!document.querySelector("#splash canvas") }));
-      check(rm.anim === "splash-fade" && !rm.sparks, "reduced motion: no blast and no movement — the name just fades in", JSON.stringify(rm));
+      check(rm.anim === "splash-fade" && !rm.sparks, "reduced motion: no flying or shaking — the word just appears", JSON.stringify(rm));
       await page.waitForFunction(() => !document.getElementById("splash"), null, { timeout: 7000 });
       const t = await page.evaluate(() => window.__splashDoneAt);
-      check(t >= 1400 && t <= 2200, "reduced motion: into the app at about 1.5–2 s", `${t?.toFixed(0)}ms`);
+      check(t >= 1000 && t < 1500, "reduced motion: into the app in under 1.5 s", `${t?.toFixed(0)}ms`);
       await ctx.close();
     }
     // 6b) Tap anywhere skips straight to the main page — and the tap never presses what's underneath.
@@ -154,7 +147,7 @@ async function state(page) {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: how === "touch", hasTouch: how === "touch" });
       const page = await ctx.newPage();
       await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=0`);
-      await page.waitForTimeout(1200);
+      await page.waitForTimeout(500);
       const b = await page.locator("#b").boundingBox();          // tap exactly over the hidden button
       const x = b.x + b.width / 2, y = b.y + b.height / 2;
       const tapAt = await page.evaluate(() => performance.now());

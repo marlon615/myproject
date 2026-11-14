@@ -1,6 +1,6 @@
-/* Opening animation: a completely black screen, a cannon blast of gold confetti and sparkles across the whole
-   screen (drawn on a canvas by js/splash.js), then — once it has settled — "Marlon", whole, held for a second,
-   then the fade into the app. "Marlon" is hidden until js/splash.js adds .is-word. Offline: all in the page. */
+/* Opening animation: a dark screen, then "Marlon" flies at the screen from far away and slams into place full size
+   with one small shake, holds 1 s, then the app opens — under 1.5 s (timing in js/splash.js). The throw starts on the
+   very first frame. All in the page, so it works offline. */
 
 #splash {
   --splash-bg: #000000;      /* completely black */
@@ -28,7 +28,7 @@ html.splash-active body { overflow: hidden; }
   user-select: none;
   -webkit-touch-callout: none;
   opacity: 1;
-  transition: opacity .5s cubic-bezier(.4, 0, .2, 1), visibility 0s linear .5s;
+  transition: opacity .12s linear, visibility 0s linear .12s;
 }
 
 #splash.is-leaving {
@@ -36,8 +36,7 @@ html.splash-active body { overflow: hidden; }
   visibility: hidden;
   pointer-events: none;
 }
-/* As it leaves, the name drifts up a little and grows, like a phone handing over to its home screen. */
-#splash.is-leaving .splash-mark { transform: translateY(-4vh) scale(1.04); transition: transform .5s cubic-bezier(.4, 0, .2, 1); }
+
 
 .splash-mark {
   display: grid;
@@ -60,22 +59,20 @@ html.splash-active body { overflow: hidden; }
   overflow: visible;
   opacity: 0;
 }
-/* The burst hits: the whole word appears at once, glowing, growing gently. */
-#splash.is-word .splash-name svg { animation: splash-word .45s cubic-bezier(.22, 1, .36, 1) both; }
-/* The shimmer: a band of gold-white light, skewed, sweeping left to right inside the letters. */
-.splash-shine { opacity: 0; transform-box: view-box; transform: translateX(0) skewX(-18deg); }
-#splash.is-shimmer .splash-shine { animation: splash-shine .75s cubic-bezier(.4, 0, .2, 1) both; }
-@keyframes splash-shine {
-  0%   { opacity: 1; transform: translateX(0) skewX(-18deg); }
-  85%  { opacity: 1; }
-  100% { opacity: 0; transform: translateX(150%) skewX(-18deg); }
+/* Thrown at the screen: from far away (tiny, faded) to full size, accelerating, landing at 0.22 s;
+   then the screen gives one small shake as it slams in. */
+.splash-name svg { animation: splash-fly .22s cubic-bezier(.55, 0, 1, .45) both; } /* from the very first frame */
+#splash { animation: splash-shake .14s linear .22s both; }
+@keyframes splash-fly {
+  0%   { opacity: 0; transform: scale(.04); }
+  15%  { opacity: 1; }
+  100% { opacity: 1; transform: scale(1); }
 }
-.splash-sparks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.splash-mark { position: relative; z-index: 1; }
-@keyframes splash-word {
-  0%   { opacity: 0; transform: scale(.9); filter: drop-shadow(0 0 0 rgba(255, 214, 120, 0)); }
-  40%  { opacity: 1; filter: drop-shadow(0 0 26px rgba(255, 214, 120, .6)); }
-  100% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 12px rgba(255, 214, 120, .3)); }
+@keyframes splash-shake {
+  0%, 100% { transform: none; }
+  20% { transform: translate(-7px, 4px); }
+  45% { transform: translate(6px, -4px); }
+  70% { transform: translate(-3px, 2px); }
 }
 
 /* Fallback if the wordmark is plain text. */
@@ -88,12 +85,10 @@ html.splash-active body { overflow: hidden; }
 }
 
 
-/* Reduced motion: no sparkles, no movement — the word simply fades in, then a short fade into the app. */
+/* Reduced motion: no flying or shaking — the word simply appears, holds a second, then the app. */
 @media (prefers-reduced-motion: reduce) {
-  #splash { transition: opacity .25s linear, visibility 0s linear .25s !important; }
-  #splash .splash-name svg { animation: none !important; }
-  #splash.is-word .splash-name svg { animation: splash-fade .5s ease both !important; }
-  #splash .splash-sparks, #splash .splash-shine { display: none !important; }
-  #splash.is-leaving .splash-mark { transform: translateY(-3vh) !important; transition: none !important; }
+  #splash { transition: opacity .12s linear, visibility 0s linear .12s !important; }
+  #splash { animation: none !important; }
+  #splash .splash-name svg { animation: splash-fade .15s ease both !important; }
 }
 @keyframes splash-fade { from { opacity: 0; } to { opacity: 1; } }

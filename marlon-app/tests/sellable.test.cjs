@@ -55,13 +55,12 @@ const dbCount = (page, store) => page.evaluate((s) => new Promise((ok) => {
     await page.waitForSelector("#splash");
     const splashText = await page.evaluate(() => document.getElementById("splash").textContent.replace(/\s+/g, " ").trim());
     check(splashText === "Marlon", "first open from the personal link: the opening animation shows only 'Marlon'", JSON.stringify(splashText));
-    check(await page.locator("#splash canvas.splash-sparks").count() === 1 && Number(await page.evaluate(() => getComputedStyle(document.querySelector("#splash .splash-name svg")).opacity)) === 0,
-      "…black with the confetti blast, and no name showing yet");
-    await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-word"), null, { timeout: 4000 });
-    check(await page.evaluate(() => getComputedStyle(document.querySelector("#splash .splash-name svg")).animationName) === "splash-word", "…then the whole name appears");
+    await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-fly"), null, { timeout: 3000 });
+    check(await page.evaluate(() => getComputedStyle(document.querySelector("#splash .splash-name svg")).animationName) === "splash-fly" && await page.locator("#splash canvas").count() === 0,
+      "…the word is thrown at the screen (no sparkles)");
     await page.waitForSelector("#splash", { state: "detached", timeout: 9000 });
     const gone = await page.evaluate(() => performance.now());
-    check(gone <= 3600, "…and goes into the app after about three seconds", `${gone.toFixed(0)}ms after opening`);
+    check(gone <= 2200, "…and goes into the app quickly", `${gone.toFixed(0)}ms after opening`);
     check(await page.locator("#setup-name").isVisible() && await page.locator("#invoice-screen").isHidden(), "…then the setup screen (not a blank page, not someone else's invoice)");
     check(await page.title() === "Marlon", "the page is just 'Marlon' until the business names itself", await page.title());
     check(await dbCount(page, "products") === 0 && await dbCount(page, "invoices") === 0, "starts completely blank: no products, no invoices");
@@ -109,10 +108,10 @@ const dbCount = (page, store) => page.evaluate((s) => new Promise((ok) => {
     await ctx.setOffline(true);
     for (let n = 1; n <= 2; n++) {
       await page.goto(`${srv.url}/?splash`);
-      await page.waitForSelector("#splash canvas.splash-sparks", { timeout: 3000 });
+      await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-fly"), null, { timeout: 3000 });
       const played = true;
       await page.waitForSelector("#splash", { state: "detached", timeout: 6000 });
-      check(played && await page.textContent("#company-name") === BUSINESS.name, `opening ${n} with no internet: the confetti animation plays, then the app`);
+      check(played && await page.textContent("#company-name") === BUSINESS.name, `opening ${n} with no internet: the opening plays, then the app`);
     }
     await ctx.setOffline(false);
 
