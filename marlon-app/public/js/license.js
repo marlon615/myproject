@@ -9,8 +9,11 @@
  * still switched on (the maker can switch off one phone or a whole buyer); a switched-off phone stays blocked,
  * even offline, until it's switched on again.
  *
- * iPhone: a home-screen app has its own storage, separate from Safari, so activating in Safari would use two places.
- * There the link asks to "Add to Home Screen" first (the link travels with it) and the home-screen app activates.
+ * Phones in the browser see an install page first (the personal link travels with the installed app):
+ *   iPhone:  a home-screen app has its own storage, separate from Safari, so activating in Safari would use two
+ *            places; the home-screen app activates (or "use it here" in Safari, which takes a place).
+ *   Android: Chrome's menu → "Add to Home screen" / "Install app" (or Chrome's own Install button when it offers
+ *            one); "use it here in Chrome" costs nothing extra, since Chrome and the installed app share storage.
  */
 import { settings } from "./db.js";
 import { h } from "./util.js";
@@ -36,6 +39,17 @@ function cleanUrl() {
 
 /** iPhone/iPad, in Safari (or another iPhone browser) rather than from the home screen. */
 const iosBrowser = () => navigator.standalone === false;
+/** An Android phone, in the browser rather than opened as an installed app. */
+const androidBrowser = () => /Android/i.test(navigator.userAgent)
+  && !["standalone", "fullscreen", "minimal-ui"].some((m) => matchMedia(`(display-mode: ${m})`).matches);
+
+// Chrome on Android can offer its own "Install app" button; keep its offer for the install page.
+let installOffer = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installOffer = e;
+  document.dispatchEvent(new Event("license:installable"));
+});
 
 async function call(path, body) {
   const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
@@ -61,7 +75,8 @@ export async function ensureAccess(container) {
     return { ok: true };
   }
   if (!urlKey) return show("nolink", await contactText());
-  if (iosBrowser()) return showInstall(urlKey);
+  if (iosBrowser()) return showInstall(urlKey, "ios");
+  if (androidBrowser()) return showInstall(urlKey, "android");
   return activate(urlKey);
 }
 
@@ -135,19 +150,41 @@ function show(reason, contact, retry = () => location.reload()) {
   return { ok: false, reason };
 }
 
-/** iPhone in Safari: add to the home screen first; the personal link goes with it. Or use it here instead. */
-function showInstall(key) {
+/**
+ * The install page: add Marlon to the Home Screen first; the personal link goes with it (the manifest's start_url).
+ *   iPhone:  Safari and a Home Screen app keep separate storage, so using it in Safari too would take a second place.
+ *   Android: Chrome and the installed app share storage, so "use it here" costs nothing extra.
+ */
+function showInstall(key, platform) {
   const manifest = document.querySelector('link[rel="manifest"]');
   if (manifest) manifest.href = `/manifest.webmanifest?k=${key}`;
-  root.replaceChildren(h("div", { class: "gate card", dataset: { reason: "install" } },
+  const ios = platform === "ios";
+  const steps = ios
+    ? [h("li", {}, "Tap the Share button (the square with an arrow) at the bottom of Safari."),
+      h("li", {}, "Choose “Add to Home Screen”, then “Add”."),
+      h("li", {}, "Open Marlon from your Home Screen.")]
+    : [h("li", {}, "Tap the menu (⋮) at the top right of Chrome."),
+      h("li", {}, "Choose “Add to Home screen” or “Install app”, then confirm."),
+      h("li", {}, "Open Marlon from your Home Screen.")];
+  const installBtn = ios ? null : h("button", { type: "button", class: "btn btn-primary btn-block gate-install", hidden: !installOffer, onclick: async () => {
+    if (!installOffer) return;
+    const offer = installOffer;
+    installOffer = null;
+    installBtn.hidden = true;
+    try { await offer.prompt(); await offer.userChoice; } catch { /* dismissed */ }
+  } }, "Install app");
+  if (installBtn) document.addEventListener("license:installable", () => { installBtn.hidden = false; });
+  const done = h("p", { class: "gate-contact", hidden: true }, "Installed. Open Marlon from your Home Screen.");
+  window.addEventListener("appinstalled", () => { done.hidden = false; if (installBtn) installBtn.hidden = true; });
+  root.replaceChildren(h("div", { class: "gate card", dataset: { reason: "install", platform } },
     h("p", { class: "gate-kicker" }, "Marlon"),
     h("h1", { class: "gate-title" }, "Add Marlon to your Home Screen"),
-    h("p", { class: "gate-lead" }, "On iPhone, Marlon works from your Home Screen, even with no internet. Your personal link goes with it."),
-    h("ol", { class: "gate-steps" },
-      h("li", {}, "Tap the Share button (the square with an arrow) at the bottom of Safari."),
-      h("li", {}, "Choose “Add to Home Screen”, then “Add”."),
-      h("li", {}, "Open Marlon from your Home Screen.")),
-    h("button", { type: "button", class: "link-btn gate-here", onclick: async () => { const r = await activate(key); if (r.ok) location.reload(); } }, "Use it here in Safari instead (this counts as one of your phones)")));
+    h("p", { class: "gate-lead" }, `On ${ios ? "iPhone" : "Android"}, Marlon works from your Home Screen, even with no internet. Your personal link goes with it.`),
+    installBtn,
+    h("ol", { class: "gate-steps" }, steps),
+    done,
+    h("button", { type: "button", class: "link-btn gate-here", onclick: async () => { const r = await activate(key); if (r.ok) location.reload(); } },
+      ios ? "Use it here in Safari instead (this counts as one of your phones)" : "Use it here in Chrome instead")));
   root.hidden = false;
   return { ok: false, reason: "install" }; // the app opens from the Home Screen (or after "use it here")
 }

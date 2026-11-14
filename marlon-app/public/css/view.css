@@ -10,7 +10,6 @@ html, body { background: #ebe8df; color: #1a1c19; color-scheme: light; }
 .sheet-head { text-align: center; padding-bottom: 18px; border-bottom: 1px dashed #cfc8b8; }
 .brand { display: grid; justify-items: center; padding: 2px 0 14px; }
 .brand-wordmark { display: block; width: min(62%, 250px); height: auto; color: #1a1c19; }
-.brand-tag { margin: 8px 0 0; font-size: 13px; font-weight: 650; letter-spacing: .1em; color: #17633f; }
 .seller { margin: 4px 0 4px; font-size: 18px; font-weight: 700; }
 .seller-big { margin: 2px 0 6px; font-family: var(--font-display); font-size: 28px; line-height: 1.15; overflow-wrap: anywhere; }
 .seller-phone { margin: 0 0 6px; font-size: 15px; }

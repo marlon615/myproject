@@ -1,7 +1,7 @@
 /**
- * Renders the real startup splash at every common iPhone screen size and saves dark launch images
- * (apple-touch-startup-image) into public/splash/, so an installed iPhone app opens straight onto the
- * dark splash instead of flashing a white screen first. Then rewrites the <link> tags in index.html
+ * Renders the opening animation's first frame (the dark screen, before any letter appears) at every common
+ * iPhone screen size and saves it as the launch image (apple-touch-startup-image) in public/splash/, so an
+ * installed iPhone app opens onto the dark screen and the "Marlon" letters then build in, with no flash. Then rewrites the <link> tags in index.html
  * between the markers <!-- startup-images:start --> and <!-- startup-images:end -->.
  *
  * Run after changing the splash:  node scripts/make-startup-images.cjs
@@ -47,7 +47,8 @@ const fileFor = (d) => `launch-${d.w * d.dpr}x${d.h * d.dpr}.png`;
       const page = await ctx.newPage();
       await page.goto(`${srv.url}/?splash`);
       await page.waitForSelector("#splash", { state: "visible" });
-      await page.waitForTimeout(700); // fonts and layout settled; the splash is fully opaque until 5 s
+      await page.addStyleTag({ content: "#splash .splash-name { visibility: hidden !important; }" }); // the frame before the letters
+      await page.waitForTimeout(300);
       const file = path.join(OUT, fileFor(d));
       await page.screenshot({ path: file });
       await ctx.close();

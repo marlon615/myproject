@@ -130,7 +130,7 @@ function blockApp() {
 /** The business's name at the top of the invoice screen. */
 function renderCompany() {
   el.company.textContent = business.name || "Your company";
-  document.title = business.name ? `${business.name} · Marlon` : "Marlon · Delivery Invoices";
+  document.title = business.name ? `${business.name} · Marlon` : "Marlon";
 }
 
 function signalReady() {

@@ -1,4 +1,4 @@
-/** Startup splash: only "Marlon", five seconds, smooth fade, never into a blank page. */
+/** Opening animation: only "Marlon", the letters build in one by one, about two seconds, smooth fade, never into a blank page. */
 const { chromium } = require("playwright");
 const { start } = require("./serve.cjs");
 const path = require("path");
@@ -27,7 +27,7 @@ async function state(page) {
   const browser = await chromium.launch();
   const out = path.join(__dirname, "output");
   try {
-    // 1) Normal launch: app ready immediately → visible for 5 s, then fades out and is removed.
+    // 1) Normal launch: app ready immediately → the name builds in, holds, fades out at ~1.5–2 s and is removed.
     {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
       const page = await ctx.newPage();
@@ -35,9 +35,16 @@ async function state(page) {
       page.on("pageerror", (e) => errors.push(e.message));
       page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
       await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=0`);
-      await page.waitForTimeout(800);
+      // The letters build in one after another: early on, the first letter is further along than the last.
+      await page.waitForFunction(() => { const p = document.querySelectorAll("#splash .splash-name path"); return p.length === 6 && Number(getComputedStyle(p[0]).opacity) > 0.3; }, null, { timeout: 3000 });
+      const early = await page.evaluate(() => [...document.querySelectorAll("#splash .splash-name path")].map((p) => Number(getComputedStyle(p).opacity)));
+      check(early.length === 6 && early[0] > early[5] + 0.2 && early[5] < 0.5, "the letters of 'Marlon' build in one after another", early.map((o) => o.toFixed(2)).join(" "));
+      await page.screenshot({ path: path.join(out, "splash-building.png") });
+      await page.waitForTimeout(450);
+      await page.screenshot({ path: path.join(out, "splash-building-2.png") });
+      await page.waitForFunction(() => [...document.querySelectorAll("#splash .splash-name path")].every((p) => Number(getComputedStyle(p).opacity) === 1), null, { timeout: 3000 });
       let s = await state(page);
-      check(s.present && s.opacity === 1 && s.inert && s.htmlLocked, "splash visible at launch, page behind is inert", JSON.stringify({ opacity: s.opacity, inert: s.inert }));
+      check(s.present && s.opacity === 1 && !s.leaving && s.inert && s.htmlLocked, "the whole name is shown before anything fades; page behind is inert", `t=${s.now.toFixed(0)}ms`);
       const name = await page.evaluate(() => {
         const n = document.querySelector("#splash .splash-name");
         const svg = n && n.querySelector("svg");
@@ -53,20 +60,17 @@ async function state(page) {
       const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
       check(Math.abs(cx - vw / 2) < 4 && cy > vh * 0.3 && cy < vh * 0.6 && box.height >= 60, "name is large and centered", `center=(${cx.toFixed(0)},${cy.toFixed(0)}) h=${box.height.toFixed(0)}`);
       await page.screenshot({ path: path.join(out, "splash-light.png") });
-      await page.waitForTimeout(4600 - 800 - 300);
-      s = await state(page);
-      check(s.present && !s.leaving && s.opacity === 1, "still fully visible just before 5 s", `t=${s.now.toFixed(0)}ms`);
       // Sample during the fade to make sure it is gradual, not a jump.
       await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-leaving") ?? true, null, { timeout: 3000 });
       const leaveAt = await page.evaluate(() => performance.now());
-      check(leaveAt >= 4950 && leaveAt <= 5400, "fade starts at ~5 s", `${leaveAt.toFixed(0)}ms`);
-      await page.waitForTimeout(350);
+      check(leaveAt >= 1450 && leaveAt <= 2000, "it fades out at about 1.5 s, once the name has built", `${leaveAt.toFixed(0)}ms`);
+      await page.waitForTimeout(200);
       s = await state(page);
       check(s.present ? s.opacity > 0.05 && s.opacity < 0.95 : false, "fade is gradual (mid-fade opacity between 0 and 1)", `opacity=${s.opacity.toFixed(2)}`);
       check(!s.inert, "page becomes usable as soon as the fade begins");
       await page.waitForFunction(() => !document.getElementById("splash"), null, { timeout: 3000 });
       s = await state(page);
-      check(!s.present && !s.htmlLocked && s.doneAt !== null && s.doneAt < 6600, "splash removed after the fade", `done at ${s.doneAt?.toFixed(0)}ms`);
+      check(!s.present && !s.htmlLocked && s.doneAt !== null && s.doneAt <= 2600, "into the app after about two seconds in all", `done at ${s.doneAt?.toFixed(0)}ms`);
       const themeAfter = await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content);
       check(themeAfter === "#17633f", "status bar colour restored afterwards", themeAfter);
       await page.click("#b", { timeout: 1000 });
@@ -89,14 +93,14 @@ async function state(page) {
       if (scheme === "dark") await page.screenshot({ path: path.join(out, "splash-dark.png") });
       await ctx.close();
     }
-    // 3) App not ready at 5 s → waits for app:ready (never fades into a blank page).
+    // 3) App not ready after the animation → waits for app:ready (never fades into a blank page).
     {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
       const page = await ctx.newPage();
       await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=6500`);
       await page.waitForTimeout(5800);
       let s = await state(page);
-      check(s.present && !s.leaving, "waits past 5 s while the app is still loading");
+      check(s.present && !s.leaving, "waits (past the animation) while the app is still loading");
       await page.waitForFunction(() => document.getElementById("splash")?.classList.contains("is-leaving") ?? true, null, { timeout: 3000 });
       const t = await page.evaluate(() => performance.now());
       check(t >= 6450 && t <= 7000, "fades right after the app reports ready", `${t.toFixed(0)}ms`);
@@ -112,16 +116,18 @@ async function state(page) {
       check(t >= 9950 && t <= 10500, "never holds the app longer than 10 s", `${t.toFixed(0)}ms`);
       await ctx.close();
     }
-    // 5) Reduced motion: still leaves at ~5 s with a short gentle fade.
+    // 5) Reduced motion: the name just fades in (no movement), then a short gentle fade at ~1.5 s.
     {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
       const page = await ctx.newPage();
       await page.goto(`${srv.url}/__tests/splash-harness.html?splash&ready=0`);
       const dur = await page.evaluate(() => getComputedStyle(document.getElementById("splash")).transitionDuration);
       check(/0\.25s/.test(dur), "reduced motion keeps a short fade (not removed by the global rule)", dur);
+      const anim = await page.evaluate(() => getComputedStyle(document.querySelector("#splash .splash-name path")).animationName);
+      check(anim === "splash-fade", "reduced motion: the letters only fade in (no rising or blurring)", anim);
       await page.waitForFunction(() => !document.getElementById("splash"), null, { timeout: 7000 });
       const t = await page.evaluate(() => window.__splashDoneAt);
-      check(t >= 5000 && t <= 5800, "reduced motion: gone shortly after 5 s", `${t?.toFixed(0)}ms`);
+      check(t >= 1500 && t <= 2300, "reduced motion: into the app at about 1.5–2 s", `${t?.toFixed(0)}ms`);
       await ctx.close();
     }
     // 6b) Tap anywhere skips straight to the main page — and the tap never presses what's underneath.

@@ -1,9 +1,10 @@
 /*
- * Startup splash timing. The splash (#splash in index.html, styles in css/splash.css) stays up for five
- * seconds from launch, then fades smoothly into the main page and is removed.
+ * Opening animation timing. The splash (#splash in index.html, styles in css/splash.css) builds the "Marlon"
+ * name letter by letter, holds it a moment, then fades into the app and is removed: about two seconds in all.
+ * The fade starts only once the last letter has landed, so the name is always seen whole, however slow the phone.
  *
  * - A plain (non-module) deferred script, so the splash still leaves even if the app's modules fail to load.
- * - Five seconds are counted from navigation start (performance.now()), not from when this script runs.
+ * - The time is counted from navigation start (performance.now()), and also waits for the last letter's animation.
  * - If the app hasn't drawn its first screen by then (it sets window.__appReady and fires "app:ready"),
  *   the splash waits for it, but never longer than MAX_MS in total, so you don't fade into a blank page.
  * - While the splash shows, the page behind it is inert (no accidental taps or keyboard focus), and the
@@ -16,8 +17,9 @@
  */
 (() => {
   const SPLASH_BG = "#0f1411"; // must match --splash-bg in splash.css
-  const SHOW_MS = 5000;  // how long the splash stays fully visible
-  const FADE_MS = 800;   // must match the transition in splash.css
+  const SHOW_MS = 1500;  // fully visible until at least this long after launch (the letters take ~1.2 s)
+  const HOLD_MS = 250;   // after the last letter lands, hold the whole name this long before fading
+  const FADE_MS = 500;   // must match the transition in splash.css
   const MAX_MS = 10000;  // never hold the app back longer than this
   const TAP_GRACE_MS = 1500; // after a tap, wait at most this long for a slow app before fading anyway
 
@@ -58,7 +60,19 @@
   let leaving = false;
 
   const elapsed = performance.now();
-  setTimeout(() => { timeUp = true; maybeLeave(); }, Math.max(0, SHOW_MS - elapsed));
+  // Fully visible until SHOW_MS after launch and until the name has finished building (whichever is later).
+  let shownLongEnough = false, built = false;
+  const ready = () => { if (shownLongEnough && built) { timeUp = true; maybeLeave(); } };
+  setTimeout(() => { shownLongEnough = true; ready(); }, Math.max(0, SHOW_MS - elapsed));
+  const letters = splash.querySelectorAll(".splash-name path");
+  const last = letters[letters.length - 1];
+  const markBuilt = () => setTimeout(() => { built = true; ready(); }, HOLD_MS);
+  if (last && typeof last.getAnimations === "function" && last.getAnimations().length) {
+    Promise.all(last.getAnimations().map((a) => a.finished)).then(markBuilt, markBuilt);
+  } else {
+    built = true;
+  }
+  setTimeout(() => { built = true; ready(); }, 3000); // never wait on an animation longer than this
   setTimeout(() => { appReady = true; maybeLeave(); }, Math.max(0, MAX_MS - elapsed));
   document.addEventListener("app:ready", () => { appReady = true; maybeLeave(); }, { once: true });
 

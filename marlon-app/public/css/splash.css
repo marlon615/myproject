@@ -1,6 +1,7 @@
-/* Startup splash: only the "Marlon" wordmark, large and centered, on its own.
-   Always dark, whatever the phone's light/dark setting.
-   Shown for five seconds from launch, then it fades smoothly into the main page (timing in js/splash.js).
+/* Opening animation: only the "Marlon" wordmark, large and centered, on its own. Always dark.
+   The letters build in one after another (rise, sharpen, fade in), the name settles, then the whole screen
+   fades into the app — about two seconds in all (timing in js/splash.js). Every time the app opens; it's all
+   in the page (no downloads), so it works offline.
    Load after base.css. Markup lives at the top of <body> in index.html. */
 
 #splash {
@@ -29,7 +30,7 @@ html.splash-active body { overflow: hidden; }
   user-select: none;
   -webkit-touch-callout: none;
   opacity: 1;
-  transition: opacity .8s cubic-bezier(.4, 0, .2, 1), visibility 0s linear .8s;
+  transition: opacity .5s cubic-bezier(.4, 0, .2, 1), visibility 0s linear .5s;
 }
 
 #splash.is-leaving {
@@ -37,6 +38,8 @@ html.splash-active body { overflow: hidden; }
   visibility: hidden;
   pointer-events: none;
 }
+/* As it leaves, the name drifts up a little and grows, like a phone handing over to its home screen. */
+#splash.is-leaving .splash-mark { transform: translateY(-4vh) scale(1.04); transition: transform .5s cubic-bezier(.4, 0, .2, 1); }
 
 .splash-mark {
   display: grid;
@@ -57,6 +60,30 @@ html.splash-active body { overflow: hidden; }
   width: min(80vw, 340px);
   height: auto;
   overflow: visible;
+  animation: splash-settle 1.4s cubic-bezier(.22, 1, .36, 1) both;
+}
+/* The letters build in, one after another. */
+.splash-name path {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: splash-letter .62s cubic-bezier(.22, 1, .36, 1) both;
+}
+.splash-name path:nth-of-type(1) { animation-delay: .10s; }
+.splash-name path:nth-of-type(2) { animation-delay: .19s; }
+.splash-name path:nth-of-type(3) { animation-delay: .28s; }
+.splash-name path:nth-of-type(4) { animation-delay: .37s; }
+.splash-name path:nth-of-type(5) { animation-delay: .46s; }
+.splash-name path:nth-of-type(6) { animation-delay: .55s; }
+@keyframes splash-letter {
+  from { opacity: 0; transform: translateY(22%); filter: blur(6px); }
+  60%  { opacity: 1; filter: blur(0); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+/* The whole name: a slight, slow settle and a soft glow that fades as the last letter lands. */
+@keyframes splash-settle {
+  from { transform: scale(.94); filter: drop-shadow(0 0 0 rgba(243, 239, 228, 0)); }
+  55%  { filter: drop-shadow(0 0 18px rgba(243, 239, 228, .28)); }
+  to   { transform: none; filter: drop-shadow(0 0 0 rgba(243, 239, 228, 0)); }
 }
 /* Fallback if the wordmark is plain text. */
 .splash-name:not(:has(svg)) {
@@ -72,4 +99,8 @@ html.splash-active body { overflow: hidden; }
    The id selector outranks base.css's global "transition: none !important". */
 @media (prefers-reduced-motion: reduce) {
   #splash { transition: opacity .25s linear, visibility 0s linear .25s !important; }
+  #splash .splash-name svg { animation: none !important; }
+  #splash .splash-name path { animation: splash-fade .5s ease both !important; animation-delay: .1s !important; }
+  #splash.is-leaving .splash-mark { transform: translateY(-3vh) !important; transition: none !important; }
 }
+@keyframes splash-fade { from { opacity: 0; } to { opacity: 1; } }

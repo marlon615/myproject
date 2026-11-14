@@ -5,7 +5,8 @@
  *     contact the maker; a phone with no link is blocked too;
  *   - after activation the app works offline;
  *   - the maker switches off one phone (it frees a place) or a whole buyer, and back on; the money collected adds up;
- *   - iPhone: "Add to Home Screen" first (the link travels with it), so one iPhone uses one place.
+ *   - the install page: iPhone steps on iPhones, Android steps (Chrome menu, Install app) on Android phones;
+ *     iPhone adds to the Home Screen first (the link travels with it), so one iPhone uses one place.
  * Nothing here touches the live site.
  */
 const { spawn, spawnSync } = require("child_process");
@@ -115,6 +116,21 @@ const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isM
     const A = await ctxA.newPage();
     watch(A, "phone A");
     await A.goto(link);
+    // Android in Chrome: the install page first, with Android's steps (not the iPhone's).
+    await A.waitForSelector(".gate[data-reason='install'][data-platform='android']");
+    const androidText = (await A.textContent(".gate")).replace(/\s+/g, " ");
+    check(/Add Marlon to your Home Screen/.test(androidText) && /On Android/.test(androidText) && /menu \(⋮\) at the top right of Chrome/.test(androidText)
+      && /“Add to Home screen” or “Install app”/.test(androidText) && !/Safari|Share button/.test(androidText), "Android phone: the install page shows Android's steps (Chrome menu, then Add to Home screen or Install app)", androidText.slice(0, 160));
+    check(await A.getAttribute('link[rel="manifest"]', "href") === `/manifest.webmanifest?k=${key}`, "…and the installed app will start at the personal link");
+    check(await A.locator(".gate-install").isHidden(), "Chrome's own 'Install app' button only shows when Chrome offers it");
+    await A.evaluate(() => { const e = new Event("beforeinstallprompt", { cancelable: true }); e.prompt = async () => { window.__prompted = true; }; e.userChoice = Promise.resolve({ outcome: "accepted" }); window.dispatchEvent(e); });
+    await A.waitForSelector(".gate-install:not([hidden])");
+    await A.screenshot({ path: path.join(OUT, "license-6b-android-install.png") });
+    await A.click(".gate-install");
+    check(await A.evaluate(() => window.__prompted === true), "…and opens Chrome's install prompt");
+    const before = (await (await fetch(`${BASE}/api/console/buyers`, { headers: { Authorization: `Bearer ${token}` } })).json()).buyers.find((b) => b.id === key).active;
+    check(before === 0, "the install page itself doesn't use up a place");
+    await A.getByRole("button", { name: "Use it here in Chrome instead" }).click();
     await setUp(A);
     check(await A.textContent("#company-name") === BUSINESS.name && !A.url().includes("k="), "phone 1 opens the link: activated, sets up, the link's key leaves the address bar", A.url());
     const ids = await A.evaluate(async () => { const { settings } = await import("/js/db.js"); return { lic: (await settings.get("license")).device, usage: await settings.get("deviceId", null) }; });
@@ -130,7 +146,9 @@ const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isM
     const C = await ctxC.newPage();
     watch(C, "phone C");
     await C.goto(link);
-    await C.waitForSelector(".gate");
+    await C.waitForSelector(".gate[data-reason='install']");
+    await C.getByRole("button", { name: "Use it here in Chrome instead" }).click();
+    await C.waitForSelector(".gate[data-reason='full']");
     const ct = await C.textContent(".gate");
     check(/already in use/.test(ct) && /contact the seller on WhatsApp/.test(ct) && await C.locator("#setup-name").count() === 0, "phone 3 on a 2-device link: blocked, told to contact you", ct.replace(/\s+/g, " ").slice(0, 110));
     await C.screenshot({ path: path.join(OUT, "license-4-full.png") });
@@ -167,7 +185,9 @@ const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isM
     await A.waitForSelector(".gate[data-reason='off']", { timeout: 8000 });
     check(true, "…and stays blocked offline");
     await ctxA.setOffline(false);
-    await C.reload();
+    await C.goto(link);
+    await C.waitForSelector(".gate[data-reason='install']");
+    await C.getByRole("button", { name: "Use it here in Chrome instead" }).click();
     await C.waitForSelector("#setup-name", { timeout: 8000 });
     check(true, "the freed place lets another phone in (phone 3 now activates)");
     const full = await post("/api/console/device-off", { id: key, device: ids.lic, off: false }, token);
@@ -203,7 +223,8 @@ const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isM
     watch(I, "iPhone Safari");
     await I.goto(second.link);
     await I.waitForSelector(".gate[data-reason='install']");
-    check(/Add Marlon to your Home Screen/.test(await I.textContent(".gate")), "iPhone in Safari: asks to Add to Home Screen first (Safari and the Home Screen keep separate storage)");
+    const iText = (await I.textContent(".gate")).replace(/\s+/g, " ");
+    check(/Add Marlon to your Home Screen/.test(iText) && /Share button/.test(iText) && /On iPhone/.test(iText) && !/Chrome/.test(iText), "iPhone in Safari: asks to Add to Home Screen first, with the iPhone steps (Share, Add to Home Screen)", iText.slice(0, 120));
     const mhref = await I.getAttribute('link[rel="manifest"]', "href");
     const manifest = await (await fetch(BASE + mhref)).json();
     check(mhref === `/manifest.webmanifest?k=${second.buyer.id}` && manifest.start_url === `/?k=${second.buyer.id}`, "the Home Screen app starts at the personal link", manifest.start_url);

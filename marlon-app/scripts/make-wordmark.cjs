@@ -3,8 +3,9 @@
  * with sharp thin–thick strokes (hairline left stem and serifs, heavy first diagonal, pointed vertex), set with
  * the typeface's own spacing and kerning so it matches "arlon" exactly.
  *
- * Writes the inline SVG into every <!-- wordmark:start --> … <!-- wordmark:end --> block of public/index.html
- * (splash + brand bar) and tests/harness/splash-harness.html. (Receipts, PDFs and the customer page show each
+ * Writes the inline SVG into every <!-- wordmark:start --> … <!-- wordmark:end --> block (the brand bar), and a
+ * one-path-per-letter version into <!-- splashmark:start --> … <!-- splashmark:end --> (the opening animation),
+ * in public/index.html and tests/harness/splash-harness.html. (Receipts, PDFs and the customer page show each
  * business's own name instead of the wordmark, so there's no wordmark module in this copy.)
  * Usage: node scripts/make-wordmark.cjs
  */
@@ -26,13 +27,19 @@ const vb = [f1(bb.x1 - pad), f1(bb.y1 - pad), f1(bb.x2 - bb.x1 + 2 * pad), f1(bb
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(" ")}" role="img" aria-label="Marlon"><title>Marlon</title><!-- Wordmark from Bodoni Moda outlines (SIL Open Font License 1.1). --><path fill="currentColor" d="${d}"/></svg>`;
 
+// The splash version: one <path> per letter (same outlines, same spacing), so the letters can build in one by one.
+const letters = font.getPaths("Marlon", 0, BASE, S, { kerning: true }).map((g) => g.toPathData(1));
+const splashSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(" ")}" role="img" aria-label="Marlon"><title>Marlon</title><!-- Wordmark from Bodoni Moda outlines (SIL Open Font License 1.1). -->${letters.map((ld) => `<path fill="currentColor" d="${ld}"/>`).join("")}</svg>`;
+
 const ROOT = path.join(__dirname, "..");
 for (const rel of ["public/index.html", "tests/harness/splash-harness.html"]) {
   const file = path.join(ROOT, rel);
   const html = fs.readFileSync(file, "utf8");
   const re = /<!-- wordmark:start -->[\s\S]*?<!-- wordmark:end -->/g;
-  const blocks = html.match(re)?.length || 0;
-  if (!blocks) throw new Error(`${rel}: add <!-- wordmark:start --><!-- wordmark:end --> where the wordmark goes first`);
-  fs.writeFileSync(file, html.replace(re, () => `<!-- wordmark:start -->${svg}<!-- wordmark:end -->`));
-  console.log(`${rel}: ${blocks} wordmark${blocks === 1 ? "" : "s"}, ${svg.length} bytes each`);
+  const reSplash = /<!-- splashmark:start -->[\s\S]*?<!-- splashmark:end -->/g;
+  const blocks = html.match(re)?.length || 0, splashBlocks = html.match(reSplash)?.length || 0;
+  if (!blocks && !splashBlocks) throw new Error(`${rel}: add <!-- wordmark:start --><!-- wordmark:end --> (or splashmark) where the wordmark goes first`);
+  fs.writeFileSync(file, html.replace(re, () => `<!-- wordmark:start -->${svg}<!-- wordmark:end -->`)
+    .replace(reSplash, () => `<!-- splashmark:start -->${splashSvg}<!-- splashmark:end -->`));
+  console.log(`${rel}: ${blocks} wordmark${blocks === 1 ? "" : "s"}, ${splashBlocks} splash wordmark (${letters.length} letters)`);
 }

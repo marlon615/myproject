@@ -28,11 +28,11 @@ const dbCount = (page, store) => page.evaluate((s) => new Promise((ok) => {
   fs.mkdirSync(OUT, { recursive: true });
 
   // ── Nobody's data in what's shipped ──────────────────────────────────────────────────────────────────────────
-  const OWNER = /marlon williams|\bwilliams\b|beetroot|cucumber|pumpkin|green juice|bammy|juicify|callaloo|grapefruit|hot pepper|\bokra\b|\blimes?\b|\blemons?\b|sarah supermarket|wellington|rose hall|brownstone/i;
+  const OWNER = /delivery invoices|marlon williams|\bwilliams\b|beetroot|cucumber|pumpkin|green juice|bammy|juicify|callaloo|grapefruit|hot pepper|\bokra\b|\blimes?\b|\blemons?\b|sarah supermarket|wellington|rose hall|brownstone/i;
   const files = (function walk(d) { return fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]); })(PUBLIC)
     .filter((f) => /\.(html|js|css|json|webmanifest|svg|txt)$/.test(f) || path.basename(f) === "_headers");
   const hits = files.flatMap((f) => (fs.readFileSync(f, "utf8").match(new RegExp(OWNER.source, "gi")) || []).map((m) => `${path.relative(PUBLIC, f)}: ${m}`));
-  check(files.length > 20 && hits.length === 0, `no owner name, products, customers or addresses in any of the ${files.length} shipped files`, hits.slice(0, 8).join(" | "));
+  check(files.length > 20 && hits.length === 0, `no owner name, products, customers, addresses or 'Delivery Invoices' in any of the ${files.length} shipped files`, hits.slice(0, 8).join(" | "));
   const util = await import(path.join(PUBLIC, "js", "util.js"));
   check(Array.isArray(util.DEFAULT_PRODUCTS) && util.DEFAULT_PRODUCTS.length === 0 && util.business.name === "" && !("SELLER" in util), "no built-in products and no built-in business");
 
@@ -54,10 +54,14 @@ const dbCount = (page, store) => page.evaluate((s) => new Promise((ok) => {
     await page.goto(appUrl(srv, "splash"));
     await page.waitForSelector("#splash");
     const splashText = await page.evaluate(() => document.getElementById("splash").textContent.replace(/\s+/g, " ").trim());
-    check(splashText === "Marlon", "first open from the personal link: the splash shows only 'Marlon'", JSON.stringify(splashText));
+    check(splashText === "Marlon", "first open from the personal link: the opening animation shows only 'Marlon'", JSON.stringify(splashText));
+    const building = await page.evaluate(() => [...document.querySelectorAll("#splash .splash-name path")].map((p) => getComputedStyle(p).animationName));
+    check(building.length === 6 && building.every((n) => n === "splash-letter"), "…its six letters build in one by one", building.join(","));
     await page.waitForSelector("#splash", { state: "detached", timeout: 9000 });
+    const gone = await page.evaluate(() => performance.now());
+    check(gone <= 2700, "…and goes into the app after about two seconds", `${gone.toFixed(0)}ms after opening`);
     check(await page.locator("#setup-name").isVisible() && await page.locator("#invoice-screen").isHidden(), "…then the setup screen (not a blank page, not someone else's invoice)");
-    check(await page.title() === "Marlon · Delivery Invoices", "the page is just 'Marlon' until the business names itself", await page.title());
+    check(await page.title() === "Marlon", "the page is just 'Marlon' until the business names itself", await page.title());
     check(await dbCount(page, "products") === 0 && await dbCount(page, "invoices") === 0, "starts completely blank: no products, no invoices");
     check(!OWNER.test(await page.locator("body").innerText()), "nothing of the owner's anywhere on screen");
     await page.waitForTimeout(400);
@@ -97,6 +101,18 @@ const dbCount = (page, store) => page.evaluate((s) => new Promise((ok) => {
     await page.reload();
     await page.waitForFunction(() => window.__appReady === true);
     check(await page.locator("#setup").isHidden() && await page.textContent("#company-name") === BUSINESS.name, "setup is only once: next open goes straight to invoices");
+    // The opening animation plays every time the app opens, offline too.
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.waitForTimeout(500);
+    await ctx.setOffline(true);
+    for (let n = 1; n <= 2; n++) {
+      await page.goto(`${srv.url}/?splash`);
+      await page.waitForSelector("#splash .splash-name path");
+      const names = await page.evaluate(() => [...document.querySelectorAll("#splash .splash-name path")].map((p) => getComputedStyle(p).animationName).join(","));
+      await page.waitForSelector("#splash", { state: "detached", timeout: 6000 });
+      check(/splash-letter/.test(names) && await page.textContent("#company-name") === BUSINESS.name, `opening ${n} with no internet: the animation plays, then the app`);
+    }
+    await ctx.setOffline(false);
 
     // ── What leaves the phone ──────────────────────────────────────────────────────────────────────────────────
     await page.waitForFunction(() => true, null, { timeout: 1500 }).catch(() => {});

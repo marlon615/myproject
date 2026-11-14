@@ -63,7 +63,7 @@ async function qrText(page) {
         firstContentTop: document.querySelector(".masthead").getBoundingClientRect().top, svgH: svg && svg.getBoundingClientRect().height };
     });
     check(bar.pos === "fixed" && bar.top === 0 && bar.h <= 64 && bar.bg === "rgb(15, 20, 17)", "slim dark brand bar fixed at the top", JSON.stringify({ h: bar.h, bg: bar.bg }));
-    check(bar.label === "Marlon" && bar.svgH >= 18 && bar.tag === "Delivery Invoices" && bar.tagColor === "rgb(108, 196, 149)", "bar shows the Marlon wordmark and the green 'Delivery Invoices' line");
+    check(bar.label === "Marlon" && bar.svgH >= 18 && bar.tag === null && !(await page.locator("#brand-bar").innerText()).includes("Delivery"), "the bar shows only 'Marlon' (no 'Delivery Invoices' line)");
     check(!bar.inForm && bar.firstContentTop >= bar.h, "bar sits outside the invoice form and never covers it", `content starts at ${bar.firstContentTop}px, bar ${bar.h}px`);
     check(await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content) === "#0f1411", "browser/status bar colour matches the dark bar");
 
