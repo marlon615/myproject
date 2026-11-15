@@ -21,7 +21,10 @@ import { CONNECTORS, ConnectorError } from "./connectors.js";
 import { sendEmail, weeklyReport, lowStockEmail } from "./email.js";
 import { parseCSV, detectColumns, detectExtra, dateOrderOf, toYearMonth, parseNumber } from "../public/parse.js";
 
-const CHUNK = 40, MERGE_FAN = 24, APPLY_CHUNK = 200, INV_CHUNK = 300, INDEX_PART = 2000, INLINE_MAX = 80;
+// Batch sizes per background step. Cloudflare's free plan allows ~10 ms of CPU per step, so these are small; on the
+// Workers Paid plan (30 s per step) set CPU_PLAN = "paid" in wrangler.toml and every batch is 10× bigger (fewer steps).
+const SIZES = { free: { CHUNK: 12, MERGE_FAN: 12, APPLY_CHUNK: 40, INV_CHUNK: 60, INLINE_MAX: 24 }, paid: { CHUNK: 120, MERGE_FAN: 60, APPLY_CHUNK: 400, INV_CHUNK: 600, INLINE_MAX: 240 } };
+const INDEX_PART = 2000;
 export const MAX_SERIES = 50_000, MAX_MONTHS = 120, MAX_UPLOADS = 50;
 const HOUR = 3_600_000, DAY = 86_400_000;
 const SEP = "\u0001";
@@ -80,6 +83,7 @@ export class Company extends DurableObject {
 
   // ── Small helpers ────────────────────────────────────────────────────────────────────────────────────────────
   get #secret() { return this.env.ENCRYPTION_KEY; }
+  get #z() { return SIZES[this.env.CPU_PLAN === "paid" ? "paid" : "free"]; }
   async #enc(obj) { return C.encrypt(this.#secret, JSON.stringify(obj)); }
   async #dec(blob) { return JSON.parse(await C.decrypt(this.#secret, blob)); }
   async #key(p, l, r) { return C.hex(await C.hmac("SHA-256", this.#secret, `${p}${SEP}${l}${SEP}${r}`)).slice(0, 32); }
@@ -304,7 +308,7 @@ export class Company extends DurableObject {
   /** Small uploads are worked out straight away, so the answer is on screen without waiting. */
   async #runSmall(upload) {
     const work = this.sql.exec("SELECT SUM(total) AS n FROM jobs WHERE upload = ? AND status = 'pending' AND kind = 'compute'", upload).one().n || 0;
-    if (work > INLINE_MAX) return;
+    if (work > this.#z.INLINE_MAX) return;
     for (let guard = 0; guard < 200; guard++) {
       const job = this.sql.exec("SELECT * FROM jobs WHERE upload = ? AND status = 'pending' AND kind = 'compute' ORDER BY id LIMIT 1", upload).toArray()[0];
       if (!job) break;
@@ -358,7 +362,7 @@ export class Company extends DurableObject {
   async #stepCompute(job) {
     const axis = this.#range(job.upload);
     if (job.phase === "series") {
-      const rows = this.sql.exec("SELECT key, blob FROM series WHERE upload = ? AND measure = ? AND key > ? ORDER BY key LIMIT ?", job.upload, job.measure, job.cursor, CHUNK).toArray();
+      const rows = this.sql.exec("SELECT key, blob FROM series WHERE upload = ? AND measure = ? AND key > ? ORDER BY key LIMIT ?", job.upload, job.measure, job.cursor, this.#z.CHUNK).toArray();
       if (!rows.length) return this.#save(job, { phase: "merge" });
       const acc = newAccumulator(job.mode, axis);
       for (const row of rows) {
@@ -369,7 +373,7 @@ export class Company extends DurableObject {
       this.sql.exec("INSERT INTO partials (job, blob) VALUES (?, ?)", job.id, await this.#enc(partialOf(acc)));
       return this.#save(job, { cursor: rows[rows.length - 1].key, done: job.done + rows.length });
     }
-    const parts = this.sql.exec("SELECT id, blob FROM partials WHERE job = ? ORDER BY id LIMIT ?", job.id, MERGE_FAN).toArray();
+    const parts = this.sql.exec("SELECT id, blob FROM partials WHERE job = ? ORDER BY id LIMIT ?", job.id, this.#z.MERGE_FAN).toArray();
     const remaining = this.sql.exec("SELECT COUNT(*) AS n FROM partials WHERE job = ?", job.id).one().n;
     const acc = newAccumulator(job.mode, axis);
     for (const p of parts) mergePartial(acc, await this.#dec(p.blob));
@@ -459,7 +463,7 @@ export class Company extends DurableObject {
   }
   /** Runs a merge job to the end now when it's small (so an API caller sees the result), else leaves it to the alarm. */
   async #drainSmall(jobId, size) {
-    if (size > APPLY_CHUNK) return;
+    if (size > this.#z.APPLY_CHUNK) return;
     for (let i = 0; i < 20; i++) {
       const job = this.sql.exec("SELECT * FROM jobs WHERE id = ? AND status = 'pending'", jobId).toArray()[0];
       if (!job) break;
@@ -552,7 +556,7 @@ export class Company extends DurableObject {
     if (job.phase === "apply") {
       // Existing series: replace the months covered (missing → 0), or add.
       const [cm, ck] = job.cursor ? job.cursor.split("|") : ["", ""];
-      const rows = this.sql.exec("SELECT key, measure, blob FROM series WHERE upload = ? AND (measure > ? OR (measure = ? AND key > ?)) ORDER BY measure, key LIMIT ?", job.upload, cm, cm, ck, APPLY_CHUNK).toArray();
+      const rows = this.sql.exec("SELECT key, measure, blob FROM series WHERE upload = ? AND (measure > ? OR (measure = ? AND key > ?)) ORDER BY measure, key LIMIT ?", job.upload, cm, cm, ck, this.#z.APPLY_CHUNK).toArray();
       if (rows.length) {
         for (const row of rows) {
           const s = await this.#dec(row.blob), e = map[row.key];
@@ -565,7 +569,7 @@ export class Company extends DurableObject {
       return this.#save(job, { phase: "insert", cursor: "" });
     }
     if (job.phase === "insert") {
-      const keys = Object.keys(map).filter((k) => k > job.cursor).sort().slice(0, APPLY_CHUNK);
+      const keys = Object.keys(map).filter((k) => k > job.cursor).sort().slice(0, this.#z.APPLY_CHUNK);
       if (keys.length) {
         const newIdx = [];
         for (const k of keys) {
@@ -852,7 +856,7 @@ export class Company extends DurableObject {
       return this.#save(job, { phase: "items", cursor: "", payload: { upload, months: view.months, settings: this.inventorySettings() }, total: this.sql.exec("SELECT COUNT(*) AS n FROM inventory").one().n });
     }
     if (job.phase === "items") {
-      const items = this.sql.exec("SELECT k, blob FROM inventory WHERE k > ? ORDER BY k LIMIT ?", job.cursor, INV_CHUNK).toArray();
+      const items = this.sql.exec("SELECT k, blob FROM inventory WHERE k > ? ORDER BY k LIMIT ?", job.cursor, this.#z.INV_CHUNK).toArray();
       if (!items.length) return this.#save(job, { phase: "finish" });
       const idx = await this.#index(p.upload);
       const byPL = new Map(), byP = new Map();

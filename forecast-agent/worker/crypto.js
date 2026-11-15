@@ -19,8 +19,13 @@ export const sameText = (a, b) => {
   return x === 0;
 };
 
+const hmacKeys = new Map();
 export async function hmac(hash, key, data) {
-  const k = await crypto.subtle.importKey("raw", typeof key === "string" ? te.encode(key) : key, { name: "HMAC", hash }, false, ["sign"]);
+  let k = typeof key === "string" ? hmacKeys.get(`${hash}\u0000${key}`) : null;
+  if (!k) {
+    k = await crypto.subtle.importKey("raw", typeof key === "string" ? te.encode(key) : key, { name: "HMAC", hash }, false, ["sign"]);
+    if (typeof key === "string" && hmacKeys.size < 100) hmacKeys.set(`${hash}\u0000${key}`, k); // the same key is used for every series name
+  }
   return new Uint8Array(await crypto.subtle.sign("HMAC", k, typeof data === "string" ? te.encode(data) : data));
 }
 

@@ -27,6 +27,9 @@ OWNER_GENERATION = "1"
 # limits this; on the Workers Paid plan raise it to 600000 (OWASP's recommendation) — existing users are upgraded at
 # their next sign-in.
 PBKDF2_ITERATIONS = "5000"
+# "free" keeps every background step small enough for the free plan's ~10 ms CPU limit; "paid" (Workers Paid plan)
+# makes each step 10× bigger, so very large companies finish in fewer steps.
+CPU_PLAN = "free"
 
 # ENCRYPTION_KEY (a secret, set with `wrangler secret put ENCRYPTION_KEY`, never in this file): the AES-256 key for
 # data at rest. Losing it makes the stored data unreadable; it lives only in Cloudflare's secret store.

@@ -14,7 +14,7 @@ const monthLabel = (ym) => `${MONTHS[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
 const METHOD_WORDS = { flat: "Recent average", trend: "Straight-line trend", holt: "Smoothed trend", seasonal: "Seasons + trend", lastyear: "Last year's pattern + growth" };
 const DIM_WORDS = { products: ["Product", "products"], locations: ["Store / warehouse", "locations"], regions: ["Region", "regions"] };
 const RANK = { viewer: 0, manager: 1, admin: 2 };
-const MAX_MONTHS = 120, BATCH = 400, SEND_PRODUCTS_SINGLE = 2000;
+const MAX_MONTHS = 120, BATCH = 40; // big files go in parts of 40 series, so each request stays small
 const VIEWS = ["loading", "auth", "off", "home", "result", "forgot", "reset", "code", "account", "twofa", "invite", "stock", "connections", "team", "activity"];
 let token = load(TOKEN_KEY), me = null, contact = "", mode = "signup", ssoProviders = { microsoft: false, google: false };
 let sheet = null, current = null, ticket = null, resetToken = null, inviteToken = null, pollTimer = null;
