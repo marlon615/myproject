@@ -11,7 +11,7 @@
  */
 export function parseCSV(text) {
   text = String(text).replace(/^﻿/, "");
-  const first = text.split(/\r?\n/, 1)[0] || "";
+  const first = text.split(/\r\n|\r|\n/, 1)[0] || ""; // also old Mac files, whose lines end with a lone "\r"
   const delim = [",", ";", "\t"].map((d) => [d, first.split(d).length]).sort((a, b) => b[1] - a[1])[0][0];
   const rows = [];
   let row = [], field = "", q = false;

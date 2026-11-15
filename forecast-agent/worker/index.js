@@ -456,7 +456,8 @@ function cleanUpload(b) {
   const name = String(b?.name ?? "").trim().slice(0, 120) || "Sales data";
   const kind = b?.kind === "units" ? "units" : "money";
   const months = Array.isArray(b?.months) ? b.months : null;
-  if (!months || !months.length || months.length > MAX_MONTHS || !months.every((m) => typeof m === "string" && YM.test(m))) return { error: `The file needs real months (at most ${MAX_MONTHS}).` };
+  if (!months || !months.length || !months.every((m) => typeof m === "string" && YM.test(m))) return { error: "No months could be read from the file." };
+  if (months.length > MAX_MONTHS) return { error: `That's ${months.length} months; send the latest ${MAX_MONTHS} at most (refresh the page to get the latest version, which does this for you).` };
   for (let i = 1; i < months.length; i++) {
     const [y, m] = months[i - 1].split("-").map(Number);
     if (months[i] !== (m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`)) return { error: "The months must follow each other with no gaps." };

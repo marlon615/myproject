@@ -85,13 +85,11 @@ function makeXlsx(file) {
     await A.check("#code-ok"); await A.click("#code-continue");
     await A.waitForSelector("#home:not([hidden])");
     check(await A.textContent("#who-name") === "Island Drinks Co", "company A signs up and lands on its page");
+    // One tap on "Try with sample data" goes straight to the result (it used to need a second tap on Run).
     await A.click("#sample");
-    await A.waitForSelector("#map:not([hidden])");
-    const prev = (await A.textContent("#preview")).replace(/\s+/g, " ");
-    check(/36 months/.test(prev) && /Oct 2023 to Sep 2026/.test(prev) && /6 products/.test(prev) && !/skipped/.test(prev), "sample file: the columns are guessed and it finds 36 months, 6 products", prev);
-    check(await A.$eval("#col-date", (s) => s.selectedOptions[0].text) === "Date" && await A.$eval("#col-value", (s) => s.selectedOptions[0].text) === "Sales" && await A.$eval("#col-product", (s) => s.selectedOptions[0].text) === "Product", "date, product and sales columns picked correctly");
-    await A.click("#run");
     await A.waitForSelector("#result:not([hidden]) #bt-acc");
+    const meta = await A.textContent("#r-meta");
+    check(/36 months of sales \(Oct 2023 to Sep 2026\)/.test(meta) && /6 products/.test(meta) && /dollar sales/.test(meta), "one tap on 'Try with sample data' runs the accuracy test: 36 months, 6 products, dollar sales", meta);
     await A.waitForFunction(() => /%/.test(document.querySelector("#bt-acc").textContent));
     const acc = await A.textContent("#bt-acc");
     const btRows = await A.locator("#bt-table tbody tr").count();
@@ -230,6 +228,28 @@ function makeXlsx(file) {
     const after = (await req("/api/owner/customers", { token: await O.evaluate(() => sessionStorage.getItem("forecast.owner")) })).data;
     check(after.customers.length === 1 && after.totals.uploads === 1 && after.totals.collectedCents === 4900, "deleting B removes it from your dashboard (A and the $49 stay)");
     check((await req("/api/uploads", { token: tokenB })).status === 401 && (await req("/api/login", { method: "POST", body: { email: "boss@baymarket.test", password: "bay-market-22" } })).status !== 200, "B's login and data are gone");
+
+    // A long history (130 months), saved as an old Windows CSV (not UTF-8) with old Mac line endings ("\r" only).
+    const lines = ["Date,Product,Sales"];
+    for (let i = 0; i < 130; i++) {
+      const d = new Date(Date.UTC(2015, 1 + i, 15));
+      const ym = `${String(d.getUTCMonth() + 1).padStart(2, "0")}/15/${d.getUTCFullYear()}`;
+      lines.push(`${ym},Caf\u00e9 Cr\u00e8me,${1000 + i * 10}`, `${ym},Tea,${500 + (i % 12) * 20}`);
+      if (i < 5) lines.push(`${ym},Old Line,${50}`); // only sold in the first months
+    }
+    const latin1 = Buffer.from(lines.join("\r") + "\r", "latin1");
+    await A.goto(BASE + "/#/");
+    await A.waitForSelector("#home:not([hidden])");
+    await A.setInputFiles("#file", { name: "old-till-export.csv", mimeType: "text/csv", buffer: latin1 });
+    await A.waitForSelector("#map:not([hidden])");
+    const lp = (await A.textContent("#preview")).replace(/\s+/g, " ");
+    check(/Found 130 months/.test(lp) && /latest 120 months \(Dec 2015 to Nov 2025\)/.test(lp), "a 130-month file isn't refused: the latest 120 months are used, and it says so", lp.slice(0, 140));
+    await A.click("#run");
+    await A.waitForSelector("#result:not([hidden]) #bt-acc");
+    await A.waitForFunction(() => /%/.test(document.querySelector("#bt-acc").textContent));
+    const lt = await A.textContent("#bt-table");
+    check(/120 months of sales/.test(await A.textContent("#r-meta")) && /2 products/.test(await A.textContent("#r-meta")), "…runs on 120 months; a product only sold in the years left out is dropped", await A.textContent("#r-meta"));
+    check(lt.includes("Café Crème") && !lt.includes("\ufffd"), "an old Windows (not UTF-8) file with old Mac line endings: names like 'Café Crème' read correctly");
 
     check(errors.length === 0, "no page errors", errors.join(" | "));
     for (const c of [actx, bctx, octx]) await c.close();

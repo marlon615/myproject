@@ -23,6 +23,8 @@ const fs = require("fs"), path = require("path");
   const csv = 'Date;Item;"Net Sales"\n31/01/2025;"Mango, large";"1.234,50"\n15/02/2025;Rice;(20)\n';
   const rows = P.parseCSV(csv);
   check(rows.length === 3 && rows[1][1] === "Mango, large" && P.parseNumber(rows[1][2]) === 1234.5 && P.parseNumber(rows[2][2]) === -20, "CSV: semicolons, quotes, European decimals, (20) as −20");
+  const mac = P.parseCSV("a;b\r1,5;x\r2,5;y\r");
+  check(mac.length === 3 && mac[1][0] === "1,5" && mac[2][1] === "y", "CSV with old Mac line endings (a lone \\r) and semicolons");
   check(P.parseNumber("$1,234.50") === 1234.5 && P.parseNumber("1,234") === 1234 && P.parseNumber("12,5") === 12.5 && P.parseNumber("abc") === null, "money in different styles");
   const D = (v, o) => P.toYearMonth(v, o);
   check(D("2025-03-31") === "2025-03" && D("31/03/2025", "dmy") === "2025-03" && D("03/31/2025", "mdy") === "2025-03" && D("31.03.2025") === "2025-03" && D("Mar 2025") === "2025-03"

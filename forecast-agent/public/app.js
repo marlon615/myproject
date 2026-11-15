@@ -11,7 +11,8 @@ const TOKEN_KEY = "forecast.token";
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const monthLabel = (ym) => `${MONTHS[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
 const METHOD_WORDS = { flat: "Recent average", trend: "Straight-line trend", holt: "Smoothed trend", seasonal: "Seasons + trend", lastyear: "Last year's pattern + growth" };
-const SEND_PRODUCTS = 200; // more than this are added together as "Other products" before sending
+const SEND_PRODUCTS = 200;
+const MAX_MONTHS = 120; // the most months the server takes (10 years) // more than this are added together as "Other products" before sending
 let token = load(TOKEN_KEY), me = null, contact = "", mode = "signup";
 let sheet = null;      // { name, header, rows }
 let current = null;    // the upload being shown
@@ -163,6 +164,12 @@ const loadXLSX = () => (xlsxReady ||= new Promise((ok, fail) => {
   document.head.appendChild(s);
 }));
 
+/** Text files are usually UTF-8; older Excel/Windows exports aren't — read those as Windows-1252 instead of showing "�". */
+function decodeText(buf) {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+  catch { return new TextDecoder("windows-1252").decode(buf); }
+}
+
 async function readFile(file) {
   if (file.size > 40 * 1024 * 1024) throw new Error("That file is over 40 MB. Save just the date, product and sales columns and try again.");
   if (/\.(xlsx|xls)$/i.test(file.name)) {
@@ -172,7 +179,7 @@ async function readFile(file) {
     const best = wb.SheetNames.map((n) => XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: "" })).sort((a, b) => b.length - a.length)[0] || [];
     return best.filter((r) => r.some((v) => String(v).trim() !== ""));
   }
-  return parseCSV(await file.text());
+  return parseCSV(decodeText(await file.arrayBuffer()));
 }
 
 function useRows(name, rows) {
@@ -214,6 +221,16 @@ function monthly() {
   if (!order) return { error: "Your dates could be day/month or month/day. Choose how they're written." };
   const m = toMonthly(sheet.rows, { date: +$("col-date").value, product: +$("col-product").value, value: +$("col-value").value, order: order === "ymd" ? "dmy" : order });
   if (!m.months.length) return { error: "No dates and amounts could be read with these columns. Check the choices above." };
+  // Long histories: the latest MAX_MONTHS are plenty (the methods look mostly at the last 2–3 years).
+  if (m.months.length > MAX_MONTHS) {
+    const cut = m.months.length - MAX_MONTHS;
+    m.allMonths = m.months.length; m.firstAll = m.months[0];
+    m.months = m.months.slice(cut);
+    for (const k of Object.keys(m.products)) {
+      m.products[k] = m.products[k].slice(cut);
+      if (m.products[k].every((v) => v === 0)) delete m.products[k]; // only sold in the years left out
+    }
+  }
   return m;
 }
 
@@ -223,9 +240,12 @@ function preview() {
   if (m.error) { $("preview").textContent = ""; showErr("map-error", m.error); $("run").disabled = true; return; }
   const names = Object.keys(m.products);
   const n = m.months.length;
-  let msg = `Found <b>${n} months</b> (${monthLabel(m.months[0])} to ${monthLabel(m.months[n - 1])}), <b>${names.length} product${names.length === 1 ? "" : "s"}</b>, ${m.used.toLocaleString("en-US")} rows used`;
+  let msg = m.allMonths
+    ? `Found <b>${m.allMonths} months</b> (${monthLabel(m.firstAll)} to ${monthLabel(m.months[n - 1])}), <b>${names.length} product${names.length === 1 ? "" : "s"}</b>, ${m.used.toLocaleString("en-US")} rows used`
+    : `Found <b>${n} months</b> (${monthLabel(m.months[0])} to ${monthLabel(m.months[n - 1])}), <b>${names.length} product${names.length === 1 ? "" : "s"}</b>, ${m.used.toLocaleString("en-US")} rows used`;
   if (m.skipped) msg += `, <b>${m.skipped.toLocaleString("en-US")} rows skipped</b> (no readable date or amount)`;
   msg += ".";
+  if (m.allMonths) msg += ` We'll use your latest <b>${MAX_MONTHS} months</b> (${monthLabel(m.months[0])} to ${monthLabel(m.months[n - 1])}) — that's plenty; older years make little difference to the result.`;
   if (n < 9) msg += ` <span class="warn">The accuracy test needs at least 9 months${n >= 6 ? "; a forecast is still possible" : " and a forecast needs 6"}.</span>`;
   $("preview").innerHTML = msg;
   $("run").disabled = n < 6;
@@ -241,12 +261,15 @@ $("file").onchange = async () => {
 };
 $("sample").onclick = async () => {
   $("sample").disabled = true;
-  try { useRows("Sample sales (drinks & snacks).csv", parseCSV(await (await fetch("/sample-sales.csv")).text())); }
-  catch { showErr("file-error", "The sample didn't load. Try again."); }
+  try {
+    useRows("Sample sales (drinks & snacks).csv", parseCSV(await (await fetch("/sample-sales.csv")).text()));
+    if (!$("run").disabled) await runTest(); // the sample's columns are known: straight to the result, one tap
+  } catch { showErr("file-error", "The sample didn't load. Try again."); }
   $("sample").disabled = false;
 };
 
-$("run").onclick = async () => {
+$("run").onclick = () => runTest();
+async function runTest() {
   const m = monthly();
   if (m.error) return showErr("map-error", m.error);
   let products = m.products;
@@ -264,7 +287,7 @@ $("run").onclick = async () => {
   if (!r.ok) return showErr("map-error", r.data.error || "That didn't work. Try again.");
   $("map").hidden = true; sheet = null;
   location.hash = `#/u/${r.data.upload.id}`;
-};
+}
 
 // ── Uploads list ───────────────────────────────────────────────────────────────────────────────────────────────
 async function renderHome() {
