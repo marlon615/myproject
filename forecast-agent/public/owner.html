@@ -39,6 +39,24 @@
         <p class="hint" id="o-none">No customers yet. They sign up on the main page.</p>
         <div id="o-customers"></div>
       </div>
+      <div class="card" id="platform">
+        <h2>Platform settings</h2>
+        <p class="hint">Keys you paste here are stored encrypted and never shown again (a saved key shows as “saved”). Leave a key box empty to keep it.</p>
+        <h3>Email (for invites, weekly reports and low-stock alerts)</h3>
+        <p class="hint">Uses <b>Resend</b> (free tier: 3,000 emails a month). Create an account at resend.com, verify your domain there, create an API key, and paste it with the From address (e.g. Forecasts &lt;reports@yourdomain.com&gt;). Without a verified domain, Resend only delivers to your own address.</p>
+        <div class="pay-row"><input id="pl-emailFrom" class="note" placeholder="From: Name <reports@yourdomain.com>"><input id="pl-emailKey" class="note" type="password" autocomplete="off" placeholder="Resend API key"><span class="hint" id="pl-emailKey-state"></span></div>
+        <div class="pay-row"><input id="pl-test-to" class="note" type="email" placeholder="Send a test to…"><button class="secondary small" type="button" id="pl-test">Send test email</button> <span class="hint" id="pl-test-msg"></span></div>
+        <h3>Sign in with Microsoft</h3>
+        <p class="hint">In the Microsoft Entra admin center: App registrations → New registration → “Accounts in any organizational directory and personal Microsoft accounts”, redirect URI (Web): <code id="pl-cb-sso"></code>. Then Certificates &amp; secrets → New client secret.</p>
+        <div class="pay-row"><input id="pl-msClientId" class="note" placeholder="Application (client) ID"><input id="pl-msSecret" class="note" type="password" autocomplete="off" placeholder="Client secret value"><span class="hint" id="pl-msSecret-state"></span></div>
+        <h3>Sign in with Google</h3>
+        <p class="hint">In Google Cloud Console: APIs &amp; Services → Credentials → Create OAuth client ID (Web application), authorized redirect URI: the same address as above.</p>
+        <div class="pay-row"><input id="pl-googleClientId" class="note" placeholder="Client ID"><input id="pl-googleSecret" class="note" type="password" autocomplete="off" placeholder="Client secret"><span class="hint" id="pl-googleSecret-state"></span></div>
+        <h3>QuickBooks app</h3>
+        <p class="hint">At developer.intuit.com: create an app with the Accounting scope, add the redirect URI <code id="pl-cb-qb"></code>, and use its production Client ID and Secret.</p>
+        <div class="pay-row"><input id="pl-qbClientId" class="note" placeholder="Client ID"><input id="pl-qbSecret" class="note" type="password" autocomplete="off" placeholder="Client secret"><span class="hint" id="pl-qbSecret-state"></span></div>
+        <button class="primary small" type="button" id="pl-save">Save platform settings</button> <span class="hint" id="pl-saved"></span>
+      </div>
       <div class="card" id="alerts">
         <h2>Phone alerts</h2>
         <p class="hint">Get a ping on your phone (with the free <b>ntfy</b> app) when a customer taps “Ask for a reset link”.</p>

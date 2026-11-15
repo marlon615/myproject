@@ -12,6 +12,9 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const money = (cents) => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const fmt = (v, kind) => (kind === "units" ? `${Math.round(v).toLocaleString("en-US")}` : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2 }));
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—");
+const FEATURE_NAMES = { forecasts: "3-month forecasts", multiLocation: "By store & region", inventory: "Stock & reorder", reports: "Weekly email reports", connectors: "Direct connections", api: "API & file drop", sso: "Single sign-on" };
+let features = Object.keys(FEATURE_NAMES), minContract = 3000000;
+const openFeat = new Set();
 let token = (() => { try { return sessionStorage.getItem(KEY); } catch { return null; } })();
 let claimed = true;
 const open = new Set(); // customers whose uploads are showing
@@ -68,7 +71,7 @@ async function draw({ auto = false } = {}) {
   if (showing && sig === lastData) { stamp(); return; }  // nothing changed: nothing moves
   if (showing && auto && typing()) return;               // you're typing: try again on the next round
   lastData = sig;
-  if (!showing) { show("o-dash"); loadAlerts(); }
+  if (!showing) { show("o-dash"); loadAlerts(); loadPlatform(); }
   stamp();
   // What's open or typed in each customer card, to put back after the redraw.
   const keep = new Map([...document.querySelectorAll("#o-customers .cust")].map((card) => [card.dataset.id, {
@@ -79,7 +82,10 @@ async function draw({ auto = false } = {}) {
   const { customers, totals, contact } = r.data;
   const tile = (n, l) => `<div class="tile"><div class="tile-num">${n}</div><div class="tile-label">${l}</div></div>`;
   $("o-tiles").innerHTML = tile(totals.customers, "Customers") + tile(totals.paying, "Paying") + tile(money(totals.collectedCents), "Money collected")
-    + tile(totals.uploads, "Uploads") + tile(totals.avgAccuracy === null ? "—" : `${totals.avgAccuracy}%`, "Average backtest accuracy");
+    + tile(totals.uploads, "Uploads") + tile(totals.avgAccuracy === null ? "—" : `${totals.avgAccuracy}%`, "Average backtest accuracy")
+    + tile(money(totals.arrCents), "Annual contract value") + tile(totals.contracts, "Active contracts") + tile(totals.users, "Users")
+    + tile(totals.failing ? `${totals.failing} failing` : totals.connections, totals.failing ? `of ${totals.connections} connections` : "Connections");
+  features = r.data.features || features; minContract = r.data.minContractCents || minContract;
   if (document.activeElement !== $("o-contact")) $("o-contact").value = contact;
   $("o-none").hidden = customers.length > 0;
   const host = $("o-customers");
@@ -92,6 +98,23 @@ async function draw({ auto = false } = {}) {
       <div class="switches">
         <label class="switch"><input type="checkbox" class="sw-account" ${c.off ? "" : "checked"}> Account on</label>
         <label class="switch"><input type="checkbox" class="sw-forecasts" ${c.forecasts ? "checked" : ""}> 3-month forecasts on</label>
+      </div>
+      <div class="ent">
+        <div class="cust-facts"><span>Plan: <b>${esc(c.plan)}</b></span><span>Contract: <b>${c.contractCents ? `${money(c.contractCents)}/year` : "none"}</b>${c.contractStart || c.contractEnd ? ` (${c.contractStart || "?"} to ${c.contractEnd || "?"})` : ""}${c.contractCents && !c.contractActive ? ' <span class="pill off">Not active</span>' : ""}</span>
+          <span>${c.users.length} user${c.users.length === 1 ? "" : "s"}</span><span>Two-factor required: ${c.require2fa ? "yes" : "no"}</span><span>Single sign-on required: ${c.requireSso ? "yes" : "no"}</span><span>Time zone: ${esc(c.timezone)}</span></div>
+        <details class="sub"><summary>Contract</summary>
+          <div class="pay-row"><input class="ct-plan note" maxlength="60" value="${esc(c.plan)}" aria-label="Plan name"><input class="ct-value" type="number" min="0" step="1000" placeholder="$ per year" value="${c.contractCents ? c.contractCents / 100 : ""}" aria-label="Yearly contract value"></div>
+          <div class="pay-row"><label class="inline">Start<input class="ct-start" type="date" value="${esc(c.contractStart || "")}"></label><label class="inline">End<input class="ct-end" type="date" value="${esc(c.contractEnd || "")}"></label></div>
+          <div class="pay-row"><input class="ct-note note" maxlength="300" placeholder="Note (PO number, contact…)" value="${esc(c.contractNote || "")}"><label class="check inline-check"><input type="checkbox" class="ct-all"> Switch every feature on</label><button class="primary small ct-save" type="button">Save contract</button></div>
+          <p class="hint">Contracts start at ${money(minContract)} a year.</p>
+        </details>
+        <details class="sub" ${openFeat.has(c.id) ? "open" : ""}><summary>Features</summary><div class="switches">${features.map((f) => `<label class="switch"><input type="checkbox" class="sw-feat" data-f="${f}" ${c.features[f] ? "checked" : ""}> ${FEATURE_NAMES[f] || f}</label>`).join("")}</div></details>
+        <details class="sub"><summary>Users (${c.users.length})</summary><div class="table-wrap"><table><thead><tr><th>User</th><th>Role</th><th>Sign-in</th><th>Two-factor</th><th>Last sign-in</th><th></th></tr></thead><tbody>
+          ${c.users.map((u) => `<tr><th scope="row">${esc(u.name || u.email)}${u.name ? `<br><span class="hint">${esc(u.email)}</span>` : ""}${u.off ? ' <span class="pill off">Off</span>' : ""}</th><td>${u.role}</td><td>${u.invited ? "Invited" : u.sso || "Password"}</td><td>${u.twoFactor ? "On" : "Off"}</td><td>${day(u.lastLogin)}</td><td><button class="link u-reset" data-user="${u.id}" type="button">Reset link</button></td></tr>`).join("")}</tbody></table></div></details>
+        <details class="sub"><summary>Connections (${c.connections.length})${c.connections.some((x) => x.status === "error") ? ' <span class="pill off">Problem</span>' : ""}</summary>
+          ${c.connections.length ? c.connections.map((x) => `<div class="conn-line"><b>${esc(x.name)}</b> <span class="hint">${esc(x.kindName || x.kind)}</span> <span class="pill ${x.status === "ok" ? "on" : x.status === "error" ? "off" : ""}">${x.status}</span> <span class="hint">last sync ${day(x.lastSync)}, last success ${day(x.lastOk)}${x.rows !== null && x.rows !== undefined ? `, ${x.rows} lines` : ""}</span>${x.lastError ? `<br><span class="error">${esc(x.lastError)}</span>` : ""}</div>`).join("") : '<p class="hint">None.</p>'}
+        </details>
+        <details class="sub act-box"><summary>Activity log</summary><div class="act-host"><p class="hint">Loading…</p></div></details>
       </div>
       <div class="pay-row"><input class="pay-amount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Amount $" aria-label="Amount received"><input class="pay-note note" maxlength="200" placeholder="Note (optional)" aria-label="Note"><button class="secondary small pay-add" type="button">Record payment</button></div>
       ${c.payments.length ? `<div class="payments">${c.payments.map((p) => `${money(p.cents)} on ${day(p.created)}${p.note ? ` — ${esc(p.note)}` : ""} <button class="link pay-del" data-pid="${p.id}" type="button">remove</button>`).join(" · ")}</div>` : ""}
@@ -218,6 +241,27 @@ $("o-customers").addEventListener("click", async (e) => {
   if (!card) return;
   const id = card.dataset.id, t = e.target;
   const name = card.querySelector(".cust-name").textContent;
+  if (t.classList.contains("ct-save")) {
+    const body = { id, plan: card.querySelector(".ct-plan").value, contract: card.querySelector(".ct-value").value || 0, start: card.querySelector(".ct-start").value, end: card.querySelector(".ct-end").value, note: card.querySelector(".ct-note").value, allFeatures: card.querySelector(".ct-all").checked };
+    let r = await call("/api/owner/contract", { method: "POST", body });
+    if (r.data.belowMinimum && confirm(`${r.data.error} Save this lower amount anyway?`)) r = await call("/api/owner/contract", { method: "POST", body: { ...body, allowBelowMinimum: true } });
+    if (!r.ok) return alert(r.data.error || "That didn't work.");
+    return dash();
+  }
+  if (t.classList.contains("u-reset")) {
+    if (!confirm("Make a password reset link for this user? It works once, for 24 hours.")) return;
+    const r = await call("/api/owner/reset-link", { method: "POST", body: { id, user: t.dataset.user } });
+    if (!r.ok) return alert(r.data.error || "That didn't work.");
+    const host = card.querySelector(".reset-host");
+    host.innerHTML = `<div class="reset-box"><b>Send this link to ${esc(r.data.user)}.</b> It works once, for 24 hours.<input class="reset-url" readonly value="${esc(`${location.origin}/#/reset/${r.data.token}`)}" aria-label="Reset link"><button class="secondary small reset-copy" type="button">Copy link</button> <span class="hint reset-copied"></span></div>`;
+    return;
+  }
+  if (t.tagName === "SUMMARY" && t.parentElement.classList.contains("act-box") && !t.parentElement.open) {
+    const host = card.querySelector(".act-host");
+    const r = await call(`/api/owner/customers/${id}/audit`);
+    host.innerHTML = r.ok && r.data.events.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th>What</th><th>Details</th></tr></thead><tbody>${r.data.events.map((a) => `<tr><td class="nowrap">${new Date(a.t).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</td><td>${esc(a.user)}</td><th scope="row">${esc(a.action)}</th><td class="wrap">${esc(a.detail)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="hint">Nothing yet.</p>';
+    return;
+  }
   if (t.classList.contains("pay-add")) {
     const amount = card.querySelector(".pay-amount").value;
     const r = await call("/api/owner/payment", { method: "POST", body: { id, amount, note: card.querySelector(".pay-note").value } });
@@ -271,6 +315,12 @@ $("o-customers").addEventListener("change", async (e) => {
   const card = e.target.closest(".cust");
   if (!card) return;
   const body = { id: card.dataset.id };
+  if (e.target.classList.contains("sw-feat")) {
+    openFeat.add(card.dataset.id);
+    const r = await call("/api/owner/features", { method: "POST", body: { id: card.dataset.id, features: { [e.target.dataset.f]: e.target.checked } } });
+    if (!r.ok) alert(r.data.error || "That didn't work.");
+    return dash();
+  }
   if (e.target.classList.contains("sw-account")) body.account = e.target.checked;
   else if (e.target.classList.contains("sw-forecasts")) body.forecasts = e.target.checked;
   else return;
@@ -284,3 +334,27 @@ $("o-contact-save").onclick = async () => {
 };
 
 if (token) { const r = await call("/api/owner/customers"); if (r.ok) dash(); else gate(); } else gate();
+
+// ── Platform settings (email, sign-in apps, QuickBooks app) ─────────────────────────────────────────────────────
+const PL_PLAIN = ["emailFrom", "msClientId", "googleClientId", "qbClientId"], PL_SECRET = ["emailKey", "msSecret", "googleSecret", "qbSecret"];
+async function loadPlatform() {
+  const r = await call("/api/owner/platform");
+  if (!r.ok) return;
+  for (const k of PL_PLAIN) if (document.activeElement !== $(`pl-${k}`)) $(`pl-${k}`).value = r.data.platform[k] || "";
+  for (const k of PL_SECRET) { $(`pl-${k}`).value = ""; $(`pl-${k}-state`).textContent = r.data.platform[k] ? "saved" : "not set"; }
+  $("pl-cb-sso").textContent = r.data.callbacks.sso; $("pl-cb-qb").textContent = r.data.callbacks.quickbooks;
+}
+$("pl-save").onclick = async () => {
+  const body = {};
+  for (const k of PL_PLAIN) body[k] = $(`pl-${k}`).value;
+  for (const k of PL_SECRET) if ($(`pl-${k}`).value.trim()) body[k] = $(`pl-${k}`).value;
+  const r = await call("/api/owner/platform", { method: "POST", body });
+  $("pl-saved").textContent = r.ok ? "Saved" : "Didn't save";
+  setTimeout(() => ($("pl-saved").textContent = ""), 2500);
+  loadPlatform();
+};
+$("pl-test").onclick = async () => {
+  $("pl-test-msg").textContent = "Sending…";
+  const r = await call("/api/owner/email-test", { method: "POST", body: { to: $("pl-test-to").value } });
+  $("pl-test-msg").textContent = r.data.ok ? "Sent — check that inbox." : r.data.reason || r.data.error || "Didn't send.";
+};
