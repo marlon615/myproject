@@ -1,0 +1,25 @@
+# Forecasting Agent. The Worker serves the app (packed in by scripts/build-worker.cjs) and the API.
+# Directory = logins, payments, switches, owner passcode. Company = one private store per customer company.
+name = "forecast-agent"
+main = "worker/index.js"
+compatibility_date = "2026-10-01"
+account_id = "30f2c89d75621ddef8b783383296410f"
+workers_dev = true
+preview_urls = false
+
+[[durable_objects.bindings]]
+name = "DIRECTORY"
+class_name = "Directory"
+
+[[durable_objects.bindings]]
+name = "COMPANY"
+class_name = "Company"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Directory", "Company"]
+
+# Raise this number and redeploy to set the owner passcode again (forgotten, or someone got to /owner first).
+# Customers and their data are kept.
+[vars]
+OWNER_GENERATION = "1"

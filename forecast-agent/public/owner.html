@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Owner dashboard · Forecasting Agent</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/owner.js"></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/owner"><img src="/icon.svg" alt="" width="28" height="28"> Owner dashboard</a>
+    <div class="who" id="o-who" hidden><button class="link" id="o-signout" type="button">Sign out</button></div>
+  </header>
+  <main>
+    <p class="loading" id="o-loading">Loading…</p>
+
+    <section id="o-gate" hidden>
+      <div class="card auth-card">
+        <h1 id="o-gate-title">Owner sign in</h1>
+        <p class="hint" id="o-gate-hint"></p>
+        <form id="o-form" novalidate>
+          <label>Passcode<input id="o-pass" type="password" autocomplete="current-password" maxlength="200"></label>
+          <label id="o-pass2-row" hidden>Type it again<input id="o-pass2" type="password" autocomplete="new-password" maxlength="200"></label>
+          <p class="error" id="o-error" role="alert" hidden></p>
+          <button class="primary" type="submit" id="o-submit">Sign in</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="o-dash" hidden>
+      <div class="tiles" id="o-tiles"></div>
+      <div class="card">
+        <h2>Customers</h2>
+        <p class="hint" id="o-none">No customers yet. They sign up on the main page.</p>
+        <div id="o-customers"></div>
+      </div>
+      <div class="card">
+        <h2>What locked customers are told</h2>
+        <p class="hint">Shown when a customer's forecast is locked or their account is switched off — for example your email or phone number.</p>
+        <div class="pay-row"><input id="o-contact" class="note" maxlength="300" placeholder="e.g. Email us to get your forecast"><button class="secondary small" type="button" id="o-contact-save">Save</button> <span class="hint" id="o-contact-saved"></span></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

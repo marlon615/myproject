@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Forecasting Agent</title>
+  <meta name="description" content="Upload your past sales and see the next 3 months, by product, with a free accuracy test first.">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/"><img src="/icon.svg" alt="" width="28" height="28"> Forecasting Agent</a>
+    <div class="who" id="who" hidden><span id="who-name"></span> <button class="link" id="signout" type="button">Sign out</button></div>
+  </header>
+
+  <main id="main">
+    <p class="loading" id="loading">Loading…</p>
+
+    <!-- Signed out -->
+    <section id="auth" hidden>
+      <div class="hero">
+        <h1>See your next 3 months of sales</h1>
+        <p>Upload your past sales as a spreadsheet (CSV or Excel). First, a <b>free accuracy test</b>: we hide your last 3 months, predict them, and show predicted against what really happened. Then get the next 3 months, by product, with a chart and a plain-English summary.</p>
+      </div>
+      <div class="card auth-card">
+        <div class="tabs" role="tablist">
+          <button type="button" role="tab" id="tab-signup" aria-selected="true">Create account</button>
+          <button type="button" role="tab" id="tab-login" aria-selected="false">Sign in</button>
+        </div>
+        <form id="auth-form" novalidate>
+          <label id="company-row">Company name<input id="company" autocomplete="organization" maxlength="100"></label>
+          <label>Email<input id="email" type="email" autocomplete="email" maxlength="254"></label>
+          <label>Password<input id="password" type="password" autocomplete="new-password" minlength="8" maxlength="200"></label>
+          <p class="hint" id="pw-hint">At least 8 characters.</p>
+          <p class="error" id="auth-error" role="alert" hidden></p>
+          <button class="primary" type="submit" id="auth-submit">Create free account</button>
+        </form>
+        <p class="fine">Your data is kept separate from every other company's. Only monthly totals per product leave your computer — the spreadsheet itself is read in your browser.</p>
+      </div>
+    </section>
+
+    <!-- Switched off -->
+    <section id="off" hidden>
+      <div class="card notice">
+        <h1>This account is switched off</h1>
+        <p id="off-contact"></p>
+      </div>
+    </section>
+
+    <!-- Home: upload + uploads -->
+    <section id="home" hidden>
+      <div class="card" id="upload-card">
+        <h2>Upload your sales</h2>
+        <p>A CSV or Excel file with one row per sale (or per day, week or month): a <b>date</b>, a <b>product</b>, and the <b>sales amount</b> (or quantity). At least 9 months for the accuracy test.</p>
+        <div class="upload-row">
+          <label class="file-btn primary">Choose file<input type="file" id="file" accept=".csv,.txt,.tsv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" hidden></label>
+          <button type="button" class="secondary" id="sample">Try with sample data</button>
+          <a class="link" href="/sample-sales.csv" download>Download the sample file</a>
+        </div>
+        <p class="error" id="file-error" role="alert" hidden></p>
+
+        <div id="map" hidden>
+          <h3>Check the columns</h3>
+          <p class="hint" id="map-file"></p>
+          <div class="grid3">
+            <label>Date column<select id="col-date"></select></label>
+            <label>Product column<select id="col-product"></select></label>
+            <label>Sales column<select id="col-value"></select></label>
+          </div>
+          <div class="grid3">
+            <label>The sales column is<select id="kind"><option value="money">Money ($)</option><option value="units">Quantity (units)</option></select></label>
+            <label id="order-row" hidden>Dates are written<select id="order"><option value="">— choose —</option><option value="dmy">Day/Month/Year (31/01/2025)</option><option value="mdy">Month/Day/Year (01/31/2025)</option></select></label>
+            <label>Name for this upload<input id="upload-name" maxlength="120"></label>
+          </div>
+          <div class="preview" id="preview" aria-live="polite"></div>
+          <p class="error" id="map-error" role="alert" hidden></p>
+          <button type="button" class="primary" id="run">Run the free accuracy test</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Your uploads</h2>
+        <p class="hint" id="no-uploads">Nothing yet — upload a file or try the sample.</p>
+        <ul class="uploads" id="uploads"></ul>
+      </div>
+    </section>
+
+    <!-- One upload: backtest + forecast -->
+    <section id="result" hidden>
+      <p><a class="link" href="#/">← All uploads</a></p>
+      <h1 id="r-name"></h1>
+      <p class="hint" id="r-meta"></p>
+
+      <div class="card">
+        <h2>Free accuracy test</h2>
+        <div id="bt-none" class="notice" hidden></div>
+        <div id="bt">
+          <div class="score"><span class="score-num" id="bt-acc"></span><span class="score-label">accurate on your total sales<br><span class="hint" id="bt-months"></span></span></div>
+          <ul class="summary" id="bt-summary"></ul>
+          <div id="bt-chart"></div>
+          <h3>Predicted against actual, side by side</h3>
+          <div class="table-wrap"><table id="bt-table"></table></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Next 3 months</h2>
+        <div id="fc-locked" class="notice" hidden>
+          <p><b>The 3-month forecast isn't switched on for your account yet.</b></p>
+          <p id="fc-contact"></p>
+        </div>
+        <div id="fc-ask" hidden>
+          <p>See the next 3 months for every product, with a chart and a plain-English summary.</p>
+          <button type="button" class="primary" id="fc-run">Make my 3-month forecast</button>
+        </div>
+        <p class="error" id="fc-error" role="alert" hidden></p>
+        <div id="fc" hidden>
+          <ul class="summary" id="fc-summary"></ul>
+          <label class="inline">Show<select id="fc-pick"></select></label>
+          <div id="fc-chart"></div>
+          <h3>By product</h3>
+          <div class="table-wrap"><table id="fc-table"></table></div>
+          <p><button type="button" class="secondary" id="fc-csv">Download forecast (CSV)</button> <span class="hint" id="fc-when"></span></p>
+        </div>
+      </div>
+      <p><button type="button" class="link danger" id="r-delete">Delete this upload</button></p>
+    </section>
+  </main>
+  <footer class="foot">Forecasts are estimates from your own past sales. They can't know about things that haven't happened before.</footer>
+</body>
+</html>
