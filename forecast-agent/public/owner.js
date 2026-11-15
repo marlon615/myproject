@@ -61,7 +61,7 @@ async function dash() {
   host.innerHTML = customers.map((c) => `
     <div class="cust" data-id="${c.id}">
       <div class="cust-head"><span class="cust-name">${esc(c.company)}</span>
-        <span>${c.off ? '<span class="pill off">Account off</span>' : '<span class="pill on">Account on</span>'} ${c.forecasts ? '<span class="pill on">Forecasts on</span>' : '<span class="pill">Backtest only</span>'}</span></div>
+        <span>${c.resetRequested ? '<span class="pill off">Asked for a password reset</span> ' : ""}${c.off ? '<span class="pill off">Account off</span>' : '<span class="pill on">Account on</span>'} ${c.forecasts ? '<span class="pill on">Forecasts on</span>' : '<span class="pill">Backtest only</span>'}</span></div>
       <div class="cust-facts"><span>${esc(c.email)}</span><span>Joined ${day(c.created)}</span><span>Last seen ${day(c.lastSeen)}</span>
         <span>${c.uploads} upload${c.uploads === 1 ? "" : "s"}</span><span>Last backtest: ${c.lastAccuracy === null ? "—" : `<b>${c.lastAccuracy}%</b> accurate`}</span><span>Paid: <b>${money(c.paidCents)}</b></span></div>
       <div class="switches">
@@ -70,6 +70,8 @@ async function dash() {
       </div>
       <div class="pay-row"><input class="pay-amount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Amount $" aria-label="Amount received"><input class="pay-note note" maxlength="200" placeholder="Note (optional)" aria-label="Note"><button class="secondary small pay-add" type="button">Record payment</button></div>
       ${c.payments.length ? `<div class="payments">${c.payments.map((p) => `${money(p.cents)} on ${day(p.created)}${p.note ? ` — ${esc(p.note)}` : ""} <button class="link pay-del" data-pid="${p.id}" type="button">remove</button>`).join(" · ")}</div>` : ""}
+      <div class="pay-row"><button class="secondary small reset-link" type="button">Password reset link</button>${c.resetLinkUntil ? `<span class="hint">A link is active until ${new Date(c.resetLinkUntil).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</span>` : ""}</div>
+      <div class="reset-host"></div>
       <div class="pay-row"><button class="secondary small toggle-uploads" type="button">${open.has(c.id) ? "Hide uploads" : "Show uploads"}</button><button class="link danger del-cust" type="button">Delete customer</button></div>
       <div class="up-host"></div>
     </div>`).join("");
@@ -118,6 +120,22 @@ $("o-customers").addEventListener("click", async (e) => {
     const r = await call("/api/owner/payment", { method: "POST", body: { id, amount, note: card.querySelector(".pay-note").value } });
     if (!r.ok) return alert(r.data.error || "That didn't work.");
     return dash();
+  }
+  if (t.classList.contains("reset-link")) {
+    if (!confirm(`Make a password reset link for ${name}? It works once, for 24 hours. Any earlier link stops working.`)) return;
+    const r = await call("/api/owner/reset-link", { method: "POST", body: { id } });
+    if (!r.ok) return alert(r.data.error || "That didn't work.");
+    const link = `${location.origin}/#/reset/${r.data.token}`;
+    const host = card.querySelector(".reset-host");
+    host.innerHTML = `<div class="reset-box"><b>Send this link to ${esc(name)}</b> (by text or email). It works once, until ${new Date(r.data.expires).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}. Only send it to the person who owns the account.
+      <input class="reset-url" readonly value="${esc(link)}" aria-label="Reset link"><button class="secondary small reset-copy" type="button">Copy link</button> <span class="hint reset-copied"></span></div>`;
+    host.querySelector(".reset-url").select();
+    return;
+  }
+  if (t.classList.contains("reset-copy")) {
+    const input = card.querySelector(".reset-url");
+    try { await navigator.clipboard.writeText(input.value); card.querySelector(".reset-copied").textContent = "Copied"; } catch { input.select(); card.querySelector(".reset-copied").textContent = "Selected — copy it"; }
+    return;
   }
   if (t.classList.contains("pay-del")) {
     if (!confirm("Remove this payment from Money collected? (The forecast switch stays as it is.)")) return;

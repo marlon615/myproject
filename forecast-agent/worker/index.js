@@ -12,6 +12,11 @@
  *   POST /api/signup  { company, email, password } → { token, me }
  *   POST /api/login   { email, password } → { token, me }            5 wrong tries per 15 minutes per email
  *   POST /api/logout
+ *   POST /api/recover { email, code, password } → { token, me, recoveryCode }   forgot password, with the recovery code
+ *   POST /api/reset-request { email } → { ok }        "I don't have my code": flags it on the owner dashboard
+ *   POST /api/reset   { token, password } → { token, me, recoveryCode }         the one-time link the owner sent
+ *   POST /api/password { current, password }  (signed in) change password
+ *   POST /api/recovery-code { password } → { recoveryCode }  (signed in) a new code; the old one stops working
  *   GET  /api/me → { me, contact }
  *   GET  /api/uploads → { uploads }
  *   POST /api/uploads { name, months, products, kind } → { upload }    runs the free backtest right away
@@ -32,6 +37,7 @@
  *   POST /api/owner/payment-delete { id, paymentId }
  *   POST /api/owner/delete-customer { id }          removes the company and all its data
  *   POST /api/owner/contact  { contact }            what customers are told when something is locked
+ *   POST /api/owner/reset-link { id } → { token, expires }   one-time password-reset link (24 hours) to send
  */
 import { DurableObject } from "cloudflare:workers";
 import { FILES, RULES } from "./assets.generated.js";
@@ -49,6 +55,16 @@ async function hashSecret(secret, salt) {
   const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: new TextEncoder().encode(salt), iterations: 5000 }, key, 256);
   return hex(bits);
 }
+const sha256 = async (text) => hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+const RESET_HOURS = 24;
+/** A recovery code like "K7QM2-XW9TD-4HB8N-RC3PZ" (20 characters from 32, about 100 bits). No 0/O/1/I to misread. */
+function newRecoveryCode() {
+  const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const b = crypto.getRandomValues(new Uint8Array(20));
+  const c = Array.from(b, (x) => A[x % 32]).join("");
+  return c.match(/.{5}/g).join("-");
+}
+const normCode = (c) => String(c ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/O/g, "0").replace(/[IL]/g, "1");
 const sameText = (a, b) => { if (a.length !== b.length) return false; let x = 0; for (let i = 0; i < a.length; i++) x |= a.charCodeAt(i) ^ b.charCodeAt(i); return x === 0; };
 
 /** Logins, sessions, payments, switches and the owner's passcode. */
@@ -62,6 +78,13 @@ export class Directory extends DurableObject {
       salt TEXT NOT NULL, hash TEXT NOT NULL, created TEXT NOT NULL, last_seen TEXT, off INTEGER NOT NULL DEFAULT 0,
       forecasts INTEGER NOT NULL DEFAULT 0, uploads INTEGER NOT NULL DEFAULT 0, last_upload TEXT, last_accuracy REAL, last_months INTEGER)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, account TEXT NOT NULL, expires INTEGER NOT NULL)`);
+    // Password reset (added later; safe on an existing table).
+    const cols = new Set(this.sql.exec("PRAGMA table_info(accounts)").toArray().map((c) => c.name));
+    const addColumn = (name, decl) => { if (!cols.has(name)) this.sql.exec(`ALTER TABLE accounts ADD COLUMN ${name} ${decl}`); };
+    addColumn("recovery_hash", "TEXT");     // sha-256 of the recovery code (the code itself is never kept)
+    addColumn("reset_hash", "TEXT");        // sha-256 of the owner's one-time reset link token
+    addColumn("reset_expires", "INTEGER");
+    addColumn("reset_requested", "TEXT");   // when the customer asked for a reset link
     this.sql.exec(`CREATE TABLE IF NOT EXISTS payments (id TEXT PRIMARY KEY, account TEXT NOT NULL, cents INTEGER NOT NULL, note TEXT NOT NULL, created TEXT NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS login_fails (email TEXT PRIMARY KEY, times TEXT NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS signups (t INTEGER NOT NULL, ip TEXT NOT NULL)`);
@@ -129,11 +152,11 @@ export class Directory extends DurableObject {
       this.sql.exec("DELETE FROM signups WHERE t < ?", now - 3600 * 1000);
       if (this.sql.exec("SELECT COUNT(*) AS n FROM signups WHERE ip = ?", ip).one().n >= 10) return { error: "busy" };
       if (this.sql.exec("SELECT 1 FROM accounts WHERE email = ?", email).toArray().length) return { error: "exists" };
-      const id = randomHex(16), salt = randomHex(16);
-      this.sql.exec("INSERT INTO accounts (id, company, email, salt, hash, created, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        id, company, email, salt, await hashSecret(password, salt), new Date().toISOString(), new Date().toISOString());
+      const id = randomHex(16), salt = randomHex(16), code = newRecoveryCode();
+      this.sql.exec("INSERT INTO accounts (id, company, email, salt, hash, created, last_seen, recovery_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        id, company, email, salt, await hashSecret(password, salt), new Date().toISOString(), new Date().toISOString(), await sha256(normCode(code)));
       this.sql.exec("INSERT INTO signups (t, ip) VALUES (?, ?)", now, ip);
-      return { token: this.#session(id), me: this.#me(this.#row(id)) };
+      return { token: this.#session(id), me: this.#me(this.#row(id)), recoveryCode: code };
     });
   }
 
@@ -177,6 +200,95 @@ export class Directory extends DurableObject {
   }
   logout(token) { this.sql.exec("DELETE FROM sessions WHERE token = ?", token); }
 
+  // ── Passwords ────────────────────────────────────────────────────────────────────────────────────────────────
+  /** 5 wrong tries per 15 minutes for each key (an email, or "code:" + email). Returns null when allowed. */
+  #tooMany(key) {
+    const now = Date.now();
+    const fails = JSON.parse(this.sql.exec("SELECT times FROM login_fails WHERE email = ?", key).toArray()[0]?.times || "[]").filter((t) => now - t < 15 * 60 * 1000);
+    return fails.length >= 5 ? { error: "wait", retryAfter: Math.ceil((15 * 60 * 1000 - (now - fails[0])) / 1000) } : null;
+  }
+  #fail(key) {
+    const now = Date.now();
+    const fails = JSON.parse(this.sql.exec("SELECT times FROM login_fails WHERE email = ?", key).toArray()[0]?.times || "[]").filter((t) => now - t < 15 * 60 * 1000);
+    fails.push(now);
+    this.sql.exec("INSERT INTO login_fails (email, times) VALUES (?, ?) ON CONFLICT(email) DO UPDATE SET times = excluded.times", key, JSON.stringify(fails));
+  }
+
+  /** New password + a fresh recovery code; signed out everywhere, then one new session. Any reset link is used up. */
+  async #setPassword(id, password, { keepToken } = {}) {
+    const salt = randomHex(16), code = newRecoveryCode();
+    this.sql.exec("UPDATE accounts SET salt = ?, hash = ?, recovery_hash = ?, reset_hash = NULL, reset_expires = NULL, reset_requested = NULL WHERE id = ?",
+      salt, await hashSecret(password, salt), await sha256(normCode(code)), id);
+    this.sql.exec("DELETE FROM sessions WHERE account = ? AND token != ?", id, keepToken || "");
+    return { token: keepToken || this.#session(id), me: this.#me(this.#row(id)), recoveryCode: code };
+  }
+
+  /** Forgot password: email + recovery code. */
+  recover(email, code, password) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const key = `code:${email}`;
+      const wait = this.#tooMany(key);
+      if (wait) return wait;
+      const row = this.sql.exec("SELECT * FROM accounts WHERE email = ?", email).toArray()[0];
+      const h = await sha256(normCode(code));
+      if (!row || !row.recovery_hash || !sameText(h, row.recovery_hash)) { this.#fail(key); return { error: "wrong" }; }
+      this.sql.exec("DELETE FROM login_fails WHERE email IN (?, ?)", key, email);
+      if (row.off) return { error: "off" };
+      return this.#setPassword(row.id, password);
+    });
+  }
+
+  /** "I don't have my code": noted for the owner. Same answer whether or not the email has an account. */
+  requestReset(email) {
+    const row = this.sql.exec("SELECT id, reset_requested FROM accounts WHERE email = ?", email).toArray()[0];
+    if (row && !row.reset_requested) this.sql.exec("UPDATE accounts SET reset_requested = ? WHERE id = ?", new Date().toISOString(), row.id);
+    return { ok: true };
+  }
+
+  /** The owner makes a one-time link (a new one replaces the old). Only its hash is kept. */
+  async ownerResetLink(id) {
+    if (!this.#row(id)) return { error: "unknown" };
+    const token = randomHex(32), expires = Date.now() + RESET_HOURS * 3600 * 1000;
+    this.sql.exec("UPDATE accounts SET reset_hash = ?, reset_expires = ? WHERE id = ?", await sha256(token), expires, id);
+    return { token, expires };
+  }
+
+  /** The customer opens the owner's link and chooses a new password. */
+  resetWithToken(token, password) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const row = this.sql.exec("SELECT * FROM accounts WHERE reset_hash = ? AND reset_expires > ?", await sha256(token), Date.now()).toArray()[0];
+      if (!row) return { error: "invalid" };
+      if (row.off) return { error: "off" };
+      return this.#setPassword(row.id, password);
+    });
+  }
+
+  /** Signed in: change the password (the current one is needed). Other devices are signed out. */
+  changePassword(id, token, current, password) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const row = this.#row(id);
+      if (!row) return { error: "unknown" };
+      const wait = this.#tooMany(row.email);
+      if (wait) return wait;
+      if (!sameText(await hashSecret(current, row.salt), row.hash)) { this.#fail(row.email); return { error: "wrong" }; }
+      return this.#setPassword(id, password, { keepToken: token });
+    });
+  }
+
+  /** Signed in: a new recovery code (the password is needed); the old code stops working. */
+  newRecovery(id, password) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const row = this.#row(id);
+      if (!row) return { error: "unknown" };
+      const wait = this.#tooMany(row.email);
+      if (wait) return wait;
+      if (!sameText(await hashSecret(password, row.salt), row.hash)) { this.#fail(row.email); return { error: "wrong" }; }
+      const code = newRecoveryCode();
+      this.sql.exec("UPDATE accounts SET recovery_hash = ? WHERE id = ?", await sha256(normCode(code)), id);
+      return { recoveryCode: code };
+    });
+  }
+
   /** Kept up to date after every upload change, so the owner's list needs only this one place. */
   noteUploads(id, count, last) {
     this.sql.exec("UPDATE accounts SET uploads = ?, last_upload = ?, last_accuracy = ?, last_months = ? WHERE id = ?",
@@ -189,7 +301,7 @@ export class Directory extends DurableObject {
     const customers = this.sql.exec("SELECT * FROM accounts ORDER BY created DESC").toArray().map((r) => {
       const mine = pays.filter((p) => p.account === r.id);
       return {
-        ...this.#me(r), lastSeen: r.last_seen, uploads: r.uploads, lastUpload: r.last_upload, lastAccuracy: r.last_accuracy, lastMonths: r.last_months,
+        ...this.#me(r), lastSeen: r.last_seen, resetRequested: r.reset_requested, resetLinkUntil: r.reset_expires > Date.now() ? r.reset_expires : null, hasRecoveryCode: Boolean(r.recovery_hash), uploads: r.uploads, lastUpload: r.last_upload, lastAccuracy: r.last_accuracy, lastMonths: r.last_months,
         paidCents: mine.reduce((a, p) => a + p.cents, 0), payments: mine.map((p) => ({ id: p.id, cents: p.cents, note: p.note, created: p.created })),
       };
     });
@@ -365,6 +477,34 @@ async function api(request, env, path) {
     if (token) await dir.logout(token);
     return new Response(null, { status: 204 });
   }
+  const pwError = (p) => (p.length < 8 || p.length > 200 ? "The new password needs at least 8 characters." : null);
+  if (path === "/api/recover" && method === "POST") {
+    const b = await readJson(request);
+    const password = String(b?.password ?? "");
+    if (pwError(password)) return json({ error: pwError(password) }, 400);
+    const r = await dir.recover(String(b?.email ?? "").trim().toLowerCase(), String(b?.code ?? "").slice(0, 60), password);
+    if (r.error === "wait") return json({ error: "Too many wrong tries. Wait a few minutes, then try again." }, 429, { "Retry-After": String(r.retryAfter) });
+    if (r.error === "wrong") return json({ error: "That email and recovery code don't match." }, 401);
+    if (r.error === "off") return json({ error: "This account is switched off.", off: true, contact: await dir.contact() }, 403);
+    return json(r);
+  }
+  if (path === "/api/reset-request" && method === "POST") {
+    const b = await readJson(request);
+    const email = String(b?.email ?? "").trim().toLowerCase();
+    if (!EMAIL.test(email)) return json({ error: "Type the email you signed up with." }, 400);
+    await dir.requestReset(email);
+    return json({ ok: true, contact: await dir.contact() });
+  }
+  if (path === "/api/reset" && method === "POST") {
+    const b = await readJson(request);
+    const password = String(b?.password ?? ""), t = String(b?.token ?? "");
+    if (pwError(password)) return json({ error: pwError(password) }, 400);
+    if (!/^[0-9a-f]{64}$/.test(t)) return json({ error: "This reset link isn't valid. Ask for a new one." }, 400);
+    const r = await dir.resetWithToken(t, password);
+    if (r.error === "invalid") return json({ error: "This reset link has expired or was already used. Ask for a new one." }, 410);
+    if (r.error === "off") return json({ error: "This account is switched off.", off: true, contact: await dir.contact() }, 403);
+    return json(r);
+  }
 
   // Everything below needs a signed-in company that is switched on. The company comes only from the token.
   const me = await dir.who(token);
@@ -372,6 +512,22 @@ async function api(request, env, path) {
   if (me.off) return json({ error: "This account is switched off.", off: true, contact: await dir.contact() }, 403);
   const box = company(env, me.id);
 
+  if (path === "/api/password" && method === "POST") {
+    const b = await readJson(request);
+    const password = String(b?.password ?? "");
+    if (pwError(password)) return json({ error: pwError(password) }, 400);
+    const r = await dir.changePassword(me.id, token, String(b?.current ?? "").slice(0, 200), password);
+    if (r.error === "wait") return json({ error: "Too many wrong tries. Wait a few minutes, then try again." }, 429);
+    if (r.error === "wrong") return json({ error: "Your current password isn't right." }, 400); // 401 means "not signed in"
+    return json({ ok: true, recoveryCode: r.recoveryCode });
+  }
+  if (path === "/api/recovery-code" && method === "POST") {
+    const b = await readJson(request);
+    const r = await dir.newRecovery(me.id, String(b?.password ?? "").slice(0, 200));
+    if (r.error === "wait") return json({ error: "Too many wrong tries. Wait a few minutes, then try again." }, 429);
+    if (r.error === "wrong") return json({ error: "Your password isn't right." }, 400); // 401 means "not signed in"
+    return json(r);
+  }
   if (path === "/api/me" && method === "GET") return json({ me, contact: await dir.contact(), minForecast: MIN_FORECAST_MONTHS, minBacktest: MIN_BACKTEST_MONTHS });
   if (path === "/api/uploads" && method === "GET") return json({ uploads: await box.list() });
   if (path === "/api/uploads" && method === "POST") {
@@ -447,6 +603,10 @@ async function ownerApi(request, env, path, dir, token) {
     const amount = Number(b.amount);
     if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) return json({ error: "Type the amount received (more than 0)." }, 400);
     const r = await dir.addPayment(id, Math.round(amount * 100), String(b.note ?? "").trim().slice(0, 200));
+    return r.error ? json({ error: "Not found." }, 404) : json(r);
+  }
+  if (path === "/api/owner/reset-link") {
+    const r = await dir.ownerResetLink(id);
     return r.error ? json({ error: "Not found." }, 404) : json(r);
   }
   if (path === "/api/owner/payment-delete") return json(await dir.deletePayment(id, String(b.paymentId ?? "")));

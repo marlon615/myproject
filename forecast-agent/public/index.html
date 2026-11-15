@@ -13,7 +13,7 @@
 <body>
   <header class="top">
     <a class="brand" href="#/"><img src="/icon.svg" alt="" width="28" height="28"> Forecasting Agent</a>
-    <div class="who" id="who" hidden><span id="who-name"></span> <button class="link" id="signout" type="button">Sign out</button></div>
+    <div class="who" id="who" hidden><span id="who-name"></span> <a class="link" href="#/account" id="account-link">Account</a> <button class="link" id="signout" type="button">Sign out</button></div>
   </header>
 
   <main id="main">
@@ -38,7 +38,79 @@
           <p class="error" id="auth-error" role="alert" hidden></p>
           <button class="primary" type="submit" id="auth-submit">Create free account</button>
         </form>
+        <p id="forgot-row" hidden><a class="link" href="#/forgot">Forgot your password?</a></p>
         <p class="fine">Your data is kept separate from every other company's. Only monthly totals per product leave your computer — the spreadsheet itself is read in your browser.</p>
+      </div>
+    </section>
+
+    <!-- Forgot password -->
+    <section id="forgot" hidden>
+      <div class="card auth-card">
+        <h1>Reset your password</h1>
+        <p class="hint">Use the recovery code you saved when you signed up.</p>
+        <form id="forgot-form" novalidate>
+          <label>Email<input id="f-email" type="email" autocomplete="email" maxlength="254"></label>
+          <label>Recovery code<input id="f-code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="60" placeholder="XXXXX-XXXXX-XXXXX-XXXXX"></label>
+          <label>New password<input id="f-password" type="password" autocomplete="new-password" maxlength="200"></label>
+          <p class="hint">At least 8 characters.</p>
+          <p class="error" id="f-error" role="alert" hidden></p>
+          <button class="primary" type="submit" id="f-submit">Set new password</button>
+        </form>
+        <h3>Don't have your recovery code?</h3>
+        <p class="hint">Ask us for a reset link. Type your email above, then:</p>
+        <button class="secondary" type="button" id="f-ask">Ask for a reset link</button>
+        <p class="ok" id="f-asked" role="status" hidden></p>
+        <p><a class="link" href="#/">← Back to sign in</a></p>
+      </div>
+    </section>
+
+    <!-- The owner's one-time reset link -->
+    <section id="reset" hidden>
+      <div class="card auth-card">
+        <h1>Choose a new password</h1>
+        <form id="reset-form" novalidate>
+          <label>New password<input id="r-password" type="password" autocomplete="new-password" maxlength="200"></label>
+          <label>Type it again<input id="r-password2" type="password" autocomplete="new-password" maxlength="200"></label>
+          <p class="hint">At least 8 characters.</p>
+          <p class="error" id="r-error" role="alert" hidden></p>
+          <button class="primary" type="submit" id="r-submit">Set new password</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- A new recovery code, shown once -->
+    <section id="code" hidden>
+      <div class="card auth-card">
+        <h1 id="code-title">Save your recovery code</h1>
+        <p>If you ever forget your password, this code lets you set a new one. <b>It's shown only now.</b> Keep it somewhere safe, like a password manager or a printed copy.</p>
+        <p class="code" id="code-value"></p>
+        <div class="upload-row"><button type="button" class="secondary" id="code-copy">Copy</button><button type="button" class="secondary" id="code-save">Download as a file</button> <span class="hint" id="code-copied"></span></div>
+        <label class="check"><input type="checkbox" id="code-ok"> I've saved my recovery code</label>
+        <button type="button" class="primary" id="code-continue" disabled>Continue</button>
+      </div>
+    </section>
+
+    <!-- Account -->
+    <section id="account" hidden>
+      <p><a class="link" href="#/">← All uploads</a></p>
+      <div class="card auth-card">
+        <h2>Change password</h2>
+        <form id="pw-form" novalidate>
+          <label>Current password<input id="pw-current" type="password" autocomplete="current-password" maxlength="200"></label>
+          <label>New password<input id="pw-new" type="password" autocomplete="new-password" maxlength="200"></label>
+          <p class="hint">At least 8 characters. Your other devices will be signed out.</p>
+          <p class="error" id="pw-error" role="alert" hidden></p>
+          <button class="primary" type="submit">Change password</button>
+        </form>
+      </div>
+      <div class="card auth-card">
+        <h2>Recovery code</h2>
+        <p class="hint">Lost your recovery code? Make a new one — the old one stops working.</p>
+        <form id="rc-form" novalidate>
+          <label>Your password<input id="rc-password" type="password" autocomplete="current-password" maxlength="200"></label>
+          <p class="error" id="rc-error" role="alert" hidden></p>
+          <button class="secondary" type="submit">Make a new recovery code</button>
+        </form>
       </div>
     </section>
 

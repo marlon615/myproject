@@ -126,3 +126,10 @@ td.method { color: var(--muted); font-size: .85rem; }
 .view { min-width: 0; max-width: 100%; overflow: hidden; }
 .cust, .card { min-width: 0; }
 .legend-item { white-space: nowrap; }
+/* Password reset */
+.code { font: 700 clamp(1.05rem, 5.2vw, 1.35rem)/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .03em; background: var(--grid); border-radius: 10px; padding: 14px 8px; text-align: center; word-break: normal; overflow-wrap: normal; user-select: all; }
+label.check { display: flex; gap: 10px; align-items: center; margin: 16px 0; color: var(--ink); font-size: 1rem; }
+label.check input { width: 22px; height: 22px; min-height: 0; margin: 0; flex: none; }
+.ok { color: var(--good); font-weight: 600; }
+.reset-box { margin: 8px 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; font-size: .9rem; }
+.reset-box input { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .8rem; }

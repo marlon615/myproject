@@ -80,6 +80,9 @@ function makeXlsx(file) {
     await A.waitForSelector("#auth:not([hidden])");
     await A.fill("#company", "Island Drinks Co"); await A.fill("#email", "owner@islanddrinks.test"); await A.fill("#password", "mango-season-1");
     await A.click("#auth-submit");
+    await A.waitForSelector("#code:not([hidden])");
+    check(/^[A-Z2-9]{5}(-[A-Z2-9]{5}){3}$/.test(await A.textContent("#code-value")) && await A.isDisabled("#code-continue"), "signup shows a recovery code to save (Continue waits until it's ticked as saved)");
+    await A.check("#code-ok"); await A.click("#code-continue");
     await A.waitForSelector("#home:not([hidden])");
     check(await A.textContent("#who-name") === "Island Drinks Co", "company A signs up and lands on its page");
     await A.click("#sample");
@@ -112,6 +115,7 @@ function makeXlsx(file) {
     await B.goto(BASE + "/");
     await B.fill("#company", "Bay Market"); await B.fill("#email", "BOSS@baymarket.test "); await B.fill("#password", "bay-market-22");
     await B.click("#auth-submit");
+    await B.waitForSelector("#code:not([hidden])"); await B.check("#code-ok"); await B.click("#code-continue");
     await B.waitForSelector("#home:not([hidden])");
     await B.setInputFiles("#file", xlsxFile);
     await B.waitForSelector("#map:not([hidden])", { timeout: 15000 });

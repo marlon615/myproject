@@ -29,14 +29,16 @@ async function call(path, { method = "GET", body } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
-  if (res.status === 401 && !path.startsWith("/api/login") && !path.startsWith("/api/signup")) { token = null; save(TOKEN_KEY, null); show("auth"); }
+  // Signed out (session ended): only for signed-in requests, never for the sign-in / reset forms' own "wrong" answers.
+  const PUBLIC = ["/api/login", "/api/signup", "/api/recover", "/api/reset", "/api/reset-request", "/api/logout"];
+  if (res.status === 401 && !PUBLIC.includes(path)) { token = null; me = null; save(TOKEN_KEY, null); setMode("login"); show("auth"); }
   if (res.status === 403 && data.off) showOff(data.contact);
   return { ok: res.ok, status: res.status, data };
 }
 
 function show(view) {
-  for (const id of ["loading", "auth", "off", "home", "result"]) $(id).hidden = id !== view;
-  $("who").hidden = !(me && (view === "home" || view === "result"));
+  for (const id of ["loading", "auth", "off", "home", "result", "forgot", "reset", "code", "account"]) $(id).hidden = id !== view;
+  $("who").hidden = !(me && (view === "home" || view === "result" || view === "account"));
   window.scrollTo(0, 0);
 }
 function showOff(c) {
@@ -51,6 +53,7 @@ function setMode(m) {
   $("tab-login").setAttribute("aria-selected", String(m === "login"));
   $("company-row").hidden = m !== "signup";
   $("pw-hint").hidden = m !== "signup";
+  $("forgot-row").hidden = m !== "login";
   $("password").autocomplete = m === "signup" ? "new-password" : "current-password";
   $("auth-submit").textContent = m === "signup" ? "Create free account" : "Sign in";
   showErr("auth-error");
@@ -68,7 +71,85 @@ $("auth-form").onsubmit = async (e) => {
   if (!r.ok) { if (!r.data.off) showErr("auth-error", r.data.error || "That didn't work. Try again."); return; }
   token = r.data.token; save(TOKEN_KEY, token); me = r.data.me;
   $("password").value = "";
+  if (r.data.recoveryCode) return showCode(r.data.recoveryCode, "Save your recovery code", () => start());
   await start();
+};
+
+// ── Recovery code, forgot password, reset link, account ────────────────────────────────────────────────────────
+let afterCode = null;
+function showCode(code, title, then) {
+  $("code-title").textContent = title;
+  $("code-value").textContent = code;
+  $("code-ok").checked = false; $("code-continue").disabled = true; $("code-copied").textContent = "";
+  afterCode = then;
+  show("code");
+}
+$("code-ok").onchange = () => { $("code-continue").disabled = !$("code-ok").checked; };
+$("code-continue").onclick = () => { const f = afterCode; afterCode = null; $("code-value").textContent = ""; $("code").hidden = true; if (location.hash !== "#/") history.replaceState(null, "", "#/"); f?.(); };
+$("code-copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("code-value").textContent); $("code-copied").textContent = "Copied"; } catch { $("code-copied").textContent = "Select the code and copy it"; }
+};
+$("code-save").onclick = () => {
+  const text = `Forecasting Agent — recovery code\n\nAccount: ${me?.email || ""}\nRecovery code: ${$("code-value").textContent}\n\nUse it at ${location.origin}/#/forgot if you forget your password. It works once; you get a new one after using it.\n`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  a.download = "forecasting-agent-recovery-code.txt";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+};
+
+/** After a reset: signed in with the new password, and a fresh recovery code to save (the old one is used up). */
+function signedInAfterReset(data) {
+  token = data.token; save(TOKEN_KEY, token); me = data.me;
+  showCode(data.recoveryCode, "Password changed — save your new recovery code", () => start());
+}
+
+$("forgot-form").onsubmit = async (e) => {
+  e.preventDefault();
+  showErr("f-error");
+  $("f-submit").disabled = true;
+  const r = await call("/api/recover", { method: "POST", body: { email: $("f-email").value, code: $("f-code").value, password: $("f-password").value } });
+  $("f-submit").disabled = false;
+  if (!r.ok) { if (!r.data.off) showErr("f-error", r.data.error || "That didn't work. Try again."); return; }
+  $("f-code").value = ""; $("f-password").value = "";
+  signedInAfterReset(r.data);
+};
+$("f-ask").onclick = async () => {
+  showErr("f-error"); $("f-asked").hidden = true;
+  const r = await call("/api/reset-request", { method: "POST", body: { email: $("f-email").value } });
+  if (!r.ok) return showErr("f-error", r.data.error || "That didn't work. Try again.");
+  $("f-asked").textContent = `Thanks — if there's an account for that email, we'll send you a reset link.${r.data.contact ? ` You can also contact: ${r.data.contact}` : ""}`;
+  $("f-asked").hidden = false;
+};
+
+let resetToken = null;
+$("reset-form").onsubmit = async (e) => {
+  e.preventDefault();
+  showErr("r-error");
+  if ($("r-password").value !== $("r-password2").value) return showErr("r-error", "The two passwords don't match.");
+  $("r-submit").disabled = true;
+  const r = await call("/api/reset", { method: "POST", body: { token: resetToken, password: $("r-password").value } });
+  $("r-submit").disabled = false;
+  if (!r.ok) { if (!r.data.off) showErr("r-error", r.data.error || "That didn't work. Try again."); return; }
+  resetToken = null; $("r-password").value = ""; $("r-password2").value = "";
+  signedInAfterReset(r.data);
+};
+
+$("pw-form").onsubmit = async (e) => {
+  e.preventDefault();
+  showErr("pw-error");
+  const r = await call("/api/password", { method: "POST", body: { current: $("pw-current").value, password: $("pw-new").value } });
+  if (!r.ok) return showErr("pw-error", r.data.error || "That didn't work. Try again.");
+  $("pw-current").value = ""; $("pw-new").value = "";
+  showCode(r.data.recoveryCode, "Password changed — save your new recovery code", () => { location.hash = "#/"; route(); });
+};
+$("rc-form").onsubmit = async (e) => {
+  e.preventDefault();
+  showErr("rc-error");
+  const r = await call("/api/recovery-code", { method: "POST", body: { password: $("rc-password").value } });
+  if (!r.ok) return showErr("rc-error", r.data.error || "That didn't work. Try again.");
+  $("rc-password").value = "";
+  showCode(r.data.recoveryCode, "Your new recovery code", () => { location.hash = "#/"; route(); });
 };
 $("signout").onclick = async () => { await call("/api/logout", { method: "POST" }); token = null; me = null; save(TOKEN_KEY, null); location.hash = "#/"; setMode("login"); show("auth"); };
 
@@ -310,14 +391,32 @@ $("r-delete").onclick = async () => {
 };
 
 // ── Start ──────────────────────────────────────────────────────────────────────────────────────────────────────
+/** Pages that work signed out: the forgot-password form and the owner's reset link. True if one was shown. */
+function routeSignedOut() {
+  const r = /^#\/reset\/([0-9a-f]{64})$/.exec(location.hash);
+  if (r) {
+    resetToken = r[1];
+    history.replaceState(null, "", "#/reset"); // the token leaves the address bar (and the browser history)
+  }
+  if (location.hash === "#/reset") {
+    if (!resetToken) { setMode("login"); show("auth"); showErr("auth-error", "That reset link isn't complete. Open it again from the message you got."); return true; }
+    show("reset"); return true;
+  }
+  if (location.hash === "#/forgot") { $("f-email").value ||= $("email").value; show("forgot"); return true; }
+  return false;
+}
 function route() {
-  if (!me) return;
+  if (/^#\/(reset|forgot)/.test(location.hash) && routeSignedOut()) return;
+  if (!$("code").hidden) return; // a recovery code is on screen: it stays until "Continue"
+  if (!me) { if (location.hash === "#/" || location.hash === "") show("auth"); return; }
+  if (location.hash === "#/account") { show("account"); return; }
   const m = /^#\/u\/([0-9a-f]{32})$/.exec(location.hash);
   if (m) renderUpload(m[1]); else renderHome();
 }
 window.addEventListener("hashchange", route);
 
 async function start() {
+  if (/^#\/(reset|forgot)/.test(location.hash) && routeSignedOut()) return;
   if (!token) { show("auth"); return; }
   const r = await call("/api/me");
   if (!r.ok) { if (r.status !== 403) show("auth"); return; }
