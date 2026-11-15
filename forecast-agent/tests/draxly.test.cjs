@@ -1,7 +1,6 @@
 /**
  * Draxly: the new name everywhere, billing (Draxly Enterprise agreements, invoices, reminders, renewal, early
- * cancellation, PDFs, owner and customer billing pages) and the public demo (read-only, sample distributor data,
- * Book a call / Request access, who opened it), with the real Worker and stand-in email (Resend shape) and phone
+ * cancellation, PDFs, owner and customer billing pages), with the real Worker and stand-in email (Resend shape) and phone
  * alert (ntfy shape) services on this machine. Billing runs on a test clock (only possible with ALLOW_TEST_CLOCK=1,
  * which the live site doesn't set).
  */
@@ -31,10 +30,10 @@ const pdfText = (b64) => Buffer.from(b64, "base64").toString("latin1");
 
     // ── The new name ───────────────────────────────────────────────────────────────────────────────────────
     const pages = {};
-    for (const p of ["/", "/owner", "/pricing", "/security", "/docs", "/demo", "/try", "/no-such-page", "/app.js", "/owner.js", "/try.js"]) pages[p] = (await (await fetch(w.base + p)).text());
+    for (const p of ["/", "/owner", "/pricing", "/security", "/docs", "/demo", "/no-such-page", "/app.js", "/owner.js", "/demo.js"]) pages[p] = (await (await fetch(w.base + p)).text());
     check(Object.values(pages).every((t) => !/Forecasting Agent/i.test(t)), "no page, script or 404 says 'Forecasting Agent' any more");
     check(Object.values(pages).every((t) => !/Book a call|bookingUrl|I'd like a call/i.test(t)), "no booking links or call options anywhere");
-    check(["/", "/owner", "/pricing", "/security", "/docs", "/no-such-page"].every((p) => /<title>[^<]*Draxly[^<]*<\/title>/.test(pages[p])), "every page's title says Draxly");
+    check(["/", "/owner", "/pricing", "/security", "/docs", "/demo", "/no-such-page"].every((p) => /<title>[^<]*Draxly[^<]*<\/title>/.test(pages[p])), "every page's title says Draxly");
     check((pages["/"].match(/Know what to stock before you need it\./g) || []).length >= 2, "the tagline is on the home page and on the sign-in card");
     check(/draxly-forecast-/.test(pages["/app.js"]) && /draxly-reorder-suggestions\.csv/.test(pages["/app.js"]) && /draxly-activity-log\.csv/.test(pages["/app.js"]) && /draxly-invoice-/.test(pages["/app.js"]), "downloads are named draxly-… (forecast, reorder, activity log, invoices)");
     check(/\$30,000/.test(pages["/pricing"]) && /\$2,500 a month/.test(pages["/pricing"]) && /renews automatically/.test(pages["/pricing"]) && /rest of that year is still owed/.test(pages["/pricing"]), "the pricing page states the plan and terms");
@@ -118,70 +117,8 @@ const pdfText = (b64) => Buffer.from(b64, "base64").toString("latin1");
     const adminA2 = (await req("/api/login", { method: "POST", body: { email: "cfo@cascade.test", password: "admin-pass-1" } })).data.token; // switching off ended every session
     check(Boolean(adminA2), "switched back on: they can sign in again");
 
-    // ── The demo ───────────────────────────────────────────────────────────────────────────────────────────
-    const d1 = await req("/api/demo/session", { method: "POST", body: { referrer: "https://www.linkedin.com/feed/", source: "source=linkedin" }, headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1" } });
-    check(d1.status === 200 && d1.data.token && d1.data.me.demo && d1.data.me.role === "viewer" && !("bookingUrl" in d1.data), "opening the demo needs no sign-up: a read-only demo session (no booking link)");
-    const dt = d1.data.token, du = d1.data.upload;
-    const ready = await until(async () => { const u = (await req(`/api/uploads/${du}`, { token: dt })).data.upload; return u?.status === "ready" && u.forecast?.ok ? u : null; }, 120000, 1000);
-    check(ready && ready.products === 12 && ready.locations === 3 && ready.regions === 2 && ready.months === 36 && ready.backtest.ok && ready.backtest.accuracy > 80, "demo data: a food and drink distributor — 12 products, 3 distribution centres, 2 regions, 36 months; accuracy test ready", ready ? `${ready.backtest.accuracy}% accurate` : "not ready");
-    check(ready?.forecast.products.some((p) => p.name === "Hot Cocoa Mix 12-pack") && ready.forecast.summary.length >= 4, "demo 3-month forecast with product table and summary");
-    const ro = await until(async () => { const r = (await req("/api/reorder", { token: dt })).data; return r.ok && !r.pending ? r : null; }, 60000, 1000);
-    check(ro && ro.items.find((x) => x.product === "Cold Brew Coffee 4-pack" && x.location === "Seattle DC")?.status === "out" && ro.counts.low + ro.counts.out >= 3, "demo reorder alerts: Cold Brew out of stock in Seattle, several items to reorder", ro ? `${ro.counts.out} out, ${ro.counts.low} low` : "");
-    const blocked = await Promise.all([
-      req("/api/uploads", { method: "POST", token: dt, body: { name: "x", months: ["2026-01"], series: [{ product: "p", amount: [1] }] } }),
-      req(`/api/uploads/${du}`, { method: "DELETE", token: dt }), req(`/api/uploads/${du}/forecast`, { method: "POST", token: dt }),
-      req("/api/stock", { method: "POST", token: dt, body: { items: [{ product: "x", onHand: 1 }] } }), req("/api/prefs", { method: "POST", token: dt, body: { reports: false } }),
-      req("/api/team", { token: dt }), req("/api/billing", { token: dt }), req("/api/audit", { token: dt }), req("/api/settings", { token: dt }), req("/api/password", { method: "POST", token: dt, body: { current: "x", password: "yyyyyyyy" } }),
-    ]);
-    check(blocked.every((r) => r.status === 403 && r.data.demo), "demo visitors can't change or save anything (uploads, deleting, forecasts, stock, settings, team, billing, activity log, password)", blocked.map((r) => r.status).join(" "));
-    const d2 = await req("/api/demo/session", { method: "POST", body: {} });
-    check(d2.data.upload === du, "every visitor sees the same demo (it isn't set up again)");
-    const cust = (await req("/api/owner/customers", { token: owner })).data;
-    check(!cust.customers.some((c) => /Harbor & Vine/.test(c.company)) && cust.totals.customers === 2, "the demo company never appears in your customer list or totals");
-    // Request access
-    check((await req("/api/demo/request", { method: "POST", body: { name: "", email: "x@y.test", company: "Y" } })).status === 400, "the request form needs a name, company and a valid email");
-    const nA = alerts.length;
-    await req("/api/demo/request", { method: "POST", body: { name: "Robot", email: "bot@spam.test", company: "Spam", website: "http://spam" } });
-    const n1 = mails.length;
-    const rq = await req("/api/demo/request", { method: "POST", body: { name: "Dana Reyes", email: "dana@northwindfoods.test", company: "Northwind Foods", title: "VP Supply Chain", locations: "21–100", message: "We run 40 stores.", visit: d1.data.visit } });
-    await until(async () => alerts.length > nA, 5000);
-    const al = alerts.slice(nA), ml = mails.slice(n1);
-    check(rq.status === 200 && al.length === 1 && /Dana Reyes \(Northwind Foods\)/.test(al[0].message) && !/call/i.test(al[0].message) && al[0].click.endsWith("/owner"), "a request alerts your phone with the name, company and email (the robot-filled one is ignored)", al[0]?.message.split("\n")[0]);
-    check(ml.length === 1 && ml[0].to[0] === "owner@draxly.test" && /Draxly access request: Dana Reyes/.test(ml[0].subject) && /VP Supply Chain/.test(ml[0].html), "…and emails you the details", ml[0]?.subject);
-    const ds = (await req("/api/owner/demo", { token: owner })).data;
-    const dana = ds.leads.find((l) => l.email === "dana@northwindfoods.test");
-    const v1 = ds.visits.find((v) => v.id === d1.data.visit);
-    check(ds.counts.visitsAll >= 2 && v1.device === "iPhone · Safari" && /linkedin/.test(v1.referrer + v1.source) && v1.lead === dana.id && dana.alerted === 1 && dana.emailed === 1 && !ds.leads.some((l) => l.email === "bot@spam.test"),
-      "owner dashboard: who opened the demo (device, where they came from) and who requested access, linked together");
-    await req(`/api/owner/leads/${dana.id}`, { method: "POST", token: owner, body: { status: "contacted" } });
-    check((await req("/api/owner/demo", { token: owner })).data.leads.find((l) => l.id === dana.id).status === "contacted", "a request can be marked contacted");
-
     // ── In a browser, phone size ───────────────────────────────────────────────────────────────────────────
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, acceptDownloads: true });
-    const P = await ctx.newPage();
-    P.on("pageerror", (e) => errors.push(e.message));
-    P.on("console", (m) => { if (m.type() === "error" && !/status of (40[0-9]|429)/.test(m.text())) errors.push("console: " + m.text()); });
-    await P.goto(w.base + "/demo");
-    await P.waitForSelector("#fc:not([hidden])", { timeout: 60000 });
-    check(await P.isVisible("#demo-bar") && /Harbor & Vine/.test(await P.textContent("#demo-bar")) && /%/.test(await P.textContent("#bt-acc")) && (await P.locator("#fc-table tbody tr").count()) >= 13 && await P.isVisible("#fc-chart svg[role=img]"),
-      "the demo page opens straight onto the accuracy test, forecast chart and product table, with the demo bar");
-    check(!(await P.isVisible("#upload-card")) && !(await P.isVisible("#r-delete")) && !(await P.isVisible('#nav a[data-nav="team"]')) && !(await P.isVisible("#signout")) && await P.isVisible('#nav a[data-nav="stock"]'), "nothing to change: no upload, delete, team or sign-out; Forecasts and Stock to look at");
-    await P.screenshot({ path: path.join(OUT, "draxly-1-demo-phone.png"), fullPage: true });
-    const [dl] = await Promise.all([P.waitForEvent("download"), P.click("#fc-csv")]);
-    check(/^draxly-forecast-/.test(dl.suggestedFilename()), "the forecast CSV downloads as draxly-forecast-….csv", dl.suggestedFilename());
-    await P.click('#nav a[data-nav="stock"]');
-    await P.waitForSelector("#ro-table tbody tr");
-    check(/Out of stock/.test(await P.textContent("#ro-table")) && /Cold Brew Coffee/.test(await P.textContent("#ro-table")), "the demo's Stock page shows the reorder alerts");
-    await P.screenshot({ path: path.join(OUT, "draxly-2-demo-stock-phone.png"), fullPage: true });
-    check(!(await P.locator("text=Book a call").count()) && !(await P.locator("#rq-phone, #rq-call").count()), "no 'Book a call' button, phone field or call option anywhere");
-    await P.click("#demo-request");
-    await P.waitForSelector("#request:not([hidden])");
-    await P.fill("#rq-name", "Sam Patel"); await P.fill("#rq-email", "sam@freshco.test"); await P.fill("#rq-company", "FreshCo Distributors"); await P.selectOption("#rq-locations", "6–20");
-    await P.click("#rq-submit");
-    await P.waitForSelector("#rq-ok:not([hidden])");
-    check(/Thanks, Sam/.test(await P.textContent("#rq-ok")) && (await req("/api/owner/demo", { token: owner })).data.leads.some((l) => l.email === "sam@freshco.test"), "'Request access' from the page: thank-you message, and it's on your dashboard");
-    await P.screenshot({ path: path.join(OUT, "draxly-3-request-phone.png") });
-    // Customer billing page and owner billing box.
     const C2 = await ctx.newPage();
     C2.on("pageerror", (e) => errors.push("billing: " + e.message));
     await C2.goto(w.base + "/");
@@ -205,12 +142,9 @@ const pdfText = (b64) => Buffer.from(b64, "base64").toString("latin1");
     await ca.locator(".inv-paid").first().click();
     await O.waitForFunction(() => /Paid up/.test([...document.querySelectorAll(".cust")].find((c) => /Cascade/.test(c.textContent)).querySelector(".billing-box").textContent));
     check(true, "'Mark paid' on the dashboard turns the company Paid up");
-    check(/Northwind Foods/.test(await O.textContent("#dm-leads")) && /iPhone · Safari/.test(await O.textContent("#dm-visits")), "owner dashboard's demo card lists requests and visits");
     await O.screenshot({ path: path.join(OUT, "draxly-5-owner-phone.png"), fullPage: true });
     check(errors.length === 0, "no page errors", errors.join(" | "));
     await ctx.close();
-    let last; for (let i = 0; i < 6; i++) last = await req("/api/demo/request", { method: "POST", body: { name: `Flood ${i}`, email: `f${i}@x.test`, company: "F" } });
-    check(last.status === 429, "too many requests from one place are slowed down");
   } finally {
     await browser.close();
     await w.stop();

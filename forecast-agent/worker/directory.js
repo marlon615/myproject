@@ -10,8 +10,7 @@ import { DurableObject } from "cloudflare:workers";
 import * as C from "./crypto.js";
 import * as B from "./billing.js";
 import { invoicePdf, toBase64 } from "./pdf.js";
-import { sendEmail, invoiceEmail, reminderEmail, leadEmail, demoLinkEmail, inviteEmail } from "./email.js";
-import { DEMO_COMPANY } from "./demo.js";
+import { sendEmail, invoiceEmail, reminderEmail, leadEmail } from "./email.js";
 
 export const FEATURES = ["forecasts", "multiLocation", "inventory", "reports", "connectors", "api", "sso"];
 export const ROLES = ["admin", "manager", "viewer"];
@@ -64,9 +63,6 @@ export class Directory extends DurableObject {
       phone TEXT NOT NULL DEFAULT '', locations TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', wants_call INTEGER NOT NULL DEFAULT 0, visit INTEGER,
       city TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new', emailed INTEGER NOT NULL DEFAULT 0, alerted INTEGER NOT NULL DEFAULT 0)`);
     x(`CREATE TABLE IF NOT EXISTS lead_limits (k TEXT PRIMARY KEY, times TEXT NOT NULL)`);
-    x(`CREATE TABLE IF NOT EXISTS demo_links (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, company TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL,
-      lead TEXT, status TEXT NOT NULL DEFAULT 'sent', created TEXT NOT NULL, emailed INTEGER NOT NULL DEFAULT 0, opened_at TEXT, used_at TEXT, view_until INTEGER,
-      locked_at TEXT, lock_reason TEXT, upload TEXT, customer TEXT, runs INTEGER NOT NULL DEFAULT 0)`);
     x(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, account TEXT NOT NULL, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '',
       role TEXT NOT NULL, pw TEXT, salt TEXT, recovery_hash TEXT, reset_hash TEXT, reset_expires INTEGER, reset_requested TEXT,
       invite_hash TEXT, invite_expires INTEGER, totp_enc TEXT, totp_pending TEXT, totp_on INTEGER NOT NULL DEFAULT 0, totp_last INTEGER,
@@ -200,7 +196,6 @@ export class Directory extends DurableObject {
     if (!s) return null;
     const a = this.#account(s.account), u = s.user && this.#user(s.user);
     if (!a || !u || u.account !== a.id || u.off) return null;
-    if (s.demo) return { ...this.#me(a, u), demo: true, role: "viewer", mustEnroll2fa: false };
     const today = new Date().toISOString().slice(0, 10);
     if ((a.last_seen || "").slice(0, 10) !== today) this.sql.exec("UPDATE accounts SET last_seen = ? WHERE id = ?", new Date().toISOString(), a.id);
     return this.#me(a, u);
@@ -713,29 +708,14 @@ export class Directory extends DurableObject {
   }
 
   // ── Public demo and access requests ──────────────────────────────────────────────────────────────────────────
-  /** The demo company (made once) and a read-only visitor session for it. */
-  ensureDemo() {
-    let a = this.sql.exec("SELECT * FROM accounts WHERE demo = 1 LIMIT 1").toArray()[0];
-    if (!a) {
-      const id = C.randomHex(16), iso = new Date().toISOString();
-      this.sql.exec("INSERT INTO accounts (id, company, email, salt, hash, created, last_seen, features, forecasts, demo, plan) VALUES (?, ?, ?, '', '!', ?, ?, ?, 1, 1, 'Demo')",
-        id, DEMO_COMPANY, `demo-${id}@draxly.invalid`, iso, iso, JSON.stringify({ ...Object.fromEntries(FEATURES.map((f) => [f, false])), forecasts: true, multiLocation: true, inventory: true }));
-      this.sql.exec("INSERT INTO users (id, account, email, name, role, created) VALUES (?, ?, ?, 'Demo visitor', 'viewer', ?)", C.randomHex(16), id, `visitor-${id}@draxly.invalid`, iso);
-      a = this.#account(id);
-    }
-    return { id: a.id };
-  }
-  demoSession(visit) {
-    const { id } = this.ensureDemo();
-    const u = this.sql.exec("SELECT id FROM users WHERE account = ? LIMIT 1", id).toArray()[0];
-    const token = C.randomHex(32);
-    this.sql.exec("DELETE FROM sessions WHERE expires < ?", Date.now());
-    this.sql.exec("INSERT INTO sessions (token, account, user, expires, demo) VALUES (?, ?, ?, ?, 1)", token, id, u.id, Date.now() + 3 * HOUR);
+  /** Someone used the open demo: when, roughly where (Cloudflare's city/country), device, and where they came from. */
+  logDemoVisit(visit) {
     const clip = (v, n = 120) => String(v || "").slice(0, n);
     this.sql.exec("INSERT INTO demo_visits (t, city, region, country, device, referrer, source) VALUES (?, ?, ?, ?, ?, ?, ?)", new Date().toISOString(), clip(visit.city, 80), clip(visit.region, 80), clip(visit.country, 8), clip(visit.device, 60), clip(visit.referrer, 200), clip(visit.source, 120));
-    return { token, account: id, visit: this.sql.exec("SELECT last_insert_rowid() AS id").one().id };
+    return { visit: this.sql.exec("SELECT last_insert_rowid() AS id").one().id };
   }
-  /** "Request access": stored, then the owner is told (phone alert + email). 5 requests an hour per visitor network. */
+  noteDemoRun(id, products, months) { this.sql.exec("UPDATE demo_visits SET source = TRIM(source || ' ' || ?) WHERE id = ?", `forecast: ${products} products, ${months} months`, id); }
+  /** "Request access": stored  /** "Request access": stored, then the owner is told (phone alert + email). 5 requests an hour per visitor network. */
   async requestAccess(form, net) {
     const now = Date.now(), k = await C.sha256(`lead:${net}`);
     const times = JSON.parse(this.sql.exec("SELECT times FROM lead_limits WHERE k = ?", k).toArray()[0]?.times || "[]").filter((t) => now - t < HOUR);
@@ -767,94 +747,6 @@ export class Directory extends DurableObject {
     return { visits, leads, counts: { visits7: this.sql.exec("SELECT COUNT(*) AS n FROM demo_visits WHERE t >= ?", since(7)).one().n, visits30: this.sql.exec("SELECT COUNT(*) AS n FROM demo_visits WHERE t >= ?", since(30)).one().n,
       visitsAll: this.sql.exec("SELECT COUNT(*) AS n FROM demo_visits").one().n, leadsNew: leads.filter((l) => l.status === "new").length, leadsAll: leads.length } };
   }
-  // ── One-time demo links ──────────────────────────────────────────────────────────────────────────────────────
-  // Sent → (one run) → used: results viewable for 72 hours → locked for good, data deleted. Unused links lock after
-  // 30 days. Their data lives in its own Company store ("trial:<id>") and is never shown on the owner dashboard.
-  static VIEW_HOURS = 72; static UNUSED_DAYS = 30;
-  // Tests only: shorter windows (seconds). The live site doesn't set these.
-  get #viewMs() { return Number(this.env.DEMO_VIEW_SECONDS) > 0 ? Number(this.env.DEMO_VIEW_SECONDS) * 1000 : Directory.VIEW_HOURS * HOUR; }
-  get #unusedMs() { return Number(this.env.DEMO_UNUSED_SECONDS) > 0 ? Number(this.env.DEMO_UNUSED_SECONDS) * 1000 : Directory.UNUSED_DAYS * DAY; }
-  #linkOut(l) { return { id: l.id, company: l.company, name: l.name, email: l.email, lead: l.lead, status: l.status, created: l.created, emailed: Boolean(l.emailed), openedAt: l.opened_at, usedAt: l.used_at, viewUntil: l.view_until, lockedAt: l.locked_at, lockReason: l.lock_reason, customer: l.customer, runs: l.runs }; }
-  async demoLinks() { await this.sweepDemoLinks(); return this.sql.exec("SELECT * FROM demo_links ORDER BY created DESC LIMIT 500").toArray().map((l) => this.#linkOut(l)); }
-  /** A new link (or a fresh one for an existing link: the old one stops working). The token is only ever returned here. */
-  async createDemoLink({ company, name, email, lead, id }) {
-    const token = C.randomHex(32), hash = await C.sha256(token);
-    if (id) {
-      const l = this.sql.exec("SELECT * FROM demo_links WHERE id = ?", id).toArray()[0];
-      if (!l) return { error: "unknown" };
-      await this.#wipeTrial(id);
-      this.sql.exec("UPDATE demo_links SET token_hash = ?, status = 'sent', emailed = 0, opened_at = NULL, used_at = NULL, view_until = NULL, locked_at = NULL, lock_reason = NULL, upload = NULL, created = ? WHERE id = ?", hash, new Date().toISOString(), id);
-      this.#log("demo link re-issued", null, `${l.company} <${l.email}>`);
-    } else {
-      id = C.randomHex(12);
-      this.sql.exec("INSERT INTO demo_links (id, token_hash, company, name, email, lead, created) VALUES (?, ?, ?, ?, ?, ?, ?)", id, hash, String(company).slice(0, 150), String(name || "").slice(0, 100), String(email).toLowerCase().slice(0, 200), lead || null, new Date().toISOString());
-      this.#log("demo link created", null, `${company} <${email}>`);
-    }
-    const l = this.sql.exec("SELECT * FROM demo_links WHERE id = ?", id).one();
-    const link = `${this.#origin()}/try#${token}`;
-    const mail = demoLinkEmail({ company: l.company, name: l.name, link, sender: this.#setting("billingName"), contact: this.#setting("ownerEmail") });
-    const r = await sendEmail(this.env, this, { to: [l.email], ...mail });
-    if (r.ok) this.sql.exec("UPDATE demo_links SET emailed = 1 WHERE id = ?", id);
-    this.#log(r.ok ? "demo link emailed" : "demo link not emailed", null, `${l.company} <${l.email}>${r.ok ? "" : `: ${r.reason}`}`);
-    return { link: this.#linkOut(this.sql.exec("SELECT * FROM demo_links WHERE id = ?", id).one()), url: link, emailed: r.ok, emailNote: r.ok ? "" : r.reason, subject: mail.subject, text: mail.text };
-  }
-  async #wipeTrial(id) { await this.env.COMPANY.get(this.env.COMPANY.idFromName(`trial:${id}`)).wipe(); }
-  async #linkByToken(token) {
-    if (!/^[0-9a-f]{64}$/.test(String(token))) return null;
-    return this.sql.exec("SELECT * FROM demo_links WHERE token_hash = ?", await C.sha256(token)).toArray()[0] || null;
-  }
-  /** What the demo page needs to know; locks the link first if its time is up. */
-  async demoLinkStatus(token) {
-    let l = await this.#linkByToken(token);
-    if (!l) return null;
-    await this.sweepDemoLinks(l.id);
-    l = this.sql.exec("SELECT * FROM demo_links WHERE id = ?", l.id).one();
-    if (!l.opened_at) this.sql.exec("UPDATE demo_links SET opened_at = ? WHERE id = ?", new Date().toISOString(), l.id);
-    return { id: l.id, company: l.company, name: l.name, status: l.status, viewUntil: l.view_until, upload: l.upload, contact: this.#setting("ownerEmail") || this.contact() };
-  }
-  /** The single run: marks the link used in one step, so a second attempt (even at the same moment) is refused. */
-  async claimDemoRun(token) {
-    const l = await this.#linkByToken(token);
-    if (!l) return { error: "unknown" };
-    if (l.status !== "sent") return { error: l.status };
-    const until = Date.now() + this.#viewMs;
-    const r = this.sql.exec("UPDATE demo_links SET status = 'used', used_at = ?, view_until = ?, runs = runs + 1 WHERE id = ? AND status = 'sent'", new Date().toISOString(), until, l.id);
-    if (!r.rowsWritten) return { error: "used" };
-    this.#log("demo link used", null, `${l.company} <${l.email}>`);
-    return { ok: true, id: l.id, viewUntil: until };
-  }
-  demoRunStored(id, upload) { this.sql.exec("UPDATE demo_links SET upload = ? WHERE id = ?", upload, id); }
-  async lockDemoLink(id, reason) {
-    const l = this.sql.exec("SELECT * FROM demo_links WHERE id = ?", id).toArray()[0];
-    if (!l) return { error: "unknown" };
-    if (l.status === "locked") return { ok: true, already: true };
-    await this.#wipeTrial(id); // their sales data is deleted when the link locks
-    this.sql.exec("UPDATE demo_links SET status = 'locked', locked_at = ?, lock_reason = ?, upload = NULL WHERE id = ?", new Date().toISOString(), reason, id);
-    this.#log("demo link locked", null, `${l.company}: ${reason}; data deleted`);
-    return { ok: true };
-  }
-  /** Locks links whose viewing window is over, or that were never used within 30 days. */
-  async sweepDemoLinks(onlyId = null) {
-    const now = Date.now(), old = new Date(now - this.#unusedMs).toISOString();
-    const due = this.sql.exec(`SELECT * FROM demo_links WHERE ${onlyId ? "id = ? AND " : ""}((status = 'used' AND view_until <= ?) OR (status = 'sent' AND created <= ?))`, ...(onlyId ? [onlyId] : []), now, old).toArray();
-    for (const l of due) await this.lockDemoLink(l.id, l.status === "used" ? "viewing time ended" : `unused for ${Directory.UNUSED_DAYS} days`);
-    return { locked: due.length };
-  }
-  /** "Became a customer": a real company for them, admin invite to the contact; the router moves the demo data in. */
-  async demoLinkCustomer(id) {
-    const l = this.sql.exec("SELECT * FROM demo_links WHERE id = ?", id).toArray()[0];
-    if (!l) return { error: "unknown" };
-    if (this.#userByEmail(l.email) || this.sql.exec("SELECT 1 FROM accounts WHERE email = ?", l.email).toArray().length) return { error: "exists" };
-    const account = C.randomHex(16), uid = C.randomHex(16), token = C.randomHex(32), iso = new Date().toISOString();
-    this.sql.exec("INSERT INTO accounts (id, company, email, salt, hash, created, last_seen, features) VALUES (?, ?, ?, '', '!', ?, ?, ?)", account, l.company, l.email, iso, iso, JSON.stringify(DEFAULT_FEATURES));
-    this.sql.exec("INSERT INTO users (id, account, email, name, role, invite_hash, invite_expires, created) VALUES (?, ?, ?, ?, 'admin', ?, ?, ?)", uid, account, l.email, l.name, await C.sha256(token), Date.now() + INVITE_DAYS * DAY, iso);
-    this.sql.exec("UPDATE demo_links SET customer = ? WHERE id = ?", account, id);
-    this.#log("demo became a customer", account, `${l.company} <${l.email}>`);
-    const link = `${this.#origin()}/#/invite/${token}`;
-    const r = await sendEmail(this.env, this, { to: [l.email], ...inviteEmail({ company: l.company, inviter: this.#setting("billingName"), link, role: "admin" }) });
-    return { ok: true, account, upload: l.upload, inviteLink: link, emailed: r.ok };
-  }
-
   setLead(id, status) { if (!["new", "contacted", "closed"].includes(status)) return { error: "status" }; this.sql.exec("UPDATE leads SET status = ? WHERE id = ?", status, id); return { ok: true }; }
 
   // ── Owner ────────────────────────────────────────────────────────────────────────────────────────────────────

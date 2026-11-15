@@ -11,10 +11,6 @@
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <div class="demo-bar" id="demo-bar" hidden>
-    <span><b>Draxly demo</b> — sample data for Harbor &amp; Vine Provisions, a food and drink distributor. Look around; nothing you do here is saved.</span>
-    <span class="demo-actions"><button type="button" class="primary small" id="demo-request">Request access</button><a class="link light" href="/" id="demo-exit">Exit demo</a></span>
-  </div>
   <header class="top">
     <a class="brand" href="#/"><img src="/icon.svg" alt="" width="28" height="28"> Draxly</a>
     <div class="who" id="who" hidden><span id="who-name"></span> <a class="link" href="#/account" id="account-link">Account</a> <button class="link" id="signout" type="button">Sign out</button></div>
@@ -38,7 +34,7 @@
         <p class="tagline" id="tagline">Know what to stock before you need it.</p>
         <h1>See your next 3 months of sales</h1>
         <p>Upload your past sales as a spreadsheet (CSV or Excel), or connect NetSuite, SAP, Dynamics 365, QuickBooks, Shopify or Square. First, a <b>free accuracy test</b>: we hide your last 3 months, predict them, and show predicted against what really happened. Then the next 3 months, by product, store and region. <a href="/pricing">Pricing</a> · <a href="/security">Security</a></p>
-        <p><a class="primary" href="/demo" id="demo-link">See the live demo</a> <span class="hint">No sign-up needed.</span></p>
+        <p><a class="primary" href="/demo" id="demo-link">Try the demo with your own sales</a> <span class="hint">No sign-up needed.</span></p>
       </div>
       <div class="card auth-card">
         <p class="auth-brand"><b>Draxly</b><span>Know what to stock before you need it.</span></p>
@@ -154,27 +150,6 @@
       <div class="card" id="bl-next-card"><h2>Next payment</h2><p id="bl-next"></p></div>
       <div class="card"><h2>Invoices</h2><p class="hint" id="bl-noinv">No invoices yet.</p><div class="table-wrap"><table id="bl-table"></table></div></div>
       <div class="card" id="bl-pay-card"><h2>How to pay</h2><p id="bl-pay" class="pre"></p></div>
-    </section>
-
-    <!-- Request access (demo) -->
-    <section id="request" hidden>
-      <div class="card auth-card">
-        <h1>Request access</h1>
-        <p class="hint">Tell us a little about your business and we'll be in touch to set up Draxly with your own data.</p>
-        <form id="rq-form" novalidate>
-          <label>Your name<input id="rq-name" autocomplete="name" maxlength="100"></label>
-          <label>Work email<input id="rq-email" type="email" autocomplete="email" maxlength="200"></label>
-          <label>Company<input id="rq-company" autocomplete="organization" maxlength="150"></label>
-          <label>Your role<input id="rq-title" autocomplete="organization-title" maxlength="100"></label>
-          <label>How many stores / warehouses?<select id="rq-locations"><option value="">Choose…</option><option>1–5</option><option>6–20</option><option>21–100</option><option>100+</option></select></label>
-          <label>Anything else? (optional)<textarea id="rq-message" maxlength="2000" rows="3"></textarea></label>
-          <label class="hp" aria-hidden="true">Website<input id="rq-website" tabindex="-1" autocomplete="off"></label>
-          <p class="error" id="rq-error" role="alert" hidden></p>
-          <button class="primary" type="submit" id="rq-submit">Send request</button>
-        </form>
-        <p class="ok" id="rq-ok" role="status" hidden></p>
-        <p><a class="link" href="#/" id="rq-back">← Back to the demo</a></p>
-      </div>
     </section>
 
     <!-- Switched off -->

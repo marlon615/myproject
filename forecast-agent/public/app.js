@@ -15,9 +15,8 @@ const METHOD_WORDS = { flat: "Recent average", trend: "Straight-line trend", hol
 const DIM_WORDS = { products: ["Product", "products"], locations: ["Store / warehouse", "locations"], regions: ["Region", "regions"] };
 const RANK = { viewer: 0, manager: 1, admin: 2 };
 const MAX_MONTHS = 120, BATCH = 40; // big files go in parts of 40 series, so each request stays small
-const VIEWS = ["loading", "auth", "off", "home", "result", "forgot", "reset", "code", "account", "twofa", "invite", "stock", "connections", "team", "activity", "billing", "request"];
-const DEMO = location.pathname === "/demo";
-let demo = null; // { visit, upload } while in the public demo
+const VIEWS = ["loading", "auth", "off", "home", "result", "forgot", "reset", "code", "account", "twofa", "invite", "stock", "connections", "team", "activity", "billing"];
+const demo = null; // (the open demo is its own page, /demo)
 let token = load(TOKEN_KEY), me = null, contact = "", mode = "signup", ssoProviders = { microsoft: false, google: false };
 let sheet = null, current = null, ticket = null, resetToken = null, inviteToken = null, pollTimer = null;
 
@@ -48,7 +47,6 @@ async function call(path, { method = "GET", body } = {}) {
   if (res.status === 401 && !PUBLIC.includes(path.split("?")[0])) { token = null; me = null; save(TOKEN_KEY, null); setMode("login"); show("auth"); }
   if (res.status === 403 && data.off) showOff(data.contact);
   if (res.status === 403 && data.enroll2fa && me) { me.mustEnroll2fa = true; location.hash = "#/account"; }
-  if (res.status === 403 && data.demo) alert(data.error);
   return { ok: res.ok, status: res.status, data };
 }
 
@@ -56,7 +54,6 @@ function show(view) {
   for (const id of VIEWS) $(id).hidden = id !== view;
   const signedIn = Boolean(me) && !["auth", "forgot", "reset", "code", "twofa", "invite", "off", "loading"].includes(view);
   $("who").hidden = !signedIn || Boolean(demo);
-  $("demo-bar").hidden = !demo;
   $("nav").hidden = !signedIn || me?.mustEnroll2fa;
   if (signedIn) {
     for (const a of document.querySelectorAll("#nav a")) {
@@ -867,39 +864,6 @@ $("bl-table").addEventListener("click", async (e) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 });
 
-// ── The public demo ────────────────────────────────────────────────────────────────────────────────────────────
-async function startDemo() {
-  show("loading");
-  $("loading").textContent = "Opening the Draxly demo…";
-  const q = new URLSearchParams(location.search);
-  const source = ["utm_source", "utm_medium", "utm_campaign", "ref"].map((k) => q.get(k) && `${k.replace("utm_", "")}=${q.get(k)}`).filter(Boolean).join(" ");
-  const r = await call("/api/demo/session", { method: "POST", body: { referrer: document.referrer, source } });
-  if (!r.ok) { $("loading").textContent = "The demo couldn't open. Please try again in a minute."; return; }
-  token = r.data.token; // kept in memory only: a demo never signs anyone in for real
-  me = r.data.me; demo = { visit: r.data.visit, upload: r.data.upload };
-  $("who-name").textContent = me.company;
-  if (!demo.upload) { // someone else's visit is setting the demo up this very second
-    for (let i = 0; i < 30 && !demo.upload; i++) { await new Promise((ok) => setTimeout(ok, 1000)); const u = await call("/api/uploads"); demo.upload = u.data.uploads?.[0]?.id; }
-  }
-  if (!location.hash || location.hash === "#/" || location.hash === "#") history.replaceState(null, "", `#/u/${demo.upload}`);
-  route();
-}
-$("demo-request").onclick = () => { location.hash = "#/request"; };
-$("rq-back").onclick = (e) => { e.preventDefault(); location.hash = demo?.upload ? `#/u/${demo.upload}` : "#/"; };
-$("rq-form").onsubmit = async (e) => {
-  e.preventDefault();
-  showErr("rq-error");
-  const body = { name: $("rq-name").value, email: $("rq-email").value, company: $("rq-company").value, title: $("rq-title").value,
-    locations: $("rq-locations").value, message: $("rq-message").value, website: $("rq-website").value, visit: demo?.visit || null };
-  $("rq-submit").disabled = true;
-  const r = await call("/api/demo/request", { method: "POST", body });
-  $("rq-submit").disabled = false;
-  if (!r.ok) return showErr("rq-error", r.data.error || "That didn't send. Please try again.");
-  $("rq-form").hidden = true;
-  $("rq-ok").textContent = `Thanks, ${body.name.split(" ")[0]} — we've got your request and will be in touch at ${body.email} shortly.`;
-  $("rq-ok").hidden = false;
-};
-
 // ── Routing ────────────────────────────────────────────────────────────────────────────────────────────────────
 /** Pages that work signed out (reset link, forgot password, invite, single sign-on return). True if one was shown. */
 async function routeSignedOut() {
@@ -932,13 +896,6 @@ async function route() {
   if (/^#\/(reset|forgot|invite|sso|login)/.test(location.hash) && await routeSignedOut()) return;
   if (!$("code").hidden) return; // a code is on screen: it stays until "Continue"
   if (!me) { if (location.hash === "#/" || location.hash === "") show("auth"); return; }
-  if (demo) {
-    const dh = location.hash.split("?")[0];
-    if (dh === "#/request") return show("request");
-    if (dh === "#/stock") return renderStock();
-    const dm = /^#\/u\/([0-9a-f]{32})$/.exec(dh);
-    return renderUpload(dm ? dm[1] : demo.upload);
-  }
   if (me.mustEnroll2fa) { if (location.hash !== "#/account") history.replaceState(null, "", "#/account"); return renderAccount(); }
   const h = location.hash.split("?")[0];
   if (h === "#/account") return renderAccount();
@@ -954,7 +911,6 @@ async function route() {
 window.addEventListener("hashchange", route);
 
 async function start() {
-  if (DEMO) return startDemo();
   if (/^#\/(reset|forgot|invite|sso|login)/.test(location.hash) && await routeSignedOut()) return;
   if (!token) { show("auth"); return; }
   const r = await call("/api/me");

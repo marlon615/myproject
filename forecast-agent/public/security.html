@@ -80,15 +80,13 @@
       <li><b>Cloudflare:</b> hosting, storage and secrets.</li>
       <li><b>Resend:</b> sending email (invites, invoices and payment reminders, weekly reports, low-stock alerts), when email is switched on.</li>
       <li><b>Microsoft and Google:</b> single sign-on, when you use it.</li>
-      <li><b>ntfy.sh:</b> the platform operator's phone alerts. When someone asks for a password reset link, the alert contains their company name and email. When someone requests access from the demo, it contains the name, company, email and phone number they entered.</li>
+      <li><b>ntfy.sh:</b> the platform operator's phone alerts. When someone asks for a password reset link, the alert contains their company name and email. When someone requests access from the demo, it contains the name, company and email they entered.</li>
       <li><b>The systems you connect,</b> which we contact on your behalf.</li>
     </ul>
 
-    <h2>The public demo</h2>
-    <p>The demo shows a separate, made-up company and can't be changed. For each visit we record the time, the approximate city and country (from Cloudflare's view of the visitor's network), the type of device, and the page that linked to it. No IP addresses or cookies are kept. If a visitor fills in "Request access", what they type is stored and sent to us.</p>
-
-    <h2>One-time demos with your own data</h2>
-    <p>When we send you a one-time demo link, the sales file you choose is read in your browser and only monthly totals are sent. They're stored encrypted in a store used only for your demo, and used only to run your one forecast. They're deleted when the link locks: 72 hours after your run, sooner if we lock it, or after 30 days if the link is never used. The only exception is if you become a customer and ask us to keep them. We see whether your link has been used, not your data.</p>
+    <h2>The open demo</h2>
+    <p>The demo at /demo needs no sign-up and shows no sample data. A visitor's spreadsheet is read in their own browser. Only monthly totals per product are sent to Draxly, in small batches, to be forecast in memory and sent straight back. <b>They're never stored</b>, so no one else (including us) can see them later. The results exist only in the visitor's open page and are gone when they close it or press “Start over”.</p>
+    <p>For each forecast run we record the time, the approximate city and country (from Cloudflare's view of the visitor's network), the type of device, the page that linked to the demo, and the size of the file (number of products and months). We don't record IP addresses, sales figures or product names. If a visitor fills in “Request access”, what they type is stored and sent to us.</p>
 
     <h2>Deleting data</h2>
     <p>Admins can delete any upload. When an account is closed, all of that company's stored data is deleted: sales, forecasts, stock, connections, the activity log, users and API keys.</p>

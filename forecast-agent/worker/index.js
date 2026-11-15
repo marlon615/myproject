@@ -14,12 +14,11 @@
 import { Directory, FEATURES, ROLES, MIN_CONTRACT_CENTS } from "./directory.js";
 import { Company, MAX_SERIES, MAX_MONTHS } from "./company.js";
 import { FILES, RULES } from "./assets.generated.js";
-import { MIN_FORECAST_MONTHS, MIN_BACKTEST_MONTHS } from "./forecast.js";
+import { MIN_FORECAST_MONTHS, MIN_BACKTEST_MONTHS, forecastSeries, explain, addMonths } from "./forecast.js";
 import { CONNECTORS, connectorList, QB, at } from "./connectors.js";
 import { PROVIDERS, endpoints, authorizeUrl, finishSignIn } from "./oidc.js";
 import { sendEmail, inviteEmail } from "./email.js";
 import { pkce } from "./crypto.js";
-import { demoData } from "./demo.js";
 export { Directory, Company };
 
 const MAX_BODY = 4_000_000, MAX_FILE = 20 * 1024 * 1024, MAX_BATCH = 500;
@@ -44,8 +43,18 @@ const company = (env, id) => env.COMPANY.get(env.COMPANY.idFromName(id));
 const IID = /^[0-9a-f]{32}$/, LID = /^[0-9a-f]{24}$/;
 const todayUTC = () => new Date().toISOString().slice(0, 10);
 const deviceOf = (ua = "") => `${/iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Macintosh/.test(ua) ? "Mac" : /Linux|CrOS/.test(ua) ? "Linux" : "Other"}${/Edg\//.test(ua) ? " · Edge" : /Chrome\//.test(ua) ? " · Chrome" : /Firefox\//.test(ua) ? " · Firefox" : /Safari\//.test(ua) ? " · Safari" : ""}`;
-/** What a demo session may do: look, never change. */
-const DEMO_READ = [/^\/api\/me$/, /^\/api\/uploads$/, /^\/api\/uploads\/[0-9a-f]{32}$/, /^\/api\/uploads\/[0-9a-f]{32}\/drill$/, /^\/api\/reorder$/, /^\/api\/stock$/, /^\/api\/jobs$/];
+// ── The open demo: forecasts computed in memory and sent straight back; nothing is ever stored ─────────────────────
+const DEMO_BATCH = 50, DEMO_MAX_MONTHS = 60;
+const demoCalls = new Map(); // per visitor network, in this server's memory only: a brake on abuse of the open link
+function demoAllowed(ip, cost = 1) {
+  const now = Date.now(), win = 10 * 60_000, max = 1500; // e.g. 75,000 products in 10 minutes
+  const e = demoCalls.get(ip) || { start: now, n: 0 };
+  if (now - e.start > win) { e.start = now; e.n = 0; }
+  e.n += cost; demoCalls.set(ip, e);
+  if (demoCalls.size > 50_000) demoCalls.clear();
+  return e.n <= max;
+}
+const consecutive = (months) => months.every((m, i) => i === 0 || m === addMonths(months[i - 1], 1));
 const pdfResponse = (r) => new Response(r.bytes, { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="draxly-invoice-${r.number}.pdf"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 const waitMsg = (r) => json({ error: "Too many wrong tries. Wait a few minutes, then try again." }, 429, { "Retry-After": String(r.retryAfter || 900) });
 
@@ -221,16 +230,35 @@ async function api(request, env, path, ctx) {
     return back(r.error ? "failed" : "connected");
   }
 
-  // The public demo: a read-only visitor session on the demo company (no sign-up).
-  if (path === "/api/demo/session" && method === "POST") {
-    const b = (await readJson(request)) || {};
-    const cf = request.cf || {};
-    const ref = String(b.referrer || "").slice(0, 200);
-    const r = await dir.demoSession({ city: cf.city, region: cf.region, country: cf.country, device: deviceOf(request.headers.get("User-Agent") || ""), referrer: /^https?:\/\//.test(ref) && !ref.startsWith(origin) ? ref : "", source: String(b.source || "").slice(0, 120) });
-    const box = company(env, r.account);
-    ctx.waitUntil(box.setOrigin(origin));
-    const seeded = await box.seedDemo(r.account, demoData());
-    return json({ token: r.token, visit: r.visit, upload: seeded.upload || null, preparing: Boolean(seeded.seeding) || seeded.status === "processing", me: await dir.who(r.token) });
+  // The open demo (no sign-up): forecasts batches of products in memory and sends them back. Nothing is stored.
+  if (path === "/api/demo/start" && method === "POST") {
+    const b = (await readJson(request, 5000)) || {};
+    const cf = request.cf || {}, ref = String(b.referrer || "").slice(0, 200);
+    const r = await dir.logDemoVisit({ city: cf.city, region: cf.region, country: cf.country, device: deviceOf(request.headers.get("User-Agent") || ""), referrer: /^https?:\/\//.test(ref) && !ref.startsWith(origin) ? ref : "", source: String(b.source || "").slice(0, 120) });
+    if (Number(b.products) > 0) ctx.waitUntil(dir.noteDemoRun(r.visit, Math.round(Number(b.products)), Math.round(Number(b.months) || 0)).catch(() => {}));
+    return json({ visit: r.visit, batch: DEMO_BATCH });
+  }
+  if (path === "/api/demo/forecast" && method === "POST") {
+    const b = await readJson(request, 400_000);
+    const months = Array.isArray(b?.months) ? b.months : null, list = Array.isArray(b?.series) ? b.series : null;
+    if (!months || months.length < MIN_FORECAST_MONTHS || months.length > DEMO_MAX_MONTHS || !months.every((m) => typeof m === "string" && YM.test(m)) || !consecutive(months)) return json({ error: `Send between ${MIN_FORECAST_MONTHS} and ${DEMO_MAX_MONTHS} consecutive months.` }, 400);
+    if (!list || !list.length || list.length > DEMO_BATCH) return json({ error: `Send 1 to ${DEMO_BATCH} products at a time.` }, 400);
+    if (!list.every((x) => Array.isArray(x?.values) && x.values.length === months.length && x.values.every((v) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) < 1e13))) return json({ error: "Every product needs one number per month." }, 400);
+    if (!demoAllowed(ip)) return json({ error: "That's a lot of forecasting from one place — please wait a few minutes and try again." }, 429, { "Retry-After": "300" });
+    const results = list.map((x) => { const r = forecastSeries(x.values.map(Number)); return { product: String(x.product ?? "").slice(0, 120), forecast: r.forecast, method: r.method }; });
+    return json({ months: Array.from({ length: 3 }, (_, k) => addMonths(months[months.length - 1], k + 1)), results });
+  }
+  if (path === "/api/demo/summary" && method === "POST") {
+    const b = await readJson(request, 400_000);
+    const months = Array.isArray(b?.months) ? b.months : null, products = Array.isArray(b?.products) ? b.products : null;
+    if (!months || months.length < MIN_FORECAST_MONTHS || months.length > DEMO_MAX_MONTHS || !months.every((m) => YM.test(m)) || !products || products.length > 210 || !Array.isArray(b?.total?.history) || !Array.isArray(b?.total?.forecast)) return json({ error: "Bad summary request." }, 400);
+    if (!demoAllowed(ip, 5)) return json({ error: "Please wait a few minutes and try again." }, 429);
+    const num = (a, n) => (Array.isArray(a) && a.length === n && a.every((v) => typeof v === "number" && Number.isFinite(v)) ? a : null);
+    const total = { history: num(b.total.history, months.length), forecast: num(b.total.forecast, 3) };
+    const items = products.map((p) => ({ name: String(p?.name ?? "").slice(0, 120), next3: Number(p?.next3) || 0, last3: Number(p?.last3) || 0, method: ["flat", "trend", "holt", "seasonal", "lastyear"].includes(p?.method) ? p.method : "flat" }));
+    if (!total.history || !total.forecast) return json({ error: "Bad summary request." }, 400);
+    const fmonths = Array.from({ length: 3 }, (_, k) => addMonths(months[months.length - 1], k + 1));
+    return json({ summary: explain({ months, kind: b.kind === "units" ? "units" : "money" }, items, total, fmonths) });
   }
   if (path === "/api/demo/request" && method === "POST") {
     const b = (await readJson(request, 20000)) || {};
@@ -246,37 +274,6 @@ async function api(request, env, path, ctx) {
     return json({ ok: true });
   }
 
-  // One-time demo links (/try#<token>): the token travels in a header, never in a URL the server logs.
-  if (path === "/api/try" && method === "GET") {
-    const st = await dir.demoLinkStatus(request.headers.get("X-Demo-Link") || "");
-    if (!st) return json({ error: "This demo link isn't valid. Please check you copied the whole link." }, 404);
-    const out = { company: st.company, name: st.name, status: st.status, viewUntil: st.viewUntil, contact: st.contact };
-    if (st.status === "used" && st.upload) out.result = await company(env, `trial:${st.id}`).get(st.upload);
-    return json(out);
-  }
-  if (path === "/api/try/run" && method === "POST") {
-    const tok = request.headers.get("X-Demo-Link") || "";
-    const st = await dir.demoLinkStatus(tok);
-    if (!st) return json({ error: "This demo link isn't valid." }, 404);
-    if (st.status !== "sent") return json({ error: "This demo link has already been used.", status: st.status, contact: st.contact }, 409);
-    const b = await readJson(request);
-    if (!b) return json({ error: "That file is too big to send in one go." }, 413);
-    const c = cleanSeries(b, true);
-    if (c.error) return json({ error: `${c.error} Your one run hasn't been used — fix this and try again.` }, 400);
-    if (c.months.length < MIN_BACKTEST_MONTHS) return json({ error: `The file covers ${c.months.length} months; at least ${MIN_BACKTEST_MONTHS} are needed for the accuracy test. Your one run hasn't been used.` }, 400);
-    const claim = await dir.claimDemoRun(tok); // the one run is used from here on, even if two arrive at once
-    if (claim.error) return json({ error: "This demo link has already been used.", status: claim.error, contact: st.contact }, 409);
-    try {
-      const box = company(env, `trial:${claim.id}`);
-      const r = await box.addUpload(`trial:${claim.id}`, { name: c.name, months: c.months, series: c.series, source: "file" }, { forecast: true });
-      if (r.error) throw new Error(r.error);
-      await dir.demoRunStored(claim.id, r.upload.id);
-      return json({ ok: true, upload: r.upload, viewUntil: claim.viewUntil });
-    } catch (e) {
-      return json({ error: `Something went wrong while forecasting. Please contact us${st.contact ? ` at ${st.contact}` : ""} and we'll reset your link.` }, 500);
-    }
-  }
-
   // Everything below needs a signed-in, switched-on company; the company comes only from the token.
   const me = await dir.who(token);
   if (!me) return json({ error: "Please sign in." }, 401);
@@ -285,7 +282,6 @@ async function api(request, env, path, ctx) {
   const who = me.user.email;
   const need = (role) => (RANK[me.role] >= RANK[role] ? null : json({ error: role === "admin" ? "Only your company's admins can do that." : "Your role can view but not change this. Ask an admin or manager." }, 403));
   const feature = async (f) => (me.features[f] ? null : json({ error: `${FEATURE_WORDS[f]} isn't switched on for your company.`, locked: true, feature: f, contact: await dir.contact() }, 402));
-  if (me.demo && (method !== "GET" || !DEMO_READ.some((re) => re.test(path)))) return json({ error: "This is a demo — nothing can be changed or saved here. Request access to use Draxly with your own data.", demo: true }, 403);
   if (me.mustEnroll2fa && !["/api/me", "/api/2fa/setup", "/api/2fa/enable", "/api/logout"].includes(path)) return json({ error: "Your company requires two-factor sign-in. Set it up to continue.", enroll2fa: true }, 403);
 
   if (path === "/api/billing" && method === "GET") {
@@ -642,44 +638,6 @@ async function ownerApi(request, env, path, dir, token, ctx) {
 
   const testToday = (t) => (env.ALLOW_TEST_CLOCK === "1" && /^\d{4}-\d{2}-\d{2}$/.test(t || "") ? t : todayUTC());
   if (path === "/api/owner/demo" && method === "GET") return json(await dir.demoStats());
-  if (path === "/api/owner/demo-links" && method === "GET") return json({ links: await dir.demoLinks() });
-  if (path.startsWith("/api/owner/demo-links") && method === "POST") await dir.setOrigin(origin); // links and invites use the address you're on
-  if (path === "/api/owner/demo-links" && method === "POST") {
-    const b = (await readJson(request)) || {};
-    const email = String(b.email ?? "").trim().toLowerCase(), comp = String(b.company ?? "").trim();
-    if (!comp) return json({ error: "Type the company's name." }, 400);
-    if (!EMAIL.test(email)) return json({ error: "That email doesn't look right." }, 400);
-    return json(await dir.createDemoLink({ company: comp, name: String(b.name ?? "").trim(), email, lead: LID.test(b.lead || "") ? b.lead : null }));
-  }
-  const dl = /^\/api\/owner\/demo-links\/([0-9a-f]{24})\/(reissue|lock|customer)$/.exec(path);
-  if (dl && method === "POST") {
-    const [, lid, act] = dl;
-    if (act === "reissue") { const r = await dir.createDemoLink({ id: lid }); return r.error ? json({ error: "Not found." }, 404) : json(r); }
-    if (act === "lock") { const r = await dir.lockDemoLink(lid, "locked by you"); return r.error ? json({ error: "Not found." }, 404) : json(r); }
-    if (act === "customer") {
-      const r = await dir.demoLinkCustomer(lid);
-      if (r.error === "exists") return json({ error: "That email already has a Draxly account." }, 409);
-      if (r.error) return json({ error: "Not found." }, 404);
-      let moved = false;
-      if (r.upload) {
-        const data = await company(env, `trial:${lid}`).exportUpload(r.upload);
-        if (data?.series.length) {
-          const box = company(env, r.account);
-          await box.setOrigin(origin);
-          let up = null;
-          for (let i = 0; i < data.series.length; i += 400) {
-            const part = data.series.slice(i, i + 400);
-            if (!up) up = (await box.addUpload(r.account, { name: data.name, months: data.months, series: part, source: "file", final: false })).upload;
-            else await box.appendSeries(up.id, data.months, part);
-          }
-          await box.finishUpload(up.id, { forecast: true });
-          moved = true;
-        }
-      }
-      await dir.lockDemoLink(lid, moved ? "became a customer (their demo data moved to their account)" : "became a customer");
-      return json({ ok: true, inviteLink: r.inviteLink, emailed: r.emailed, moved });
-    }
-  }
   const lm = /^\/api\/owner\/leads\/([0-9a-f]{24})$/.exec(path);
   if (lm && method === "POST") { const b = (await readJson(request)) || {}; const r = await dir.setLead(lm[1], b.status); return r.error ? json({ error: "Status must be new, contacted or closed." }, 400) : json(r); }
   if (path === "/api/owner/billing/run" && method === "POST") { const b = (await readJson(request)) || {}; return json(await dir.billingRun(testToday(b.today))); }
@@ -809,8 +767,6 @@ export default {
     try { path = decodeURIComponent(url.pathname); } catch { path = url.pathname; }
     if (/\/index\.html$/.test(path)) return Response.redirect(new URL(path.replace(/index\.html$/, "") + url.search, url), 307);
     if (/\.html$/.test(path) && path !== "/404.html") return Response.redirect(new URL(path.replace(/\.html$/, "") + url.search, url), 307);
-    if (path === "/demo") return respond(request, path, FILES["/index.html"]); // the public demo is the app itself, in demo mode
-    if (path === "/try") return respond(request, path, FILES["/try.html"]); // one-time demo links
     const key = path.endsWith("/") ? path + "index.html" : FILES[path] ? path : FILES[path + ".html"] ? path + ".html" : null;
     if (key && FILES[key]) return respond(request, path, FILES[key]);
     return respond(request, path, FILES["/404.html"], 404);
@@ -820,7 +776,6 @@ export default {
     const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("main"));
     const hour = new Date(event.scheduledTime || Date.now()).getUTCHours();
     ctx.waitUntil(dir.billingRun().catch(() => {})); // daily invoices, renewals and reminders (safe to run every hour)
-    ctx.waitUntil(dir.sweepDemoLinks().catch(() => {})); // lock demo links whose time is up, and delete their data
     const ids = await dir.companyIds("", 2000);
     const mine = ids.filter((_, i) => i % 24 === hour).slice(0, 45);
     await Promise.all(mine.map((id) => company(env, id).ensureAlarm(id).catch(() => {})));

@@ -41,18 +41,12 @@
       </div>
       <div class="card" id="demo">
         <h2>Demo and access requests</h2>
-        <p>Public demo link (no sign-up): <a id="dm-link" target="_blank" rel="noopener"></a></p>
+        <p>Your open demo link — email it to anyone (no sign-up, nothing stored): <a id="dm-link" target="_blank" rel="noopener"></a></p>
         <p class="hint" id="dm-counts"></p>
-        <h3>One-time demo links</h3>
-        <p class="hint">When a company says yes, send them a link that runs one full forecast on their own sales file. After that run their results stay viewable for 72 hours, then the link locks for good and their data is deleted (unless you mark them as a customer). Unused links lock after 30 days. You see each link's status, never their data.</p>
-        <form id="dl-form" class="pay-row" novalidate><input id="dl-company" class="note" maxlength="150" placeholder="Company" aria-label="Company"><input id="dl-name" class="note" maxlength="100" placeholder="Contact name" aria-label="Contact name"><input id="dl-email" class="note" type="email" maxlength="200" placeholder="Contact email" aria-label="Contact email"><input type="hidden" id="dl-lead"><button class="primary small" type="submit">Create and email the link</button></form>
-        <p class="error" id="dl-error" role="alert" hidden></p>
-        <div id="dl-new" class="reset-box" hidden></div>
-        <div class="table-wrap"><table id="dl-table"></table></div>
         <h3>Access requests</h3>
         <div class="table-wrap"><table id="dm-leads"></table></div>
-        <h3>Who opened the demo</h3>
-        <p class="hint">City and country come from Cloudflare's view of the visitor's network; no IP addresses are kept.</p>
+        <h3>Who used the demo</h3>
+        <p class="hint">One line per forecast run: when, roughly where (Cloudflare's view of the visitor's network), device, and the size of their file. Their sales data is never stored or shown here; no IP addresses are kept.</p>
         <div class="table-wrap"><table id="dm-visits"></table></div>
       </div>
       <div class="card" id="platform">

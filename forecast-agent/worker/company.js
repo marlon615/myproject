@@ -989,35 +989,6 @@ export class Company extends DurableObject {
       forecast: f ? { months: f.months, summary: f.summary, ...(view === "total" ? { total: f.total.forecast } : { items: pick(view === "product" ? f.products : view === "location" ? f.locations : f.regions) }) } : null };
   }
 
-  /** An upload's series as plain monthly arrays (used to move a one-time demo into a new customer's own store). */
-  async exportUpload(id) {
-    const up = this.#upload(id);
-    if (!up) return null;
-    const months = this.#range(id), byKey = new Map();
-    for (const row of this.sql.exec("SELECT key, measure, blob FROM series WHERE upload = ?", id).toArray()) {
-      const x = await this.#dec(row.blob);
-      const e = byKey.get(row.key) || { product: x.p, location: x.l, region: x.r };
-      e[row.measure] = months.map((m) => x.v[m] || 0);
-      byKey.set(row.key, e);
-    }
-    return { name: up.name, months, series: [...byKey.values()] };
-  }
-
-  /** The public demo's data, loaded once (the forecast and reorder suggestions are then worked out in the background). */
-  async seedDemo(account, data) {
-    const id = this.#meta("demo_upload");
-    if (id && this.#upload(id)) return { upload: id, status: this.#upload(id).status };
-    if (this.#meta("demo_seeding")) return { seeding: true }; // set before the first await, so only one visitor seeds
-    this.#setMeta("demo_seeding", "1");
-    try {
-      const r = await this.addUpload(account, { name: data.name, months: data.months, series: data.series, source: "file" }, { forecast: true });
-      this.#setMeta("demo_upload", r.upload.id);
-      await this.upsertInventory(account, data.inventory, { replace: true, source: "demo" });
-      this.setInventorySettings({ mainUpload: r.upload.id });
-      return { upload: r.upload.id, status: "processing" };
-    } finally { this.#setMeta("demo_seeding", null); }
-  }
-
   /** Company deleted: everything goes. */
   async wipe() {
     await this.ctx.storage.deleteAlarm();
