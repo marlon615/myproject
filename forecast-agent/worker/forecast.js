@@ -185,7 +185,7 @@ export function runBacktest(raw) {
     history: { months: data.months.slice(0, cut).slice(-12), total: totalOf(data.products.map(([, y]) => ({ y: y.slice(0, cut).slice(-12) })), "y") } };
 }
 
-function pct(a, b) { if (!(b > 0)) return "—"; const d = Math.round(((a - b) / b) * 100); return d === 0 ? "spot on" : `${Math.abs(d)}% ${d > 0 ? "too high" : "too low"}`; }
+export function pct(a, b) { if (!(b > 0)) return "—"; const d = Math.round(((a - b) / b) * 100); return d === 0 ? "spot on" : `${Math.abs(d)}% ${d > 0 ? "too high" : "too low"}`; }
 
 // ── Forecast ─────────────────────────────────────────────────────────────
 
@@ -200,13 +200,13 @@ export function runForecast(raw) {
   return { ok: true, months, historyMonths: data.months, kind: data.kind, products, total, summary: explain(data, products, total, months) };
 }
 
-function fmt(v, kind) {
+export function fmt(v, kind) {
   if (kind === "units") return `${Math.round(v).toLocaleString("en-US")} units`;
   return v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: v >= 1000 ? 0 : 2 });
 }
 
 /** The plain-English "what's driving the numbers", worked out from the data (no guessing, no made-up reasons). */
-function explain(data, products, total, months) {
+export function explain(data, products, total, months) {
   const k = data.kind, n = data.months.length, out = [];
   const next = sum(total.forecast), last3 = sum(total.history.slice(-3));
   const ch = last3 > 0 ? Math.round(((next - last3) / last3) * 100) : null;

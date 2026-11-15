@@ -23,3 +23,14 @@ new_sqlite_classes = ["Directory", "Company"]
 # Customers and their data are kept.
 [vars]
 OWNER_GENERATION = "1"
+# Password hashing strength (PBKDF2-SHA256 rounds). Cloudflare's free plan allows ~10 ms of CPU per request, which
+# limits this; on the Workers Paid plan raise it to 600000 (OWASP's recommendation) — existing users are upgraded at
+# their next sign-in.
+PBKDF2_ITERATIONS = "5000"
+
+# ENCRYPTION_KEY (a secret, set with `wrangler secret put ENCRYPTION_KEY`, never in this file): the AES-256 key for
+# data at rest. Losing it makes the stored data unreadable; it lives only in Cloudflare's secret store.
+
+# Hourly safety net that keeps every company's nightly syncs and weekly reports scheduled.
+[triggers]
+crons = ["23 * * * *"]

@@ -117,6 +117,16 @@ export function detectColumns(header, rows) {
   return { date, product, value, kind };
 }
 
+/** Optional columns for multi-location data: store/warehouse/location, region, and a quantity column next to sales. */
+export function detectExtra(header, used = []) {
+  const h = header.map((x) => String(x ?? "").trim().toLowerCase());
+  const find = (re) => h.findIndex((x, i) => !used.includes(i) && re.test(x));
+  const location = find(/^(store|location|branch|shop|warehouse|site|outlet|depot|plant)\b|store|location|warehouse|branch|outlet/);
+  const region = find(/^(region|area|territory|state|province|district|zone|market|country)\b|region|territory|province/);
+  const units = find(/^(qty|quantity|units|units sold|volume|cases|count)\b|qty|quantity|units/);
+  return { location, region, units };
+}
+
 /** Adds up sales by month and product. Months with no sales in between count as 0. */
 export function toMonthly(rows, { date, product, value, order = "dmy" }) {
   const byProduct = new Map(), monthsSeen = new Set();
