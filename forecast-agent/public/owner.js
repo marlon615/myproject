@@ -47,10 +47,35 @@ $("o-form").onsubmit = async (e) => {
 };
 $("o-signout").onclick = async () => { await call("/api/owner/logout", { method: "POST" }); setToken(null); gate(); };
 
-async function dash() {
+// ── Keeping the dashboard current ───────────────────────────────────────────────────────────────────────────────
+// It refreshes itself every 30 seconds while open, when you come back to it, when you pull down, and with Refresh.
+// It only redraws when something changed, and keeps what you typed, an open reset link and open forecasts.
+let lastData = null, loading = null;
+const typing = () => { const a = document.activeElement; return Boolean(a && $("o-dash").contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) && a.type !== "checkbox"); };
+const stamp = () => { $("o-updated").textContent = `Updated ${new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" })}`; };
+
+function dash(opts = {}) {
+  // One refresh at a time; a refresh asked for meanwhile runs right after.
+  if (loading) return (loading = loading.then(() => draw(opts)));
+  return (loading = draw(opts).finally(() => { loading = null; }));
+}
+
+async function draw({ auto = false } = {}) {
   const r = await call("/api/owner/customers");
   if (!r.ok) return;
-  show("o-dash");
+  const sig = JSON.stringify(r.data);
+  const showing = !$("o-dash").hidden;
+  if (showing && sig === lastData) { stamp(); return; }  // nothing changed: nothing moves
+  if (showing && auto && typing()) return;               // you're typing: try again on the next round
+  lastData = sig;
+  if (!showing) { show("o-dash"); loadAlerts(); }
+  stamp();
+  // What's open or typed in each customer card, to put back after the redraw.
+  const keep = new Map([...document.querySelectorAll("#o-customers .cust")].map((card) => [card.dataset.id, {
+    amount: card.querySelector(".pay-amount")?.value || "", note: card.querySelector(".pay-note")?.value || "",
+    reset: card.querySelector(".reset-host")?.innerHTML || "",
+    views: [...card.querySelectorAll(".view-host:not([hidden])")].map((v) => v.dataset.for),
+  }]));
   const { customers, totals, contact } = r.data;
   const tile = (n, l) => `<div class="tile"><div class="tile-num">${n}</div><div class="tile-label">${l}</div></div>`;
   $("o-tiles").innerHTML = tile(totals.customers, "Customers") + tile(totals.paying, "Paying") + tile(money(totals.collectedCents), "Money collected")
@@ -75,8 +100,86 @@ async function dash() {
       <div class="pay-row"><button class="secondary small toggle-uploads" type="button">${open.has(c.id) ? "Hide uploads" : "Show uploads"}</button><button class="link danger del-cust" type="button">Delete customer</button></div>
       <div class="up-host"></div>
     </div>`).join("");
-  for (const id of open) if (customers.some((c) => c.id === id)) loadUploads(id);
+  for (const [id, k] of keep) {
+    const card = host.querySelector(`.cust[data-id="${id}"]`);
+    if (!card) continue;
+    card.querySelector(".pay-amount").value = k.amount;
+    card.querySelector(".pay-note").value = k.note;
+    card.querySelector(".reset-host").innerHTML = k.reset;
+  }
+  await Promise.all([...open].filter((id) => customers.some((c) => c.id === id)).map(async (id) => {
+    await loadUploads(id);
+    for (const uid of keep.get(id)?.views || []) await viewUpload(id, uid);
+  }));
 }
+
+setInterval(() => { if (document.visibilityState === "visible" && token && !$("o-dash").hidden) dash({ auto: true }); }, 30000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && token && !$("o-dash").hidden) dash({ auto: true }); });
+window.addEventListener("pageshow", (e) => { if (e.persisted && token) dash(); }); // back from another page (Safari's page cache)
+$("o-refresh").onclick = () => dash();
+
+// Pull down at the top of the page to refresh (without reloading the page).
+(() => {
+  const ptr = $("o-ptr");
+  let startY = null, dist = 0;
+  const reset = () => { startY = null; dist = 0; ptr.style.height = "0px"; ptr.classList.remove("ready"); };
+  document.addEventListener("touchstart", (e) => {
+    if ($("o-dash").hidden || window.scrollY > 0 || e.touches.length !== 1) return;
+    startY = e.touches[0].clientY; dist = 0;
+  }, { passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (startY === null) return;
+    dist = e.touches[0].clientY - startY;
+    if (dist <= 0 || window.scrollY > 0) { ptr.style.height = "0px"; return; }
+    ptr.style.height = `${Math.min(dist * 0.5, 64)}px`;
+    ptr.classList.toggle("ready", dist >= 70);
+    ptr.textContent = dist >= 70 ? "Release to refresh" : "Pull to refresh";
+  }, { passive: true });
+  document.addEventListener("touchend", async () => {
+    if (startY === null) return;
+    const go = dist >= 70;
+    if (!go) return reset();
+    ptr.textContent = "Refreshing…"; ptr.style.height = "40px";
+    await dash();
+    reset();
+  });
+  document.addEventListener("touchcancel", reset);
+})();
+
+// ── Phone alerts (ntfy) ─────────────────────────────────────────────────────────────────────────────────────────
+async function loadAlerts() {
+  const r = await call("/api/owner/alerts");
+  if (r.ok) showAlerts(r.data.topic);
+}
+function showAlerts(topic) {
+  $("al-off").hidden = Boolean(topic); $("al-on").hidden = !topic;
+  $("al-topic").textContent = topic || "";
+  $("al-result").textContent = "";
+}
+$("al-make").onclick = async () => {
+  const r = await call("/api/owner/alerts", { method: "POST", body: { make: true } });
+  if (r.ok) showAlerts(r.data.topic);
+};
+$("al-new").onclick = async () => {
+  if (!confirm("Make a new topic name? Alerts will go to the new name only — you'll need to subscribe to it again in the ntfy app.")) return;
+  const r = await call("/api/owner/alerts", { method: "POST", body: { make: true } });
+  if (r.ok) showAlerts(r.data.topic);
+};
+$("al-stop").onclick = async () => {
+  if (!confirm("Switch phone alerts off?")) return;
+  const r = await call("/api/owner/alerts", { method: "POST", body: { off: true } });
+  if (r.ok) showAlerts(null);
+};
+$("al-copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("al-topic").textContent); $("al-result").textContent = "Topic name copied"; }
+  catch { const sel = getSelection(); sel.selectAllChildren($("al-topic")); $("al-result").textContent = "Selected — tap Copy"; }
+};
+$("al-test").onclick = async () => {
+  $("al-test").disabled = true; $("al-result").textContent = "Sending…";
+  const r = await call("/api/owner/alerts/test", { method: "POST" });
+  $("al-test").disabled = false;
+  $("al-result").textContent = r.data.ok ? "Sent — ntfy accepted it. Your phone should ping now." : `ntfy didn't accept it${r.data.status ? ` (answer ${r.data.status})` : ""}. Try again in a minute; if it keeps failing, tell me.`;
+};
 
 async function loadUploads(cid) {
   const box = document.querySelector(`.cust[data-id="${cid}"] .up-host`);

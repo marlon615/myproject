@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="owner-page">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,8 +13,9 @@
 <body>
   <header class="top">
     <a class="brand" href="/owner"><img src="/icon.svg" alt="" width="28" height="28"> Owner dashboard</a>
-    <div class="who" id="o-who" hidden><button class="link" id="o-signout" type="button">Sign out</button></div>
+    <div class="who" id="o-who" hidden><span class="hint" id="o-updated" aria-live="polite"></span> <button class="link" id="o-refresh" type="button">Refresh</button> <button class="link" id="o-signout" type="button">Sign out</button></div>
   </header>
+  <div class="ptr" id="o-ptr" aria-hidden="true"></div>
   <main>
     <p class="loading" id="o-loading">Loading…</p>
 
@@ -37,6 +38,20 @@
         <h2>Customers</h2>
         <p class="hint" id="o-none">No customers yet. They sign up on the main page.</p>
         <div id="o-customers"></div>
+      </div>
+      <div class="card" id="alerts">
+        <h2>Phone alerts</h2>
+        <p class="hint">Get a ping on your phone (with the free <b>ntfy</b> app) when a customer taps “Ask for a reset link”.</p>
+        <div id="al-off">
+          <button class="primary small" type="button" id="al-make">Turn on phone alerts</button>
+        </div>
+        <div id="al-on" hidden>
+          <p>Your private topic name — subscribe to it in the ntfy app:</p>
+          <p class="code topic" id="al-topic"></p>
+          <div class="pay-row"><button class="secondary small" type="button" id="al-copy">Copy topic name</button><button class="primary small" type="button" id="al-test">Send test alert</button></div>
+          <p class="hint" id="al-result" role="status"></p>
+          <p class="hint">Keep the topic name private: anyone who knows it can see these alerts. <button class="link" type="button" id="al-new">Make a new topic name</button> · <button class="link danger" type="button" id="al-stop">Turn alerts off</button></p>
+        </div>
       </div>
       <div class="card">
         <h2>What locked customers are told</h2>

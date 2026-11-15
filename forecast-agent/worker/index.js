@@ -38,6 +38,13 @@
  *   POST /api/owner/delete-customer { id }          removes the company and all its data
  *   POST /api/owner/contact  { contact }            what customers are told when something is locked
  *   POST /api/owner/reset-link { id } → { token, expires }   one-time password-reset link (24 hours) to send
+ *   GET  /api/owner/alerts → { topic }                 phone alerts through ntfy (free app); null = off
+ *   POST /api/owner/alerts { make: true } | { off: true }   make a new random topic, or switch alerts off
+ *   POST /api/owner/alerts/test → { ok, status }        sends a test alert and reports what ntfy answered
+ *
+ * Phone alert: when a customer taps "Ask for a reset link" (the first time, real accounts only), the owner's phone
+ * gets an ntfy notification with the company and email; tapping it opens /owner. Sent after the reply, so the
+ * answer looks the same for any email. At most 30 alerts an hour.
  */
 import { DurableObject } from "cloudflare:workers";
 import { FILES, RULES } from "./assets.generated.js";
@@ -238,11 +245,34 @@ export class Directory extends DurableObject {
     });
   }
 
-  /** "I don't have my code": noted for the owner. Same answer whether or not the email has an account. */
+  /** "I don't have my code": noted for the owner. Same answer whether or not the email has an account.
+   *  Returns an alert to send (only the first time for that account, only when alerts are on, at most 30 an hour). */
   requestReset(email) {
-    const row = this.sql.exec("SELECT id, reset_requested FROM accounts WHERE email = ?", email).toArray()[0];
-    if (row && !row.reset_requested) this.sql.exec("UPDATE accounts SET reset_requested = ? WHERE id = ?", new Date().toISOString(), row.id);
-    return { ok: true };
+    const row = this.sql.exec("SELECT id, company, email, reset_requested FROM accounts WHERE email = ?", email).toArray()[0];
+    if (!row || row.reset_requested) return { ok: true };
+    this.sql.exec("UPDATE accounts SET reset_requested = ? WHERE id = ?", new Date().toISOString(), row.id);
+    const topic = this.alertTopic();
+    if (!topic || !this.#alertAllowed()) return { ok: true };
+    return { ok: true, alert: { topic, company: row.company, email: row.email } };
+  }
+
+  // ── Phone alerts (ntfy) ──────────────────────────────────────────────────────────────────────────────────────
+  alertTopic() { return this.#meta("ntfy_topic") || null; }
+  /** A new random topic name (about 100 bits), which is what keeps the alerts private on ntfy.sh. */
+  makeTopic() {
+    const A = "abcdefghijkmnpqrstuvwxyz23456789";
+    const topic = "forecast-" + Array.from(crypto.getRandomValues(new Uint8Array(20)), (x) => A[x % 32]).join("");
+    this.#setMeta("ntfy_topic", topic);
+    return topic;
+  }
+  alertsOff() { this.sql.exec("DELETE FROM meta WHERE k = 'ntfy_topic'"); return null; }
+  #alertAllowed() {
+    const now = Date.now();
+    const sent = JSON.parse(this.#meta("alerts_sent") || "[]").filter((t) => now - t < 3600 * 1000);
+    if (sent.length >= 30) return false;
+    sent.push(now);
+    this.#setMeta("alerts_sent", JSON.stringify(sent));
+    return true;
   }
 
   /** The owner makes a one-time link (a new one replaces the old). Only its hash is kept. */
@@ -443,9 +473,21 @@ function cleanUpload(b) {
   return { upload: { name, kind, months, products } };
 }
 
+/** Posts one notification to ntfy (https://ntfy.sh unless NTFY_URL says otherwise, e.g. in tests). */
+async function sendAlert(env, topic, { title, message, click, tags, priority = 4 }) {
+  const res = await fetch(env.NTFY_URL || "https://ntfy.sh/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // JSON publishing keeps names with accents or emoji intact. The dashboard link is the tap action, an
+    // "Open dashboard" button, and in the text, so it's reachable however the phone shows the alert.
+    body: JSON.stringify({ topic, title, message, click, tags, priority, actions: click ? [{ action: "view", label: "Open dashboard", url: click, clear: true }] : undefined }),
+  });
+  return { ok: res.ok, status: res.status };
+}
+
 const company = (env, id) => env.COMPANY.get(env.COMPANY.idFromName(id));
 
-async function api(request, env, path) {
+async function api(request, env, path, ctx) {
   const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("main"));
   const method = request.method;
   const token = bearer(request);
@@ -492,7 +534,16 @@ async function api(request, env, path) {
     const b = await readJson(request);
     const email = String(b?.email ?? "").trim().toLowerCase();
     if (!EMAIL.test(email)) return json({ error: "Type the email you signed up with." }, 400);
-    await dir.requestReset(email);
+    const r = await dir.requestReset(email);
+    if (r.alert) {
+      const owner = `${new URL(request.url).origin}/owner`;
+      // After the reply (waitUntil), so the answer and its timing are the same whether or not an alert goes out.
+      ctx?.waitUntil(sendAlert(env, r.alert.topic, {
+        title: "Password reset requested",
+        message: `${r.alert.company} (${r.alert.email}) asked for a password reset link.\nOpen your owner dashboard: ${owner}`,
+        click: owner, tags: ["key"], priority: 4,
+      }).catch(() => {}));
+    }
     return json({ ok: true, contact: await dir.contact() });
   }
   if (path === "/api/reset" && method === "POST") {
@@ -578,6 +629,22 @@ async function ownerApi(request, env, path, dir, token) {
   if (!(await dir.ownerCheck(token))) return json({ error: "Please sign in." }, 401);
   if (path === "/api/owner/logout" && method === "POST") { await dir.ownerLogout(token); return new Response(null, { status: 204 }); }
   if (path === "/api/owner/customers" && method === "GET") return json(await dir.customers());
+  if (path === "/api/owner/alerts" && method === "GET") return json({ topic: await dir.alertTopic() });
+  if (path === "/api/owner/alerts" && method === "POST") {
+    const b = (await readJson(request)) || {};
+    if (b.off) return json({ topic: await dir.alertsOff() });
+    if (b.make) return json({ topic: await dir.makeTopic() });
+    return json({ error: "Nothing to do." }, 400);
+  }
+  if (path === "/api/owner/alerts/test" && method === "POST") {
+    const topic = await dir.alertTopic();
+    if (!topic) return json({ error: "Phone alerts are off. Make a topic first." }, 409);
+    const owner = `${new URL(request.url).origin}/owner`;
+    try {
+      const r = await sendAlert(env, topic, { title: "Test alert", message: `Phone alerts are working. Example: Sunny Farm (maria@example.com) asked for a password reset link.\nOpen your owner dashboard: ${owner}`, click: owner, tags: ["white_check_mark"], priority: 4 });
+      return json(r);
+    } catch { return json({ ok: false, status: 0 }); }
+  }
 
   const u = /^\/api\/owner\/customers\/([0-9a-f]{32})\/uploads(?:\/([0-9a-f]{32})(\/forecast)?)?$/.exec(path);
   if (u) {
@@ -636,10 +703,10 @@ function respond(request, path, f, status = 200) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) {
-      try { return await api(request, env, url.pathname); } catch (err) { console.error(err?.stack || err); return json({ error: "Something went wrong. Please try again." }, 500); }
+      try { return await api(request, env, url.pathname, ctx); } catch (err) { console.error(err?.stack || err); return json({ error: "Something went wrong. Please try again." }, 500); }
     }
     if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
     let path;

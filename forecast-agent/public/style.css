@@ -133,3 +133,10 @@ label.check input { width: 22px; height: 22px; min-height: 0; margin: 0; flex: n
 .ok { color: var(--good); font-weight: 600; }
 .reset-box { margin: 8px 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; font-size: .9rem; }
 .reset-box input { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .8rem; }
+/* Owner: pull to refresh, phone alerts */
+html.owner-page { overscroll-behavior-y: contain; }
+.ptr { height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: .9rem; transition: height .15s; }
+.ptr.ready { color: var(--accent); font-weight: 600; }
+.code.topic { font-size: clamp(.85rem, 4.2vw, 1.05rem); word-break: break-all; }
+#o-updated { font-size: .8rem; }
+@media (max-width: 420px) { #o-updated { display: none; } }
