@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Your Draxly demo</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/try.js"></script>
+</head>
+<body>
+  <header class="top"><span class="brand"><img src="/icon.svg" alt="" width="28" height="28"> Draxly</span><span class="hint">Know what to stock before you need it.</span></header>
+  <main>
+    <p class="loading" id="t-loading">Opening your demo…</p>
+
+    <section id="t-invalid" hidden><div class="card notice"><h1>This demo link isn't valid</h1><p>Please check you opened the whole link from the email. If it still doesn't work, reply to the email and we'll help.</p></div></section>
+
+    <section id="t-locked" hidden><div class="card notice"><h1>This demo link is locked</h1><p>It has been used (or has expired), so it can't be opened again, and the sales data you uploaded has been deleted.</p><p id="t-locked-contact"></p></div></section>
+
+    <section id="t-start" hidden>
+      <h1>Your one-time Draxly demo<span id="t-company"></span></h1>
+      <div class="card warn-card" role="note">
+        <h2>Please read first: this link works only once</h2>
+        <p>When you press <b>“Run my forecast”</b>, this link is used up. You <b>can't</b> upload a second file, change columns afterwards, or try again. Get everything right before you press go.</p>
+      </div>
+      <div class="card">
+        <h2>Step by step</h2>
+        <ol class="steps">
+          <li><b>Get your sales file ready.</b> One spreadsheet (CSV or Excel) with your past sales: one row per sale, day, week or month. At least 12 months, ideally 24–36, up to your most recent full month.</li>
+          <li><b>Check its columns.</b> It needs a <b>date</b>, a <b>product</b> and a <b>sales amount</b> (or quantity). Store/warehouse, region and quantity are optional. Up to 500 product × location combinations.</li>
+          <li><b>Choose your file below.</b> It's read here in your browser — nothing is sent until you press the button.</li>
+          <li><b>Check what Draxly found:</b> the months, products and stores. Change the column choices if anything looks wrong.</li>
+          <li><b>Tick the box and press “Run my forecast”.</b> Your accuracy test and 3-month forecast appear on this page.</li>
+          <li><b>Save your results.</b> Download the forecast (CSV). Results stay viewable for 72 hours, then this link locks for good and your sales data is deleted.</li>
+        </ol>
+        <p class="hint"><b>Your data is private:</b> encrypted, used only for your demo, and deleted when the link locks — unless you become a customer.</p>
+      </div>
+      <div class="card">
+        <h2>Your sales file</h2>
+        <label class="file-btn primary">Choose file<input type="file" id="t-file" accept=".csv,.txt,.tsv,.xlsx,.xls" hidden></label>
+        <p class="error" id="t-file-error" role="alert" hidden></p>
+        <div id="t-map" hidden>
+          <p class="hint" id="t-map-file"></p>
+          <div class="grid3">
+            <label>Date column<select id="t-date"></select></label>
+            <label>Product column<select id="t-product"></select></label>
+            <label>Sales column<select id="t-value"></select></label>
+          </div>
+          <div class="grid3">
+            <label>Quantity column<select id="t-units"></select></label>
+            <label>Store / warehouse column<select id="t-location"></select></label>
+            <label>Region column<select id="t-region"></select></label>
+          </div>
+          <div class="grid3">
+            <label>The sales column is<select id="t-kind"><option value="money">Money ($)</option><option value="units">Quantity (units)</option></select></label>
+            <label id="t-order-row" hidden>Dates are written<select id="t-order"><option value="">— choose —</option><option value="dmy">Day/Month/Year (31/01/2025)</option><option value="mdy">Month/Day/Year (01/31/2025)</option></select></label>
+          </div>
+          <h3>What Draxly found</h3>
+          <div class="preview" id="t-preview" aria-live="polite"></div>
+          <p class="error" id="t-map-error" role="alert" hidden></p>
+          <div class="warn-card card">
+            <label class="check"><input type="checkbox" id="t-confirm"> I've checked the months, products and columns above, and I understand this link works <b>only once</b>.</label>
+            <button type="button" class="primary" id="t-run" disabled>Run my forecast (uses my one run)</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="t-result" hidden>
+      <h1 id="t-r-title">Your Draxly forecast</h1>
+      <div class="notice" id="t-r-status"></div>
+      <div class="card" id="t-bt-card">
+        <h2>Accuracy test</h2>
+        <div class="score"><span class="score-num" id="t-acc"></span><span class="score-label">accurate on your total sales<br><span class="hint" id="t-bt-months"></span></span></div>
+        <ul class="summary" id="t-bt-summary"></ul>
+        <div id="t-bt-chart"></div>
+      </div>
+      <div class="card" id="t-fc-card" hidden>
+        <h2>Next 3 months</h2>
+        <ul class="summary" id="t-fc-summary"></ul>
+        <div id="t-fc-chart"></div>
+        <h3>By product</h3>
+        <div class="table-wrap"><table id="t-fc-table"></table></div>
+        <div id="t-loc-wrap" hidden><h3>By store / warehouse</h3><div class="table-wrap"><table id="t-loc-table"></table></div></div>
+        <p><button type="button" class="secondary" id="t-csv">Download forecast (CSV)</button></p>
+      </div>
+      <div class="card"><p id="t-r-contact"></p></div>
+    </section>
+  </main>
+  <footer class="foot">Draxly · <a href="/security">Security</a> · <a href="/pricing">Pricing</a></footer>
+</body>
+</html>

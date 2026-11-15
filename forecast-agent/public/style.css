@@ -189,3 +189,8 @@ textarea { display: block; width: 100%; margin-top: 4px; padding: 10px 12px; fon
 .pill.warn { background: var(--warn-bg); color: var(--warn-ink); }
 .billing-box { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
 .inv-table td, .inv-table th { font-size: .85rem; }
+/* One-time demo page */
+.warn-card { background: var(--warn-bg); color: var(--warn-ink); border-color: transparent; }
+.warn-card h2 { color: var(--warn-ink); }
+.steps li { margin: 8px 0; }
+.found { padding-left: 1.2em; margin: 4px 0 12px; }

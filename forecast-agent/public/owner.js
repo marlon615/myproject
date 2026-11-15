@@ -90,7 +90,7 @@ async function draw({ auto = false } = {}) {
   if (showing && auto && typing()) return;               // you're typing: try again on the next round
   lastData = sig;
   if (!showing) { show("o-dash"); loadAlerts(); loadPlatform(); }
-  loadDemo();
+  loadDemo(); loadDemoLinks();
   stamp();
   // What's open or typed in each customer card, to put back after the redraw.
   const keep = new Map([...document.querySelectorAll("#o-customers .cust")].map((card) => [card.dataset.id, {
@@ -385,7 +385,7 @@ $("o-contact-save").onclick = async () => {
 if (token) { const r = await call("/api/owner/customers"); if (r.ok) dash(); else gate(); } else gate();
 
 // ── Platform settings (email, sign-in apps, QuickBooks app) ─────────────────────────────────────────────────────
-const PL_PLAIN = ["emailFrom", "msClientId", "googleClientId", "qbClientId", "billingName", "paymentInstructions", "ownerEmail", "bookingUrl"], PL_SECRET = ["emailKey", "msSecret", "googleSecret", "qbSecret"];
+const PL_PLAIN = ["emailFrom", "msClientId", "googleClientId", "qbClientId", "billingName", "paymentInstructions", "ownerEmail"], PL_SECRET = ["emailKey", "msSecret", "googleSecret", "qbSecret"];
 async function loadPlatform() {
   const r = await call("/api/owner/platform");
   if (!r.ok) return;
@@ -417,12 +417,65 @@ async function loadDemo() {
   $("dm-counts").textContent = `${counts.visits7} visit${counts.visits7 === 1 ? "" : "s"} in the last 7 days · ${counts.visits30} in 30 days · ${counts.visitsAll} in all · ${counts.leadsNew} new request${counts.leadsNew === 1 ? "" : "s"} (${counts.leadsAll} in all)`;
   const when = (t) => new Date(t).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
   $("dm-leads").innerHTML = leads.length ? `<thead><tr><th>When</th><th>Who</th><th>Company</th><th>Contact</th><th>Details</th><th>Status</th></tr></thead><tbody>${leads.map((l) => `<tr data-lead="${l.id}"><td class="nowrap">${when(l.t)}</td><th scope="row">${esc(l.name)}${l.title ? `<br><span class="hint">${esc(l.title)}</span>` : ""}</th><td>${esc(l.company)}${l.locations ? `<br><span class="hint">${esc(l.locations)} locations</span>` : ""}</td>
-    <td><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${l.phone ? `<br>${esc(l.phone)}` : ""}</td><td class="wrap">${l.wantsCall ? "<b>Wants a call.</b> " : ""}${esc(l.message)}${l.city || l.country ? `<br><span class="hint">${esc([l.city, l.country].filter(Boolean).join(", "))}</span>` : ""}</td>
-    <td><select class="lead-status">${["new", "contacted", "closed"].map((x) => `<option value="${x}" ${x === l.status ? "selected" : ""}>${x[0].toUpperCase() + x.slice(1)}</option>`).join("")}</select></td></tr>`).join("")}</tbody>` : '<tbody><tr><td class="hint">No requests yet.</td></tr></tbody>';
+    <td><a href="mailto:${esc(l.email)}">${esc(l.email)}</a></td><td class="wrap">${esc(l.message)}${l.city || l.country ? `<br><span class="hint">${esc([l.city, l.country].filter(Boolean).join(", "))}</span>` : ""}</td>
+    <td><select class="lead-status">${["new", "contacted", "closed"].map((x) => `<option value="${x}" ${x === l.status ? "selected" : ""}>${x[0].toUpperCase() + x.slice(1)}</option>`).join("")}</select><br><button class="link lead-link" data-company="${esc(l.company)}" data-name="${esc(l.name)}" data-email="${esc(l.email)}" type="button">Send demo link</button></td></tr>`).join("")}</tbody>` : '<tbody><tr><td class="hint">No requests yet.</td></tr></tbody>';
   $("dm-visits").innerHTML = visits.length ? `<thead><tr><th>When</th><th>Where</th><th>Device</th><th>Came from</th><th>Requested access</th></tr></thead><tbody>${visits.slice(0, 100).map((v) => `<tr><td class="nowrap">${when(v.t)}</td><td>${esc([v.city, v.region, v.country].filter(Boolean).join(", ") || "—")}</td><td>${esc(v.device || "—")}</td><td class="wrap">${esc([v.referrer, v.source].filter(Boolean).join(" · ") || "Direct")}</td><td>${v.lead ? "Yes" : ""}</td></tr>`).join("")}</tbody>` : '<tbody><tr><td class="hint">Nobody has opened the demo yet.</td></tr></tbody>';
 }
+$("dm-leads").addEventListener("click", (e) => {
+  if (!e.target.classList.contains("lead-link")) return;
+  $("dl-company").value = e.target.dataset.company; $("dl-name").value = e.target.dataset.name; $("dl-email").value = e.target.dataset.email;
+  $("dl-lead").value = e.target.closest("tr").dataset.lead;
+  $("dl-form").scrollIntoView({ behavior: "smooth", block: "center" });
+});
 $("dm-leads").addEventListener("change", async (e) => {
   if (!e.target.classList.contains("lead-status")) return;
   await call(`/api/owner/leads/${e.target.closest("tr").dataset.lead}`, { method: "POST", body: { status: e.target.value } });
   loadDemo();
+});
+
+// ── One-time demo links ─────────────────────────────────────────────────────────────────────────────────────────
+const LINK_PILL = { sent: "", used: "on", locked: "off" };
+async function loadDemoLinks() {
+  const r = await call("/api/owner/demo-links");
+  if (!r.ok) return;
+  const when = (t) => (t ? new Date(t).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }) : "—");
+  $("dl-table").innerHTML = r.data.links.length ? `<thead><tr><th>Company</th><th>Status</th><th>Details</th><th></th></tr></thead><tbody>${r.data.links.map((l) => `<tr data-link="${l.id}">
+    <th scope="row">${esc(l.company)}<br><span class="hint">${esc(l.name ? `${l.name} · ` : "")}${esc(l.email)}</span></th>
+    <td><span class="pill ${LINK_PILL[l.status]}">${l.status === "sent" ? "Sent" : l.status === "used" ? "Used" : "Locked"}</span></td>
+    <td class="wrap hint">Created ${when(l.created)}${l.emailed ? " · emailed" : " · <b>not emailed</b>"}${l.openedAt ? ` · opened ${when(l.openedAt)}` : ""}${l.usedAt ? ` · forecast run ${when(l.usedAt)}` : ""}${l.status === "used" ? ` · results viewable until ${when(new Date(l.viewUntil).toISOString())}` : ""}${l.lockedAt ? ` · locked ${when(l.lockedAt)} (${esc(l.lockReason)})` : ""}${l.customer ? " · <b>became a customer</b>" : ""}</td>
+    <td class="actions">${l.status === "sent" ? '<button class="link dl-reissue" type="button">Send a new link</button> ' : ""}${l.status !== "locked" ? '<button class="link danger dl-lock" type="button">Lock now</button> ' : ""}${l.status !== "sent" && !l.customer ? '<button class="link dl-again" type="button">Allow one more run</button> ' : ""}${l.status === "used" && !l.customer ? '<button class="secondary small dl-customer" type="button">Became a customer</button>' : ""}</td></tr>`).join("")}</tbody>` : '<tbody><tr><td class="hint">No demo links yet.</td></tr></tbody>';
+}
+function showNewLink(d) {
+  const box = $("dl-new");
+  box.hidden = false;
+  box.innerHTML = `<b>${d.emailed ? "Emailed." : "Not emailed"}</b> ${d.emailed ? "You can also copy the link:" : `(${esc(d.emailNote || "email isn't set up")}). Copy the link and the instructions into your own email:`}
+    <input class="reset-url" readonly value="${esc(d.url)}" aria-label="Demo link"><button class="secondary small" type="button" id="dl-copy">Copy link</button>
+    <details${d.emailed ? "" : " open"}><summary>Email text with step-by-step instructions</summary><p class="hint">Subject: ${esc(d.subject)}</p><textarea readonly rows="14" id="dl-text">${esc(d.text)}</textarea><button class="secondary small" type="button" id="dl-copy-text">Copy email text</button></details>
+    <p class="hint">This is the only time the link is shown — it isn't stored. If it's lost, use “Send a new link”.</p>`;
+  $("dl-copy").onclick = async () => { try { await navigator.clipboard.writeText(d.url); $("dl-copy").textContent = "Copied"; } catch { box.querySelector(".reset-url").select(); } };
+  $("dl-copy-text").onclick = async () => { try { await navigator.clipboard.writeText(`Subject: ${d.subject}\n\n${d.text}`); $("dl-copy-text").textContent = "Copied"; } catch { $("dl-text").select(); } };
+}
+$("dl-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const err = $("dl-error"); err.hidden = true;
+  const r = await call("/api/owner/demo-links", { method: "POST", body: { company: $("dl-company").value, name: $("dl-name").value, email: $("dl-email").value, lead: $("dl-lead").value } });
+  if (!r.ok) { err.textContent = r.data.error; err.hidden = false; return; }
+  for (const id of ["dl-company", "dl-name", "dl-email", "dl-lead"]) $(id).value = "";
+  showNewLink(r.data);
+  loadDemoLinks();
+};
+$("dl-table").addEventListener("click", async (e) => {
+  const tr = e.target.closest("tr[data-link]"); if (!tr) return;
+  const id = tr.dataset.link, company = tr.querySelector("th").firstChild.textContent;
+  let r = null;
+  if (e.target.classList.contains("dl-reissue")) { if (!confirm(`Send ${company} a new link? The old one stops working.`)) return; r = await call(`/api/owner/demo-links/${id}/reissue`, { method: "POST" }); if (r.ok) showNewLink(r.data); }
+  if (e.target.classList.contains("dl-again")) { if (!confirm(`Allow ${company} one more run? Their earlier results and data are deleted, and they get a new link.`)) return; r = await call(`/api/owner/demo-links/${id}/reissue`, { method: "POST" }); if (r.ok) showNewLink(r.data); }
+  if (e.target.classList.contains("dl-lock")) { if (!confirm(`Lock ${company}'s link now? Their uploaded data is deleted straight away.`)) return; r = await call(`/api/owner/demo-links/${id}/lock`, { method: "POST" }); }
+  if (e.target.classList.contains("dl-customer")) {
+    if (!confirm(`Mark ${company} as a customer? A Draxly account is created for them (an admin invite is emailed to their contact), their demo data moves into it, and the demo link locks.`)) return;
+    r = await call(`/api/owner/demo-links/${id}/customer`, { method: "POST" });
+    if (r.ok) { $("dl-new").hidden = false; $("dl-new").innerHTML = `<b>${esc(company)} now has a Draxly account${r.data.moved ? " with their demo data" : ""}.</b> ${r.data.emailed ? "The admin invite was emailed." : "Send them this invite link (7 days):"}<input class="reset-url" readonly value="${esc(r.data.inviteLink)}" aria-label="Invite link">`; }
+  }
+  if (r && !r.ok) alert(r.data.error || "That didn't work.");
+  loadDemoLinks(); dash();
 });

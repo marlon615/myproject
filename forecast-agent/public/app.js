@@ -17,7 +17,7 @@ const RANK = { viewer: 0, manager: 1, admin: 2 };
 const MAX_MONTHS = 120, BATCH = 40; // big files go in parts of 40 series, so each request stays small
 const VIEWS = ["loading", "auth", "off", "home", "result", "forgot", "reset", "code", "account", "twofa", "invite", "stock", "connections", "team", "activity", "billing", "request"];
 const DEMO = location.pathname === "/demo";
-let demo = null; // { visit, upload, bookingUrl } while in the public demo
+let demo = null; // { visit, upload } while in the public demo
 let token = load(TOKEN_KEY), me = null, contact = "", mode = "signup", ssoProviders = { microsoft: false, google: false };
 let sheet = null, current = null, ticket = null, resetToken = null, inviteToken = null, pollTimer = null;
 
@@ -876,7 +876,7 @@ async function startDemo() {
   const r = await call("/api/demo/session", { method: "POST", body: { referrer: document.referrer, source } });
   if (!r.ok) { $("loading").textContent = "The demo couldn't open. Please try again in a minute."; return; }
   token = r.data.token; // kept in memory only: a demo never signs anyone in for real
-  me = r.data.me; demo = { visit: r.data.visit, upload: r.data.upload, bookingUrl: r.data.bookingUrl };
+  me = r.data.me; demo = { visit: r.data.visit, upload: r.data.upload };
   $("who-name").textContent = me.company;
   if (!demo.upload) { // someone else's visit is setting the demo up this very second
     for (let i = 0; i < 30 && !demo.upload; i++) { await new Promise((ok) => setTimeout(ok, 1000)); const u = await call("/api/uploads"); demo.upload = u.data.uploads?.[0]?.id; }
@@ -884,17 +884,13 @@ async function startDemo() {
   if (!location.hash || location.hash === "#/" || location.hash === "#") history.replaceState(null, "", `#/u/${demo.upload}`);
   route();
 }
-$("demo-call").onclick = () => {
-  if (demo?.bookingUrl) { window.open(demo.bookingUrl, "_blank", "noopener"); return; }
-  $("rq-call").checked = true; location.hash = "#/request";
-};
 $("demo-request").onclick = () => { location.hash = "#/request"; };
 $("rq-back").onclick = (e) => { e.preventDefault(); location.hash = demo?.upload ? `#/u/${demo.upload}` : "#/"; };
 $("rq-form").onsubmit = async (e) => {
   e.preventDefault();
   showErr("rq-error");
-  const body = { name: $("rq-name").value, email: $("rq-email").value, company: $("rq-company").value, title: $("rq-title").value, phone: $("rq-phone").value,
-    locations: $("rq-locations").value, message: $("rq-message").value, wantsCall: $("rq-call").checked, website: $("rq-website").value, visit: demo?.visit || null };
+  const body = { name: $("rq-name").value, email: $("rq-email").value, company: $("rq-company").value, title: $("rq-title").value,
+    locations: $("rq-locations").value, message: $("rq-message").value, website: $("rq-website").value, visit: demo?.visit || null };
   $("rq-submit").disabled = true;
   const r = await call("/api/demo/request", { method: "POST", body });
   $("rq-submit").disabled = false;

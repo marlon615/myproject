@@ -10,7 +10,7 @@ import { DurableObject } from "cloudflare:workers";
 import * as C from "./crypto.js";
 import * as B from "./billing.js";
 import { invoicePdf, toBase64 } from "./pdf.js";
-import { sendEmail, invoiceEmail, reminderEmail, leadEmail } from "./email.js";
+import { sendEmail, invoiceEmail, reminderEmail, leadEmail, demoLinkEmail, inviteEmail } from "./email.js";
 import { DEMO_COMPANY } from "./demo.js";
 
 export const FEATURES = ["forecasts", "multiLocation", "inventory", "reports", "connectors", "api", "sso"];
@@ -64,6 +64,9 @@ export class Directory extends DurableObject {
       phone TEXT NOT NULL DEFAULT '', locations TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', wants_call INTEGER NOT NULL DEFAULT 0, visit INTEGER,
       city TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new', emailed INTEGER NOT NULL DEFAULT 0, alerted INTEGER NOT NULL DEFAULT 0)`);
     x(`CREATE TABLE IF NOT EXISTS lead_limits (k TEXT PRIMARY KEY, times TEXT NOT NULL)`);
+    x(`CREATE TABLE IF NOT EXISTS demo_links (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, company TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL,
+      lead TEXT, status TEXT NOT NULL DEFAULT 'sent', created TEXT NOT NULL, emailed INTEGER NOT NULL DEFAULT 0, opened_at TEXT, used_at TEXT, view_until INTEGER,
+      locked_at TEXT, lock_reason TEXT, upload TEXT, customer TEXT, runs INTEGER NOT NULL DEFAULT 0)`);
     x(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, account TEXT NOT NULL, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '',
       role TEXT NOT NULL, pw TEXT, salt TEXT, recovery_hash TEXT, reset_hash TEXT, reset_expires INTEGER, reset_requested TEXT,
       invite_hash TEXT, invite_expires INTEGER, totp_enc TEXT, totp_pending TEXT, totp_on INTEGER NOT NULL DEFAULT 0, totp_last INTEGER,
@@ -134,24 +137,26 @@ export class Directory extends DurableObject {
 
   // ── Platform settings (email, sign-in apps, QuickBooks app): secrets are encrypted ──────────────────────────────
   static SETTINGS = { emailFrom: false, emailKey: true, msClientId: false, msSecret: true, googleClientId: false, googleSecret: true, qbClientId: false, qbSecret: true,
-    billingName: false, paymentInstructions: false, ownerEmail: false, bookingUrl: false };
+    billingName: false, paymentInstructions: false, ownerEmail: false };
+  /** Settings with a built-in default (wrangler.toml [vars]) used until the owner changes them. */
+  #default(k) { return k === "billingName" ? this.env.BILLING_NAME || "Draxly" : k === "ownerEmail" ? this.env.DEMO_REQUEST_EMAIL || "" : ""; }
+  #setting(k) { return this.#meta(`set_${k}`) || this.#default(k); }
   platform() {
     const out = {};
-    for (const [k, secret] of Object.entries(Directory.SETTINGS)) out[k] = secret ? Boolean(this.#meta(`set_${k}`)) : this.#meta(`set_${k}`) || "";
+    for (const [k, secret] of Object.entries(Directory.SETTINGS)) out[k] = secret ? Boolean(this.#meta(`set_${k}`)) : this.#setting(k);
     return out;
   }
   async setPlatform(patch) {
     for (const [k, secret] of Object.entries(Directory.SETTINGS)) {
       if (!(k in patch)) continue;
       const v = String(patch[k] ?? "").trim().slice(0, k === "paymentInstructions" ? 1500 : 500);
-      if (k === "bookingUrl" && v && !/^https:\/\/[^\s]+$/.test(v)) continue; // only https links
       this.#setMeta(`set_${k}`, v ? (secret ? await C.encrypt(this.#key, v) : v) : null);
       this.#log("platform setting changed", null, k);
     }
     return this.platform();
   }
   /** Decrypted secret for the Worker's own use (sending email, finishing a sign-in). Never sent to a browser. */
-  async secret(k) { const v = this.#meta(`set_${k}`); return Directory.SETTINGS[k] ? C.decrypt(this.#key, v) : v; }
+  async secret(k) { const v = this.#meta(`set_${k}`); return Directory.SETTINGS[k] ? C.decrypt(this.#key, v) : v || this.#default(k); }
   ssoProviders() { const p = this.platform(); return { microsoft: Boolean(p.msClientId && p.msSecret), google: Boolean(p.googleClientId && p.googleSecret) }; }
 
   // ── Phone alerts (ntfy) ──────────────────────────────────────────────────────────────────────────────────────
@@ -680,7 +685,7 @@ export class Directory extends DurableObject {
     const i = this.sql.exec("SELECT * FROM invoices WHERE id = ?", id).toArray()[0];
     if (!i || (account && i.account !== account)) return null;
     const a = this.#account(i.account);
-    return { number: i.number, bytes: invoicePdf({ seller: this.#meta("set_billingName") || "Draxly", buyer: a.company, invoice: this.#invoiceOut(i), instructions: this.#meta("set_paymentInstructions") }) };
+    return { number: i.number, bytes: invoicePdf({ seller: this.#setting("billingName"), buyer: a.company, invoice: this.#invoiceOut(i), instructions: this.#meta("set_paymentInstructions") }) };
   }
   /** Emails an invoice (or an overdue reminder) with the PDF attached to the company's admins. */
   async #emailInvoice(id, kind, daysLate = 0) {
@@ -690,7 +695,7 @@ export class Directory extends DurableObject {
     const to = this.recipients(i.account, "billing", ["admin"]).map((r) => r.email);
     if (!to.length) return { ok: false, reason: "No admin to send it to." };
     const pdf = await this.invoicePdfFor(id);
-    const args = { company: a.company, invoice: this.#invoiceOut(i), link: `${this.#origin()}/#/billing`, instructions: this.#meta("set_paymentInstructions"), seller: this.#meta("set_billingName") || "Draxly", daysLate };
+    const args = { company: a.company, invoice: this.#invoiceOut(i), link: `${this.#origin()}/#/billing`, instructions: this.#meta("set_paymentInstructions"), seller: this.#setting("billingName"), daysLate };
     const mail = kind === "reminder" ? reminderEmail(args) : invoiceEmail(args);
     const r = await sendEmail(this.env, this, { to, ...mail, attachments: [{ filename: `${i.number}.pdf`, content: toBase64(pdf.bytes) }] });
     if (r.ok && kind === "invoice") this.sql.exec("UPDATE invoices SET sent_count = sent_count + 1, last_sent = ? WHERE id = ?", new Date().toISOString(), id);
@@ -740,12 +745,12 @@ export class Directory extends DurableObject {
     const id = C.randomHex(12), clip = (v, n = 200) => String(v || "").trim().slice(0, n);
     const visit = Number(form.visit) > 0 ? Number(form.visit) : null;
     this.sql.exec("INSERT INTO leads (id, t, name, email, company, title, phone, locations, message, wants_call, visit, city, country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      id, new Date().toISOString(), clip(form.name, 100), clip(form.email, 200).toLowerCase(), clip(form.company, 150), clip(form.title, 100), clip(form.phone, 40), clip(form.locations, 40), clip(form.message, 2000), form.wantsCall ? 1 : 0, visit, clip(form.city, 80), clip(form.country, 8));
+      id, new Date().toISOString(), clip(form.name, 100), clip(form.email, 200).toLowerCase(), clip(form.company, 150), clip(form.title, 100), "", clip(form.locations, 40), clip(form.message, 2000), 0, visit, clip(form.city, 80), clip(form.country, 8));
     if (visit) this.sql.exec("UPDATE demo_visits SET lead = ? WHERE id = ?", id, visit);
     this.#log("access requested", null, `${clip(form.name, 100)} <${clip(form.email, 200)}>, ${clip(form.company, 150)}`);
     const lead = this.sql.exec("SELECT * FROM leads WHERE id = ?", id).one();
     const topic = this.alertTopic();
-    const ownerEmail = this.#meta("set_ownerEmail");
+    const ownerEmail = this.#setting("ownerEmail");
     let emailed = false;
     if (ownerEmail) {
       const r = await sendEmail(this.env, this, { to: [ownerEmail], ...leadEmail({ lead, link: `${this.#origin()}/owner` }) });
@@ -757,11 +762,99 @@ export class Directory extends DurableObject {
   markLeadAlerted(id) { this.sql.exec("UPDATE leads SET alerted = 1 WHERE id = ?", id); }
   demoStats() {
     const visits = this.sql.exec("SELECT * FROM demo_visits ORDER BY id DESC LIMIT 300").toArray();
-    const leads = this.sql.exec("SELECT * FROM leads ORDER BY t DESC LIMIT 300").toArray().map((l) => ({ ...l, wantsCall: Boolean(l.wants_call) }));
+    const leads = this.sql.exec("SELECT * FROM leads ORDER BY t DESC LIMIT 300").toArray();
     const since = (d) => new Date(Date.now() - d * 86_400_000).toISOString();
     return { visits, leads, counts: { visits7: this.sql.exec("SELECT COUNT(*) AS n FROM demo_visits WHERE t >= ?", since(7)).one().n, visits30: this.sql.exec("SELECT COUNT(*) AS n FROM demo_visits WHERE t >= ?", since(30)).one().n,
       visitsAll: this.sql.exec("SELECT COUNT(*) AS n FROM demo_visits").one().n, leadsNew: leads.filter((l) => l.status === "new").length, leadsAll: leads.length } };
   }
+  // ── One-time demo links ──────────────────────────────────────────────────────────────────────────────────────
+  // Sent → (one run) → used: results viewable for 72 hours → locked for good, data deleted. Unused links lock after
+  // 30 days. Their data lives in its own Company store ("trial:<id>") and is never shown on the owner dashboard.
+  static VIEW_HOURS = 72; static UNUSED_DAYS = 30;
+  // Tests only: shorter windows (seconds). The live site doesn't set these.
+  get #viewMs() { return Number(this.env.DEMO_VIEW_SECONDS) > 0 ? Number(this.env.DEMO_VIEW_SECONDS) * 1000 : Directory.VIEW_HOURS * HOUR; }
+  get #unusedMs() { return Number(this.env.DEMO_UNUSED_SECONDS) > 0 ? Number(this.env.DEMO_UNUSED_SECONDS) * 1000 : Directory.UNUSED_DAYS * DAY; }
+  #linkOut(l) { return { id: l.id, company: l.company, name: l.name, email: l.email, lead: l.lead, status: l.status, created: l.created, emailed: Boolean(l.emailed), openedAt: l.opened_at, usedAt: l.used_at, viewUntil: l.view_until, lockedAt: l.locked_at, lockReason: l.lock_reason, customer: l.customer, runs: l.runs }; }
+  async demoLinks() { await this.sweepDemoLinks(); return this.sql.exec("SELECT * FROM demo_links ORDER BY created DESC LIMIT 500").toArray().map((l) => this.#linkOut(l)); }
+  /** A new link (or a fresh one for an existing link: the old one stops working). The token is only ever returned here. */
+  async createDemoLink({ company, name, email, lead, id }) {
+    const token = C.randomHex(32), hash = await C.sha256(token);
+    if (id) {
+      const l = this.sql.exec("SELECT * FROM demo_links WHERE id = ?", id).toArray()[0];
+      if (!l) return { error: "unknown" };
+      await this.#wipeTrial(id);
+      this.sql.exec("UPDATE demo_links SET token_hash = ?, status = 'sent', emailed = 0, opened_at = NULL, used_at = NULL, view_until = NULL, locked_at = NULL, lock_reason = NULL, upload = NULL, created = ? WHERE id = ?", hash, new Date().toISOString(), id);
+      this.#log("demo link re-issued", null, `${l.company} <${l.email}>`);
+    } else {
+      id = C.randomHex(12);
+      this.sql.exec("INSERT INTO demo_links (id, token_hash, company, name, email, lead, created) VALUES (?, ?, ?, ?, ?, ?, ?)", id, hash, String(company).slice(0, 150), String(name || "").slice(0, 100), String(email).toLowerCase().slice(0, 200), lead || null, new Date().toISOString());
+      this.#log("demo link created", null, `${company} <${email}>`);
+    }
+    const l = this.sql.exec("SELECT * FROM demo_links WHERE id = ?", id).one();
+    const link = `${this.#origin()}/try#${token}`;
+    const mail = demoLinkEmail({ company: l.company, name: l.name, link, sender: this.#setting("billingName"), contact: this.#setting("ownerEmail") });
+    const r = await sendEmail(this.env, this, { to: [l.email], ...mail });
+    if (r.ok) this.sql.exec("UPDATE demo_links SET emailed = 1 WHERE id = ?", id);
+    this.#log(r.ok ? "demo link emailed" : "demo link not emailed", null, `${l.company} <${l.email}>${r.ok ? "" : `: ${r.reason}`}`);
+    return { link: this.#linkOut(this.sql.exec("SELECT * FROM demo_links WHERE id = ?", id).one()), url: link, emailed: r.ok, emailNote: r.ok ? "" : r.reason, subject: mail.subject, text: mail.text };
+  }
+  async #wipeTrial(id) { await this.env.COMPANY.get(this.env.COMPANY.idFromName(`trial:${id}`)).wipe(); }
+  async #linkByToken(token) {
+    if (!/^[0-9a-f]{64}$/.test(String(token))) return null;
+    return this.sql.exec("SELECT * FROM demo_links WHERE token_hash = ?", await C.sha256(token)).toArray()[0] || null;
+  }
+  /** What the demo page needs to know; locks the link first if its time is up. */
+  async demoLinkStatus(token) {
+    let l = await this.#linkByToken(token);
+    if (!l) return null;
+    await this.sweepDemoLinks(l.id);
+    l = this.sql.exec("SELECT * FROM demo_links WHERE id = ?", l.id).one();
+    if (!l.opened_at) this.sql.exec("UPDATE demo_links SET opened_at = ? WHERE id = ?", new Date().toISOString(), l.id);
+    return { id: l.id, company: l.company, name: l.name, status: l.status, viewUntil: l.view_until, upload: l.upload, contact: this.#setting("ownerEmail") || this.contact() };
+  }
+  /** The single run: marks the link used in one step, so a second attempt (even at the same moment) is refused. */
+  async claimDemoRun(token) {
+    const l = await this.#linkByToken(token);
+    if (!l) return { error: "unknown" };
+    if (l.status !== "sent") return { error: l.status };
+    const until = Date.now() + this.#viewMs;
+    const r = this.sql.exec("UPDATE demo_links SET status = 'used', used_at = ?, view_until = ?, runs = runs + 1 WHERE id = ? AND status = 'sent'", new Date().toISOString(), until, l.id);
+    if (!r.rowsWritten) return { error: "used" };
+    this.#log("demo link used", null, `${l.company} <${l.email}>`);
+    return { ok: true, id: l.id, viewUntil: until };
+  }
+  demoRunStored(id, upload) { this.sql.exec("UPDATE demo_links SET upload = ? WHERE id = ?", upload, id); }
+  async lockDemoLink(id, reason) {
+    const l = this.sql.exec("SELECT * FROM demo_links WHERE id = ?", id).toArray()[0];
+    if (!l) return { error: "unknown" };
+    if (l.status === "locked") return { ok: true, already: true };
+    await this.#wipeTrial(id); // their sales data is deleted when the link locks
+    this.sql.exec("UPDATE demo_links SET status = 'locked', locked_at = ?, lock_reason = ?, upload = NULL WHERE id = ?", new Date().toISOString(), reason, id);
+    this.#log("demo link locked", null, `${l.company}: ${reason}; data deleted`);
+    return { ok: true };
+  }
+  /** Locks links whose viewing window is over, or that were never used within 30 days. */
+  async sweepDemoLinks(onlyId = null) {
+    const now = Date.now(), old = new Date(now - this.#unusedMs).toISOString();
+    const due = this.sql.exec(`SELECT * FROM demo_links WHERE ${onlyId ? "id = ? AND " : ""}((status = 'used' AND view_until <= ?) OR (status = 'sent' AND created <= ?))`, ...(onlyId ? [onlyId] : []), now, old).toArray();
+    for (const l of due) await this.lockDemoLink(l.id, l.status === "used" ? "viewing time ended" : `unused for ${Directory.UNUSED_DAYS} days`);
+    return { locked: due.length };
+  }
+  /** "Became a customer": a real company for them, admin invite to the contact; the router moves the demo data in. */
+  async demoLinkCustomer(id) {
+    const l = this.sql.exec("SELECT * FROM demo_links WHERE id = ?", id).toArray()[0];
+    if (!l) return { error: "unknown" };
+    if (this.#userByEmail(l.email) || this.sql.exec("SELECT 1 FROM accounts WHERE email = ?", l.email).toArray().length) return { error: "exists" };
+    const account = C.randomHex(16), uid = C.randomHex(16), token = C.randomHex(32), iso = new Date().toISOString();
+    this.sql.exec("INSERT INTO accounts (id, company, email, salt, hash, created, last_seen, features) VALUES (?, ?, ?, '', '!', ?, ?, ?)", account, l.company, l.email, iso, iso, JSON.stringify(DEFAULT_FEATURES));
+    this.sql.exec("INSERT INTO users (id, account, email, name, role, invite_hash, invite_expires, created) VALUES (?, ?, ?, ?, 'admin', ?, ?, ?)", uid, account, l.email, l.name, await C.sha256(token), Date.now() + INVITE_DAYS * DAY, iso);
+    this.sql.exec("UPDATE demo_links SET customer = ? WHERE id = ?", account, id);
+    this.#log("demo became a customer", account, `${l.company} <${l.email}>`);
+    const link = `${this.#origin()}/#/invite/${token}`;
+    const r = await sendEmail(this.env, this, { to: [l.email], ...inviteEmail({ company: l.company, inviter: this.#setting("billingName"), link, role: "admin" }) });
+    return { ok: true, account, upload: l.upload, inviteLink: link, emailed: r.ok };
+  }
+
   setLead(id, status) { if (!["new", "contacted", "closed"].includes(status)) return { error: "status" }; this.sql.exec("UPDATE leads SET status = ? WHERE id = ?", status, id); return { ok: true }; }
 
   // ── Owner ────────────────────────────────────────────────────────────────────────────────────────────────────

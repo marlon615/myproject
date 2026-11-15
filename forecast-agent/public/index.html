@@ -13,7 +13,7 @@
 <body>
   <div class="demo-bar" id="demo-bar" hidden>
     <span><b>Draxly demo</b> — sample data for Harbor &amp; Vine Provisions, a food and drink distributor. Look around; nothing you do here is saved.</span>
-    <span class="demo-actions"><button type="button" class="primary small" id="demo-call">Book a call</button><button type="button" class="secondary small light" id="demo-request">Request access</button><a class="link light" href="/" id="demo-exit">Exit demo</a></span>
+    <span class="demo-actions"><button type="button" class="primary small" id="demo-request">Request access</button><a class="link light" href="/" id="demo-exit">Exit demo</a></span>
   </div>
   <header class="top">
     <a class="brand" href="#/"><img src="/icon.svg" alt="" width="28" height="28"> Draxly</a>
@@ -166,10 +166,8 @@
           <label>Work email<input id="rq-email" type="email" autocomplete="email" maxlength="200"></label>
           <label>Company<input id="rq-company" autocomplete="organization" maxlength="150"></label>
           <label>Your role<input id="rq-title" autocomplete="organization-title" maxlength="100"></label>
-          <label>Phone (optional)<input id="rq-phone" type="tel" autocomplete="tel" maxlength="40"></label>
           <label>How many stores / warehouses?<select id="rq-locations"><option value="">Choose…</option><option>1–5</option><option>6–20</option><option>21–100</option><option>100+</option></select></label>
           <label>Anything else? (optional)<textarea id="rq-message" maxlength="2000" rows="3"></textarea></label>
-          <label class="check"><input type="checkbox" id="rq-call"> I'd like a call</label>
           <label class="hp" aria-hidden="true">Website<input id="rq-website" tabindex="-1" autocomplete="off"></label>
           <p class="error" id="rq-error" role="alert" hidden></p>
           <button class="primary" type="submit" id="rq-submit">Send request</button>

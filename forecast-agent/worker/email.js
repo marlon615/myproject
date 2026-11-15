@@ -80,8 +80,30 @@ export function reminderEmail({ company, invoice, link, instructions, seller, da
     text: `Reminder: Draxly invoice ${invoice.number} for ${company} (${usd(invoice.amountCents)}) was due ${day(invoice.due)} and is ${daysLate} days overdue.\n\nHow to pay:\n${instructions || ""}\n\nBilling page: ${link}` };
 }
 export function leadEmail({ lead, link }) {
-  const rows = [["Name", lead.name], ["Email", lead.email], ["Company", lead.company], ["Role", lead.title], ["Phone", lead.phone], ["Locations", lead.locations], ["Wants a call", lead.wants_call ? "Yes" : "No"], ["From", [lead.city, lead.country].filter(Boolean).join(", ")]].filter((r) => r[1]);
+  const rows = [["Name", lead.name], ["Email", lead.email], ["Company", lead.company], ["Role", lead.title], ["Locations", lead.locations], ["From", [lead.city, lead.country].filter(Boolean).join(", ")]].filter((r) => r[1]);
   const body = `${table(["", ""], rows)}${lead.message ? `<p style="margin:16px 0 4px;font-weight:600">Message</p><p style="white-space:pre-line;margin:0">${esc(lead.message)}</p>` : ""}`;
   return { subject: `Draxly access request: ${lead.name} (${lead.company})`, html: shell("New access request from the demo", body, link),
     text: rows.map(([k, v]) => `${k}: ${v}`).join("\n") + (lead.message ? `\n\n${lead.message}` : "") + `\n\n${link}` };
+}
+
+/** The one-time demo link email: step by step, with a clear warning that it works only once. */
+export const DEMO_STEPS = (link) => [
+  ["Get your sales file ready", "One spreadsheet (CSV or Excel) with your past sales: one row per sale, day, week or month. At least 12 months, ideally 24–36, up to your most recent full month."],
+  ["Check its columns", "It needs a date, a product and a sales amount (or quantity). Store/warehouse, region and quantity columns are optional — include them if you have them. Up to 500 product × location combinations."],
+  ["Open your link on a computer", link],
+  ["Choose your file and check what Draxly found", "Draxly reads the file in your browser and shows the months, products and stores it found. Check these carefully and change the column choices if anything looks wrong."],
+  ["Press “Run my forecast” when everything is right", "Tick the box to confirm, then press the button. Your accuracy test and 3-month forecast appear on the same page."],
+  ["Save your results", "Download the forecast (CSV) if you want a copy. Your results stay viewable for 72 hours; then the link locks for good and your sales data is deleted."],
+];
+export function demoLinkEmail({ company, name, link, sender, contact }) {
+  const steps = DEMO_STEPS(link);
+  const body = `<p>Hello${name ? ` ${esc(name)}` : ""},</p><p>Here is your private Draxly demo link for <b>${esc(company)}</b>. You'll upload your own sales and get one full forecast: an accuracy test on your last 3 months, then the next 3 months by product.</p>
+<div style="background:#fff6e5;color:#7a4b00;border-radius:10px;padding:12px 14px;margin:12px 0"><b>Important: this link works only ONCE.</b> When you press “Run my forecast”, the link is used up — you can't upload a second file or try again. Please get everything right before you press go.</div>
+<ol style="padding-left:20px">${steps.map(([t, d], i) => `<li style="margin:8px 0"><b>${esc(t)}</b><br>${i === 2 ? `<a href="${esc(d)}">${esc(d)}</a>` : esc(d)}</li>`).join("")}</ol>
+<p><b>Your data is private.</b> It's encrypted, used only for your demo, and deleted when the link locks — unless you decide to become a customer.</p>
+<p>Questions? Reply to this email${contact ? ` or write to ${esc(contact)}` : ""}.</p><p>${esc(sender)}</p>`;
+  const text = `Hello${name ? ` ${name}` : ""},\n\nHere is your private Draxly demo link for ${company}. You'll upload your own sales and get one full forecast.\n\nIMPORTANT: THIS LINK WORKS ONLY ONCE. When you press "Run my forecast", the link is used up — you can't upload a second file or try again. Please get everything right before you press go.\n\n`
+    + steps.map(([t, d], i) => `${i + 1}. ${t}\n   ${d}`).join("\n\n")
+    + `\n\nYour data is private: it's encrypted, used only for your demo, and deleted when the link locks — unless you decide to become a customer.\n\nQuestions? Reply to this email${contact ? ` or write to ${contact}` : ""}.\n\n${sender}\n`;
+  return { subject: `Your one-time Draxly demo for ${company} (works once — please read first)`, html: shell("Your Draxly demo link", body, link), text };
 }

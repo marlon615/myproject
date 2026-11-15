@@ -43,6 +43,12 @@
         <h2>Demo and access requests</h2>
         <p>Public demo link (no sign-up): <a id="dm-link" target="_blank" rel="noopener"></a></p>
         <p class="hint" id="dm-counts"></p>
+        <h3>One-time demo links</h3>
+        <p class="hint">When a company says yes, send them a link that runs one full forecast on their own sales file. After that run their results stay viewable for 72 hours, then the link locks for good and their data is deleted (unless you mark them as a customer). Unused links lock after 30 days. You see each link's status, never their data.</p>
+        <form id="dl-form" class="pay-row" novalidate><input id="dl-company" class="note" maxlength="150" placeholder="Company" aria-label="Company"><input id="dl-name" class="note" maxlength="100" placeholder="Contact name" aria-label="Contact name"><input id="dl-email" class="note" type="email" maxlength="200" placeholder="Contact email" aria-label="Contact email"><input type="hidden" id="dl-lead"><button class="primary small" type="submit">Create and email the link</button></form>
+        <p class="error" id="dl-error" role="alert" hidden></p>
+        <div id="dl-new" class="reset-box" hidden></div>
+        <div class="table-wrap"><table id="dl-table"></table></div>
         <h3>Access requests</h3>
         <div class="table-wrap"><table id="dm-leads"></table></div>
         <h3>Who opened the demo</h3>
@@ -57,9 +63,8 @@
         <div class="pay-row"><input id="pl-emailFrom" class="note" placeholder="From: Draxly <reports@yourdomain.com>"><input id="pl-emailKey" class="note" type="password" autocomplete="off" placeholder="Resend API key"><span class="hint" id="pl-emailKey-state"></span></div>
         <div class="pay-row"><input id="pl-test-to" class="note" type="email" placeholder="Send a test to…"><button class="secondary small" type="button" id="pl-test">Send test email</button> <span class="hint" id="pl-test-msg"></span></div>
         <h3>Billing and the demo</h3>
-        <div class="pay-row"><input id="pl-billingName" class="note" placeholder="Your business name on invoices"><input id="pl-ownerEmail" class="note" type="email" placeholder="Where access requests are emailed"></div>
+        <div class="pay-row"><input id="pl-billingName" class="note" placeholder="Your business name on invoices" aria-label="Business name on invoices"><input id="pl-ownerEmail" class="note" type="email" placeholder="Where access requests are emailed" aria-label="Where access requests are emailed"></div>
         <label>Payment instructions printed on every invoice (bank transfer / ACH details)<textarea id="pl-paymentInstructions" rows="3" maxlength="1500" placeholder="e.g. ACH or wire to … routing … account … — please include the invoice number."></textarea></label>
-        <div class="pay-row"><input id="pl-bookingUrl" class="note" type="url" placeholder="Booking link for 'Book a call' (https://…)"></div>
         <h3>Sign in with Microsoft</h3>
         <p class="hint">In the Microsoft Entra admin center: App registrations → New registration → “Accounts in any organizational directory and personal Microsoft accounts”, redirect URI (Web): <code id="pl-cb-sso"></code>. Then Certificates &amp; secrets → New client secret.</p>
         <div class="pay-row"><input id="pl-msClientId" class="note" placeholder="Application (client) ID"><input id="pl-msSecret" class="note" type="password" autocomplete="off" placeholder="Client secret value"><span class="hint" id="pl-msSecret-state"></span></div>

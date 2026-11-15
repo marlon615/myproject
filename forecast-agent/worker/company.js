@@ -55,6 +55,12 @@ export class Company extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
+    this.#schema();
+    ctx.blockConcurrencyWhile(() => this.#migrateLegacy());
+  }
+
+  /** Creates the tables (also again after wipe(), so a wiped store can be used straight away). */
+  #schema() {
     const x = (q) => this.sql.exec(q);
     x(`CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, name TEXT NOT NULL, created TEXT NOT NULL, kind TEXT NOT NULL,
       months INTEGER NOT NULL, products INTEGER NOT NULL, first TEXT NOT NULL, last TEXT NOT NULL, data TEXT NOT NULL,
@@ -78,7 +84,6 @@ export class Company extends DurableObject {
       last_sync TEXT, last_ok TEXT, last_error TEXT, rows_last INTEGER, created TEXT NOT NULL, upload TEXT, history_months INTEGER NOT NULL DEFAULT 24, synced_once INTEGER NOT NULL DEFAULT 0)`);
     x(`CREATE TABLE IF NOT EXISTS schedule (task TEXT PRIMARY KEY, next_run INTEGER NOT NULL)`);
     x(`CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`);
-    ctx.blockConcurrencyWhile(() => this.#migrateLegacy());
   }
 
   // ── Small helpers ────────────────────────────────────────────────────────────────────────────────────────────
@@ -984,6 +989,20 @@ export class Company extends DurableObject {
       forecast: f ? { months: f.months, summary: f.summary, ...(view === "total" ? { total: f.total.forecast } : { items: pick(view === "product" ? f.products : view === "location" ? f.locations : f.regions) }) } : null };
   }
 
+  /** An upload's series as plain monthly arrays (used to move a one-time demo into a new customer's own store). */
+  async exportUpload(id) {
+    const up = this.#upload(id);
+    if (!up) return null;
+    const months = this.#range(id), byKey = new Map();
+    for (const row of this.sql.exec("SELECT key, measure, blob FROM series WHERE upload = ?", id).toArray()) {
+      const x = await this.#dec(row.blob);
+      const e = byKey.get(row.key) || { product: x.p, location: x.l, region: x.r };
+      e[row.measure] = months.map((m) => x.v[m] || 0);
+      byKey.set(row.key, e);
+    }
+    return { name: up.name, months, series: [...byKey.values()] };
+  }
+
   /** The public demo's data, loaded once (the forecast and reorder suggestions are then worked out in the background). */
   async seedDemo(account, data) {
     const id = this.#meta("demo_upload");
@@ -1003,6 +1022,7 @@ export class Company extends DurableObject {
   async wipe() {
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
+    this.#schema(); // empty tables again, ready for reuse (e.g. "Allow one more run" on a demo link)
     return { ok: true };
   }
 }

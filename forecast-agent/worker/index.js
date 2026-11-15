@@ -230,7 +230,7 @@ async function api(request, env, path, ctx) {
     const box = company(env, r.account);
     ctx.waitUntil(box.setOrigin(origin));
     const seeded = await box.seedDemo(r.account, demoData());
-    return json({ token: r.token, visit: r.visit, upload: seeded.upload || null, preparing: Boolean(seeded.seeding) || seeded.status === "processing", me: await dir.who(r.token), bookingUrl: (await dir.platform()).bookingUrl || "" });
+    return json({ token: r.token, visit: r.visit, upload: seeded.upload || null, preparing: Boolean(seeded.seeding) || seeded.status === "processing", me: await dir.who(r.token) });
   }
   if (path === "/api/demo/request" && method === "POST") {
     const b = (await readJson(request, 20000)) || {};
@@ -241,9 +241,40 @@ async function api(request, env, path, ctx) {
     const cf = request.cf || {};
     const r = await dir.requestAccess({ ...b, name, email, company: comp, city: cf.city, country: cf.country }, ip);
     if (r.error === "busy") return json({ error: "Thanks — we've already received several requests from here. We'll be in touch." }, 429);
-    if (r.alert) ctx.waitUntil(sendAlert(env, r.alert.topic, { title: "Draxly access request", message: `${r.alert.lead.name} (${r.alert.lead.company}) — ${r.alert.lead.email}${r.alert.lead.phone ? `, ${r.alert.lead.phone}` : ""}${r.alert.lead.wants_call ? "\nWants a call." : ""}\nOpen your owner dashboard: ${origin}/owner`, click: `${origin}/owner`, tags: ["wave"], priority: 4 })
+    if (r.alert) ctx.waitUntil(sendAlert(env, r.alert.topic, { title: "Draxly access request", message: `${r.alert.lead.name} (${r.alert.lead.company}) — ${r.alert.lead.email}\nOpen your owner dashboard: ${origin}/owner`, click: `${origin}/owner`, tags: ["wave"], priority: 4 })
       .then((x) => (x.ok ? dir.markLeadAlerted(r.id) : null)).catch(() => {}));
     return json({ ok: true });
+  }
+
+  // One-time demo links (/try#<token>): the token travels in a header, never in a URL the server logs.
+  if (path === "/api/try" && method === "GET") {
+    const st = await dir.demoLinkStatus(request.headers.get("X-Demo-Link") || "");
+    if (!st) return json({ error: "This demo link isn't valid. Please check you copied the whole link." }, 404);
+    const out = { company: st.company, name: st.name, status: st.status, viewUntil: st.viewUntil, contact: st.contact };
+    if (st.status === "used" && st.upload) out.result = await company(env, `trial:${st.id}`).get(st.upload);
+    return json(out);
+  }
+  if (path === "/api/try/run" && method === "POST") {
+    const tok = request.headers.get("X-Demo-Link") || "";
+    const st = await dir.demoLinkStatus(tok);
+    if (!st) return json({ error: "This demo link isn't valid." }, 404);
+    if (st.status !== "sent") return json({ error: "This demo link has already been used.", status: st.status, contact: st.contact }, 409);
+    const b = await readJson(request);
+    if (!b) return json({ error: "That file is too big to send in one go." }, 413);
+    const c = cleanSeries(b, true);
+    if (c.error) return json({ error: `${c.error} Your one run hasn't been used — fix this and try again.` }, 400);
+    if (c.months.length < MIN_BACKTEST_MONTHS) return json({ error: `The file covers ${c.months.length} months; at least ${MIN_BACKTEST_MONTHS} are needed for the accuracy test. Your one run hasn't been used.` }, 400);
+    const claim = await dir.claimDemoRun(tok); // the one run is used from here on, even if two arrive at once
+    if (claim.error) return json({ error: "This demo link has already been used.", status: claim.error, contact: st.contact }, 409);
+    try {
+      const box = company(env, `trial:${claim.id}`);
+      const r = await box.addUpload(`trial:${claim.id}`, { name: c.name, months: c.months, series: c.series, source: "file" }, { forecast: true });
+      if (r.error) throw new Error(r.error);
+      await dir.demoRunStored(claim.id, r.upload.id);
+      return json({ ok: true, upload: r.upload, viewUntil: claim.viewUntil });
+    } catch (e) {
+      return json({ error: `Something went wrong while forecasting. Please contact us${st.contact ? ` at ${st.contact}` : ""} and we'll reset your link.` }, 500);
+    }
   }
 
   // Everything below needs a signed-in, switched-on company; the company comes only from the token.
@@ -259,7 +290,7 @@ async function api(request, env, path, ctx) {
 
   if (path === "/api/billing" && method === "GET") {
     if (need("admin")) return need("admin");
-    return json({ billing: await dir.billing(me.id), instructions: (await dir.platform()).paymentInstructions || "", seller: (await dir.platform()).billingName || "Draxly" });
+    return json({ billing: await dir.billing(me.id), instructions: (await dir.platform()).paymentInstructions || "", seller: (await dir.platform()).billingName });
   }
   const bp = /^\/api\/billing\/invoices\/([0-9a-f]{32})\/pdf$/.exec(path);
   if (bp && method === "GET") {
@@ -611,6 +642,44 @@ async function ownerApi(request, env, path, dir, token, ctx) {
 
   const testToday = (t) => (env.ALLOW_TEST_CLOCK === "1" && /^\d{4}-\d{2}-\d{2}$/.test(t || "") ? t : todayUTC());
   if (path === "/api/owner/demo" && method === "GET") return json(await dir.demoStats());
+  if (path === "/api/owner/demo-links" && method === "GET") return json({ links: await dir.demoLinks() });
+  if (path.startsWith("/api/owner/demo-links") && method === "POST") await dir.setOrigin(origin); // links and invites use the address you're on
+  if (path === "/api/owner/demo-links" && method === "POST") {
+    const b = (await readJson(request)) || {};
+    const email = String(b.email ?? "").trim().toLowerCase(), comp = String(b.company ?? "").trim();
+    if (!comp) return json({ error: "Type the company's name." }, 400);
+    if (!EMAIL.test(email)) return json({ error: "That email doesn't look right." }, 400);
+    return json(await dir.createDemoLink({ company: comp, name: String(b.name ?? "").trim(), email, lead: LID.test(b.lead || "") ? b.lead : null }));
+  }
+  const dl = /^\/api\/owner\/demo-links\/([0-9a-f]{24})\/(reissue|lock|customer)$/.exec(path);
+  if (dl && method === "POST") {
+    const [, lid, act] = dl;
+    if (act === "reissue") { const r = await dir.createDemoLink({ id: lid }); return r.error ? json({ error: "Not found." }, 404) : json(r); }
+    if (act === "lock") { const r = await dir.lockDemoLink(lid, "locked by you"); return r.error ? json({ error: "Not found." }, 404) : json(r); }
+    if (act === "customer") {
+      const r = await dir.demoLinkCustomer(lid);
+      if (r.error === "exists") return json({ error: "That email already has a Draxly account." }, 409);
+      if (r.error) return json({ error: "Not found." }, 404);
+      let moved = false;
+      if (r.upload) {
+        const data = await company(env, `trial:${lid}`).exportUpload(r.upload);
+        if (data?.series.length) {
+          const box = company(env, r.account);
+          await box.setOrigin(origin);
+          let up = null;
+          for (let i = 0; i < data.series.length; i += 400) {
+            const part = data.series.slice(i, i + 400);
+            if (!up) up = (await box.addUpload(r.account, { name: data.name, months: data.months, series: part, source: "file", final: false })).upload;
+            else await box.appendSeries(up.id, data.months, part);
+          }
+          await box.finishUpload(up.id, { forecast: true });
+          moved = true;
+        }
+      }
+      await dir.lockDemoLink(lid, moved ? "became a customer (their demo data moved to their account)" : "became a customer");
+      return json({ ok: true, inviteLink: r.inviteLink, emailed: r.emailed, moved });
+    }
+  }
   const lm = /^\/api\/owner\/leads\/([0-9a-f]{24})$/.exec(path);
   if (lm && method === "POST") { const b = (await readJson(request)) || {}; const r = await dir.setLead(lm[1], b.status); return r.error ? json({ error: "Status must be new, contacted or closed." }, 400) : json(r); }
   if (path === "/api/owner/billing/run" && method === "POST") { const b = (await readJson(request)) || {}; return json(await dir.billingRun(testToday(b.today))); }
@@ -741,6 +810,7 @@ export default {
     if (/\/index\.html$/.test(path)) return Response.redirect(new URL(path.replace(/index\.html$/, "") + url.search, url), 307);
     if (/\.html$/.test(path) && path !== "/404.html") return Response.redirect(new URL(path.replace(/\.html$/, "") + url.search, url), 307);
     if (path === "/demo") return respond(request, path, FILES["/index.html"]); // the public demo is the app itself, in demo mode
+    if (path === "/try") return respond(request, path, FILES["/try.html"]); // one-time demo links
     const key = path.endsWith("/") ? path + "index.html" : FILES[path] ? path : FILES[path + ".html"] ? path + ".html" : null;
     if (key && FILES[key]) return respond(request, path, FILES[key]);
     return respond(request, path, FILES["/404.html"], 404);
@@ -750,6 +820,7 @@ export default {
     const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("main"));
     const hour = new Date(event.scheduledTime || Date.now()).getUTCHours();
     ctx.waitUntil(dir.billingRun().catch(() => {})); // daily invoices, renewals and reminders (safe to run every hour)
+    ctx.waitUntil(dir.sweepDemoLinks().catch(() => {})); // lock demo links whose time is up, and delete their data
     const ids = await dir.companyIds("", 2000);
     const mine = ids.filter((_, i) => i % 24 === hour).slice(0, 45);
     await Promise.all(mine.map((id) => company(env, id).ensureAlarm(id).catch(() => {})));

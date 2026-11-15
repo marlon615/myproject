@@ -30,6 +30,9 @@ PBKDF2_ITERATIONS = "5000"
 # "free" keeps every background step small enough for the free plan's ~10 ms CPU limit; "paid" (Workers Paid plan)
 # makes each step 10× bigger, so very large companies finish in fewer steps.
 CPU_PLAN = "free"
+# Your business details (also editable on the owner dashboard → Platform settings).
+BILLING_NAME = "M. D. Williams Enterprise, trading as Draxly"
+DEMO_REQUEST_EMAIL = "foliopayments.ja@gmail.com"
 
 # ENCRYPTION_KEY (a secret, set with `wrangler secret put ENCRYPTION_KEY`, never in this file): the AES-256 key for
 # data at rest. Losing it makes the stored data unreadable; it lives only in Cloudflare's secret store.
