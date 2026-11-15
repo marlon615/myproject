@@ -424,6 +424,7 @@ async function api(request, env, path, ctx) {
     if (need("admin")) return need("admin");
     const b = (await readJson(request)) || {};
     if (b.requireSso === true && (await feature("sso"))) return feature("sso");
+    if (b.require2fa === true && !me.require2fa && !me.user.twoFactor && !me.user.sso) return json({ error: "Turn on two-factor sign-in for yourself first (above), so you can't be locked out." }, 400);
     const r = await dir.setCompanySettings(me.id, b);
     if (r.error === "sso") return json({ error: "Single sign-on isn't available yet (it must be switched on for your company and set up by the platform owner)." }, 400);
     if (r.error === "timezone") return json({ error: "Unknown time zone." }, 400);
