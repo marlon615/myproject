@@ -8,6 +8,10 @@
  */
 import { DurableObject } from "cloudflare:workers";
 import * as C from "./crypto.js";
+import * as B from "./billing.js";
+import { invoicePdf, toBase64 } from "./pdf.js";
+import { sendEmail, invoiceEmail, reminderEmail, leadEmail } from "./email.js";
+import { DEMO_COMPANY } from "./demo.js";
 
 export const FEATURES = ["forecasts", "multiLocation", "inventory", "reports", "connectors", "api", "sso"];
 export const ROLES = ["admin", "manager", "viewer"];
@@ -46,6 +50,20 @@ export class Directory extends DurableObject {
       ["features", "TEXT"], ["require_2fa", "INTEGER NOT NULL DEFAULT 0"], ["require_sso", "INTEGER NOT NULL DEFAULT 0"], ["sso_domains", "TEXT NOT NULL DEFAULT ''"],
       ["timezone", "TEXT NOT NULL DEFAULT 'UTC'"], ["connections", "TEXT NOT NULL DEFAULT '[]'"], ["contract_note", "TEXT NOT NULL DEFAULT ''"]]) add("accounts", n, d);
     add("sessions", "user", "TEXT");
+    add("sessions", "demo", "INTEGER NOT NULL DEFAULT 0");
+    add("accounts", "demo", "INTEGER NOT NULL DEFAULT 0");
+    x(`CREATE TABLE IF NOT EXISTS agreements (account TEXT PRIMARY KEY, plan TEXT NOT NULL, billing TEXT NOT NULL, start TEXT NOT NULL, term_start TEXT NOT NULL,
+      term_end TEXT NOT NULL, auto_renew INTEGER NOT NULL DEFAULT 1, cancelled_at TEXT, remainder_billed INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL)`);
+    x(`CREATE TABLE IF NOT EXISTS invoices (id TEXT PRIMARY KEY, number TEXT NOT NULL UNIQUE, account TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'regular',
+      period_start TEXT NOT NULL, period_end TEXT NOT NULL, description TEXT NOT NULL, amount_cents INTEGER NOT NULL, issued TEXT NOT NULL, due TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open', paid_at TEXT, paid_note TEXT, sent_count INTEGER NOT NULL DEFAULT 0, last_sent TEXT, reminders INTEGER NOT NULL DEFAULT 0,
+      last_reminder TEXT, UNIQUE (account, period_start, kind))`);
+    x(`CREATE TABLE IF NOT EXISTS demo_visits (id INTEGER PRIMARY KEY AUTOINCREMENT, t TEXT NOT NULL, city TEXT NOT NULL DEFAULT '', region TEXT NOT NULL DEFAULT '',
+      country TEXT NOT NULL DEFAULT '', device TEXT NOT NULL DEFAULT '', referrer TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', lead TEXT)`);
+    x(`CREATE TABLE IF NOT EXISTS leads (id TEXT PRIMARY KEY, t TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, company TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '', locations TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', wants_call INTEGER NOT NULL DEFAULT 0, visit INTEGER,
+      city TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new', emailed INTEGER NOT NULL DEFAULT 0, alerted INTEGER NOT NULL DEFAULT 0)`);
+    x(`CREATE TABLE IF NOT EXISTS lead_limits (k TEXT PRIMARY KEY, times TEXT NOT NULL)`);
     x(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, account TEXT NOT NULL, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '',
       role TEXT NOT NULL, pw TEXT, salt TEXT, recovery_hash TEXT, reset_hash TEXT, reset_expires INTEGER, reset_requested TEXT,
       invite_hash TEXT, invite_expires INTEGER, totp_enc TEXT, totp_pending TEXT, totp_on INTEGER NOT NULL DEFAULT 0, totp_last INTEGER,
@@ -115,7 +133,8 @@ export class Directory extends DurableObject {
   setContact(text) { this.#setMeta("contact", text); return this.contact(); }
 
   // ── Platform settings (email, sign-in apps, QuickBooks app): secrets are encrypted ──────────────────────────────
-  static SETTINGS = { emailFrom: false, emailKey: true, msClientId: false, msSecret: true, googleClientId: false, googleSecret: true, qbClientId: false, qbSecret: true };
+  static SETTINGS = { emailFrom: false, emailKey: true, msClientId: false, msSecret: true, googleClientId: false, googleSecret: true, qbClientId: false, qbSecret: true,
+    billingName: false, paymentInstructions: false, ownerEmail: false, bookingUrl: false };
   platform() {
     const out = {};
     for (const [k, secret] of Object.entries(Directory.SETTINGS)) out[k] = secret ? Boolean(this.#meta(`set_${k}`)) : this.#meta(`set_${k}`) || "";
@@ -124,7 +143,8 @@ export class Directory extends DurableObject {
   async setPlatform(patch) {
     for (const [k, secret] of Object.entries(Directory.SETTINGS)) {
       if (!(k in patch)) continue;
-      const v = String(patch[k] ?? "").trim().slice(0, 500);
+      const v = String(patch[k] ?? "").trim().slice(0, k === "paymentInstructions" ? 1500 : 500);
+      if (k === "bookingUrl" && v && !/^https:\/\/[^\s]+$/.test(v)) continue; // only https links
       this.#setMeta(`set_${k}`, v ? (secret ? await C.encrypt(this.#key, v) : v) : null);
       this.#log("platform setting changed", null, k);
     }
@@ -138,7 +158,7 @@ export class Directory extends DurableObject {
   alertTopic() { return this.#meta("ntfy_topic") || null; }
   makeTopic() {
     const A = "abcdefghijkmnpqrstuvwxyz23456789";
-    const topic = "forecast-" + Array.from(crypto.getRandomValues(new Uint8Array(20)), (x) => A[x % 32]).join("");
+    const topic = "draxly-" + Array.from(crypto.getRandomValues(new Uint8Array(20)), (x) => A[x % 32]).join("");
     this.#setMeta("ntfy_topic", topic);
     return topic;
   }
@@ -171,10 +191,11 @@ export class Directory extends DurableObject {
   /** Who a session token belongs to (company + user), or null. Every customer request starts here. */
   who(token) {
     if (!token) return null;
-    const s = this.sql.exec("SELECT account, user FROM sessions WHERE token = ? AND expires > ?", token, Date.now()).toArray()[0];
+    const s = this.sql.exec("SELECT account, user, demo FROM sessions WHERE token = ? AND expires > ?", token, Date.now()).toArray()[0];
     if (!s) return null;
     const a = this.#account(s.account), u = s.user && this.#user(s.user);
     if (!a || !u || u.account !== a.id || u.off) return null;
+    if (s.demo) return { ...this.#me(a, u), demo: true, role: "viewer", mustEnroll2fa: false };
     const today = new Date().toISOString().slice(0, 10);
     if ((a.last_seen || "").slice(0, 10) !== today) this.sql.exec("UPDATE accounts SET last_seen = ? WHERE id = ?", new Date().toISOString(), a.id);
     return this.#me(a, u);
@@ -548,13 +569,207 @@ export class Directory extends DurableObject {
   noteConnections(id, list) { this.sql.exec("UPDATE accounts SET connections = ? WHERE id = ?", JSON.stringify(list || []).slice(0, 20000), id); }
   company(id) { const a = this.#account(id); return a ? { id: a.id, company: a.company, timezone: a.timezone, features: this.#features(a), off: Boolean(a.off) } : null; }
   companyIds(after = "", limit = 40) { return this.sql.exec("SELECT id FROM accounts WHERE id > ? ORDER BY id LIMIT ?", after, limit).toArray().map((r) => r.id); }
+  setOrigin(o) { if (/^https?:\/\/[^/]+$/.test(o || "") && this.#meta("origin") !== o) this.#setMeta("origin", o); }
+  #origin() { return this.#meta("origin") || "https://forecast-agent.marlon615.workers.dev"; }
+
+  // ── Billing: Draxly Enterprise agreements and invoices ──────────────────────────────────────────────────────
+  #agreement(account) { return this.sql.exec("SELECT * FROM agreements WHERE account = ?", account).toArray()[0] || null; }
+  #invoiceOut(i) { return { id: i.id, number: i.number, kind: i.kind, periodStart: i.period_start, periodEnd: i.period_end, description: i.description, amountCents: i.amount_cents, issued: i.issued, due: i.due, status: i.status, paidAt: i.paid_at, paidNote: i.paid_note, sentCount: i.sent_count, lastSent: i.last_sent, reminders: i.reminders, lastReminder: i.last_reminder }; }
+  /** Everything the owner dashboard and the customer's billing page show. */
+  /** Today's date for billing (in tests only — ALLOW_TEST_CLOCK — the date of the last test-clock run). */
+  #billingToday() { return (this.env.ALLOW_TEST_CLOCK === "1" && this.#meta("test_clock")) || new Date().toISOString().slice(0, 10); }
+  billing(account, today = this.#billingToday()) {
+    const ag = this.#agreement(account);
+    const inv = this.sql.exec("SELECT * FROM invoices WHERE account = ? ORDER BY issued DESC, number DESC", account).toArray();
+    const st = B.status(ag, inv, today);
+    const open = inv.filter((i) => i.status === "open");
+    let upcoming = [];
+    if (ag && !ag.remainder_billed) {
+      const issuedStarts = new Set(inv.map((i) => i.period_start));
+      upcoming = B.schedule(ag.billing, ag.term_start).filter((s) => !issuedStarts.has(s.periodStart) && s.periodStart > today);
+      if (!ag.cancelled_at && ag.auto_renew) upcoming.push(...B.schedule(ag.billing, ag.term_end).slice(0, 1).map((x) => ({ ...x, renewal: true })));
+    }
+    const nextOpen = [...open].sort((a, b) => a.due.localeCompare(b.due))[0];
+    const nextPayment = nextOpen ? { date: nextOpen.due, amountCents: nextOpen.amount_cents, invoice: nextOpen.number } : upcoming[0] ? { date: B.addDays(upcoming[0].periodStart, B.PLAN.netDays), amountCents: upcoming[0].amountCents, invoiceOn: upcoming[0].periodStart } : null;
+    const termInv = ag ? inv.filter((i) => i.period_start >= ag.term_start && i.period_start < ag.term_end) : [];
+    return {
+      agreement: ag ? { plan: ag.plan, billing: ag.billing, start: ag.start, termStart: ag.term_start, termEnd: ag.term_end, renewal: ag.cancelled_at || !ag.auto_renew ? null : ag.term_end, autoRenew: Boolean(ag.auto_renew) && !ag.cancelled_at, cancelledAt: ag.cancelled_at,
+        amountCents: ag.billing === "annual" ? B.PLAN.annualCents : B.PLAN.monthlyCents } : null,
+      status: st, statusWords: st === "cancelled" && open.some((i) => i.due < today) ? "Cancelled (overdue)" : B.STATUS_WORDS[st],
+      paidCents: inv.filter((i) => i.status === "paid").reduce((a, i) => a + i.amount_cents, 0),
+      paidThisTermCents: termInv.filter((i) => i.status === "paid").reduce((a, i) => a + i.amount_cents, 0),
+      owedCents: open.reduce((a, i) => a + i.amount_cents, 0),
+      overdueCents: open.filter((i) => i.due < today).reduce((a, i) => a + i.amount_cents, 0),
+      remainingTermCents: ag && !ag.remainder_billed ? upcoming.filter((u) => !u.renewal).reduce((a, u) => a + u.amountCents, 0) : 0,
+      nextPayment, invoices: inv.map((i) => this.#invoiceOut(i)),
+    };
+  }
+  /** Starts (or replaces) a company's Draxly Enterprise agreement; invoices due by today are issued straight away. */
+  async startAgreement(account, { start, billing }, today) {
+    const a = this.#account(account);
+    if (!a) return { error: "unknown" };
+    const cur = this.#agreement(account);
+    if (cur && !cur.cancelled_at && cur.term_end > today) return { error: "exists" };
+    this.sql.exec("INSERT OR REPLACE INTO agreements (account, plan, billing, start, term_start, term_end, auto_renew, cancelled_at, remainder_billed, created) VALUES (?, ?, ?, ?, ?, ?, 1, NULL, 0, ?)",
+      account, B.PLAN.name, billing, start, start, B.termEnd(start), new Date().toISOString());
+    this.sql.exec("UPDATE accounts SET plan = ?, contract_cents = ?, contract_start = ?, contract_end = ?, forecasts = 1, features = ? WHERE id = ?",
+      B.PLAN.name, B.PLAN.annualCents, start, B.termEnd(start), JSON.stringify(Object.fromEntries(FEATURES.map((f) => [f, true]))), account);
+    this.#log("agreement started", account, `${B.PLAN.name}, ${billing === "annual" ? "paid yearly upfront" : "$2,500 a month"}, from ${start}`);
+    await this.billingRun(today, account);
+    return { ok: true, billing: this.billing(account, today) };
+  }
+  /** Cancels: no renewal, and the rest of the current year is still owed (monthly plans get one invoice for it now). */
+  async cancelAgreement(account, today) {
+    if (this.env.ALLOW_TEST_CLOCK === "1") this.#setMeta("test_clock", today);
+    const ag = this.#agreement(account);
+    if (!ag || ag.cancelled_at) return { error: "none" };
+    this.sql.exec("UPDATE agreements SET cancelled_at = ?, auto_renew = 0 WHERE account = ?", today, account);
+    let remainder = null;
+    if (ag.billing === "monthly") {
+      const issued = new Set(this.sql.exec("SELECT period_start FROM invoices WHERE account = ? AND kind = 'regular'", account).toArray().map((r) => r.period_start));
+      const left = B.schedule("monthly", ag.term_start).filter((x) => !issued.has(x.periodStart));
+      if (left.length) {
+        remainder = this.#issue(account, { kind: "remainder", periodStart: left[0].periodStart, periodEnd: left[left.length - 1].periodEnd, amountCents: left.reduce((s, x) => s + x.amountCents, 0),
+          description: `${B.PLAN.name} — remaining ${left.length} month${left.length === 1 ? "" : "s"} of the agreement (cancelled early)` }, today);
+      }
+      this.sql.exec("UPDATE agreements SET remainder_billed = 1 WHERE account = ?", account);
+    }
+    this.#log("agreement cancelled", account, remainder ? `remainder invoiced: $${(remainder.amount_cents / 100).toLocaleString("en-US")}` : "no renewal; nothing more to invoice");
+    if (remainder) await this.#emailInvoice(remainder.id, "invoice");
+    return { ok: true, billing: this.billing(account, today) };
+  }
+  #issue(account, x, today) {
+    const n = Number(this.#meta("invoice_seq") || 0) + 1;
+    const year = today.slice(0, 4), number = `DRX-${year}-${String(n).padStart(4, "0")}`;
+    const r = this.sql.exec(`INSERT OR IGNORE INTO invoices (id, number, account, kind, period_start, period_end, description, amount_cents, issued, due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      C.randomHex(16), number, account, x.kind || "regular", x.periodStart, x.periodEnd, x.description, x.amountCents, today, B.addDays(today, B.PLAN.netDays));
+    if (!r.rowsWritten) return null; // already issued for this period
+    this.#setMeta("invoice_seq", String(n));
+    return this.sql.exec("SELECT * FROM invoices WHERE number = ?", number).toArray()[0];
+  }
+  /** The daily billing run: renew agreements that reached their end, issue invoices that are due, send reminders. */
+  async billingRun(today = new Date().toISOString().slice(0, 10), only = null) {
+    if (this.env.ALLOW_TEST_CLOCK === "1") this.#setMeta("test_clock", today);
+    const out = { renewed: [], issued: [], reminders: [] };
+    const ags = only ? [this.#agreement(only)].filter(Boolean) : this.sql.exec("SELECT * FROM agreements").toArray();
+    for (let ag of ags) {
+      while (!ag.cancelled_at && ag.auto_renew && ag.term_end <= today) {
+        this.sql.exec("UPDATE agreements SET term_start = ?, term_end = ?, remainder_billed = 0 WHERE account = ?", ag.term_end, B.termEnd(ag.term_end), ag.account);
+        this.sql.exec("UPDATE accounts SET contract_start = ?, contract_end = ? WHERE id = ?", ag.term_end, B.termEnd(ag.term_end), ag.account);
+        this.#log("agreement renewed", ag.account, `${ag.term_end} to ${B.termEnd(ag.term_end)}`);
+        out.renewed.push(ag.account);
+        ag = this.#agreement(ag.account);
+      }
+      if (!ag.remainder_billed) for (const s of B.schedule(ag.billing, ag.term_start).filter((x) => x.periodStart <= today && (!ag.cancelled_at || x.periodStart <= ag.cancelled_at))) {
+        const inv = this.#issue(ag.account, s, today);
+        if (inv) { out.issued.push(inv.number); await this.#emailInvoice(inv.id, "invoice"); }
+      }
+    }
+    const open = this.sql.exec(`SELECT * FROM invoices WHERE status = 'open'${only ? " AND account = ?" : ""}`, ...(only ? [only] : [])).toArray();
+    for (const inv of open) {
+      const n = B.reminderDue(inv, today);
+      if (!n) continue;
+      this.sql.exec("UPDATE invoices SET reminders = ?, last_reminder = ? WHERE id = ? AND reminders = ?", n, today, inv.id, n - 1); // claim it first: never twice
+      out.reminders.push(inv.number);
+      await this.#emailInvoice(inv.id, "reminder", B.daysBetween(inv.due, today));
+    }
+    this.#setMeta("billing_last_run", today);
+    return out;
+  }
+  async invoicePdfFor(id, account = null) {
+    const i = this.sql.exec("SELECT * FROM invoices WHERE id = ?", id).toArray()[0];
+    if (!i || (account && i.account !== account)) return null;
+    const a = this.#account(i.account);
+    return { number: i.number, bytes: invoicePdf({ seller: this.#meta("set_billingName") || "Draxly", buyer: a.company, invoice: this.#invoiceOut(i), instructions: this.#meta("set_paymentInstructions") }) };
+  }
+  /** Emails an invoice (or an overdue reminder) with the PDF attached to the company's admins. */
+  async #emailInvoice(id, kind, daysLate = 0) {
+    const i = this.sql.exec("SELECT * FROM invoices WHERE id = ?", id).toArray()[0];
+    if (!i) return { ok: false, reason: "unknown" };
+    const a = this.#account(i.account);
+    const to = this.recipients(i.account, "billing", ["admin"]).map((r) => r.email);
+    if (!to.length) return { ok: false, reason: "No admin to send it to." };
+    const pdf = await this.invoicePdfFor(id);
+    const args = { company: a.company, invoice: this.#invoiceOut(i), link: `${this.#origin()}/#/billing`, instructions: this.#meta("set_paymentInstructions"), seller: this.#meta("set_billingName") || "Draxly", daysLate };
+    const mail = kind === "reminder" ? reminderEmail(args) : invoiceEmail(args);
+    const r = await sendEmail(this.env, this, { to, ...mail, attachments: [{ filename: `${i.number}.pdf`, content: toBase64(pdf.bytes) }] });
+    if (r.ok && kind === "invoice") this.sql.exec("UPDATE invoices SET sent_count = sent_count + 1, last_sent = ? WHERE id = ?", new Date().toISOString(), id);
+    this.#log(r.ok ? (kind === "reminder" ? "overdue reminder emailed" : "invoice emailed") : `${kind} not emailed`, i.account, `${i.number}${r.ok ? ` to ${r.sent}` : `: ${r.reason}`}`);
+    return r;
+  }
+  sendInvoice(id) { return this.#emailInvoice(id, "invoice"); }
+  markInvoice(id, paid, note = "") {
+    const i = this.sql.exec("SELECT * FROM invoices WHERE id = ?", id).toArray()[0];
+    if (!i) return { error: "unknown" };
+    if (paid) this.sql.exec("UPDATE invoices SET status = 'paid', paid_at = ?, paid_note = ? WHERE id = ?", new Date().toISOString().slice(0, 10), String(note).slice(0, 200), id);
+    else this.sql.exec("UPDATE invoices SET status = 'open', paid_at = NULL, paid_note = NULL WHERE id = ?", id);
+    this.#log(paid ? "invoice marked paid" : "invoice marked unpaid", i.account, `${i.number} $${(i.amount_cents / 100).toLocaleString("en-US")}${note ? ` (${note})` : ""}`);
+    return { ok: true, account: i.account, number: i.number };
+  }
+
+  // ── Public demo and access requests ──────────────────────────────────────────────────────────────────────────
+  /** The demo company (made once) and a read-only visitor session for it. */
+  ensureDemo() {
+    let a = this.sql.exec("SELECT * FROM accounts WHERE demo = 1 LIMIT 1").toArray()[0];
+    if (!a) {
+      const id = C.randomHex(16), iso = new Date().toISOString();
+      this.sql.exec("INSERT INTO accounts (id, company, email, salt, hash, created, last_seen, features, forecasts, demo, plan) VALUES (?, ?, ?, '', '!', ?, ?, ?, 1, 1, 'Demo')",
+        id, DEMO_COMPANY, `demo-${id}@draxly.invalid`, iso, iso, JSON.stringify({ ...Object.fromEntries(FEATURES.map((f) => [f, false])), forecasts: true, multiLocation: true, inventory: true }));
+      this.sql.exec("INSERT INTO users (id, account, email, name, role, created) VALUES (?, ?, ?, 'Demo visitor', 'viewer', ?)", C.randomHex(16), id, `visitor-${id}@draxly.invalid`, iso);
+      a = this.#account(id);
+    }
+    return { id: a.id };
+  }
+  demoSession(visit) {
+    const { id } = this.ensureDemo();
+    const u = this.sql.exec("SELECT id FROM users WHERE account = ? LIMIT 1", id).toArray()[0];
+    const token = C.randomHex(32);
+    this.sql.exec("DELETE FROM sessions WHERE expires < ?", Date.now());
+    this.sql.exec("INSERT INTO sessions (token, account, user, expires, demo) VALUES (?, ?, ?, ?, 1)", token, id, u.id, Date.now() + 3 * HOUR);
+    const clip = (v, n = 120) => String(v || "").slice(0, n);
+    this.sql.exec("INSERT INTO demo_visits (t, city, region, country, device, referrer, source) VALUES (?, ?, ?, ?, ?, ?, ?)", new Date().toISOString(), clip(visit.city, 80), clip(visit.region, 80), clip(visit.country, 8), clip(visit.device, 60), clip(visit.referrer, 200), clip(visit.source, 120));
+    return { token, account: id, visit: this.sql.exec("SELECT last_insert_rowid() AS id").one().id };
+  }
+  /** "Request access": stored, then the owner is told (phone alert + email). 5 requests an hour per visitor network. */
+  async requestAccess(form, net) {
+    const now = Date.now(), k = await C.sha256(`lead:${net}`);
+    const times = JSON.parse(this.sql.exec("SELECT times FROM lead_limits WHERE k = ?", k).toArray()[0]?.times || "[]").filter((t) => now - t < HOUR);
+    if (times.length >= 5) return { error: "busy" };
+    times.push(now);
+    this.sql.exec("INSERT OR REPLACE INTO lead_limits (k, times) VALUES (?, ?)", k, JSON.stringify(times));
+    const id = C.randomHex(12), clip = (v, n = 200) => String(v || "").trim().slice(0, n);
+    const visit = Number(form.visit) > 0 ? Number(form.visit) : null;
+    this.sql.exec("INSERT INTO leads (id, t, name, email, company, title, phone, locations, message, wants_call, visit, city, country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      id, new Date().toISOString(), clip(form.name, 100), clip(form.email, 200).toLowerCase(), clip(form.company, 150), clip(form.title, 100), clip(form.phone, 40), clip(form.locations, 40), clip(form.message, 2000), form.wantsCall ? 1 : 0, visit, clip(form.city, 80), clip(form.country, 8));
+    if (visit) this.sql.exec("UPDATE demo_visits SET lead = ? WHERE id = ?", id, visit);
+    this.#log("access requested", null, `${clip(form.name, 100)} <${clip(form.email, 200)}>, ${clip(form.company, 150)}`);
+    const lead = this.sql.exec("SELECT * FROM leads WHERE id = ?", id).one();
+    const topic = this.alertTopic();
+    const ownerEmail = this.#meta("set_ownerEmail");
+    let emailed = false;
+    if (ownerEmail) {
+      const r = await sendEmail(this.env, this, { to: [ownerEmail], ...leadEmail({ lead, link: `${this.#origin()}/owner` }) });
+      emailed = r.ok;
+      if (r.ok) this.sql.exec("UPDATE leads SET emailed = 1 WHERE id = ?", id);
+    }
+    return { ok: true, id, emailed, alert: topic && this.#alertAllowed() ? { topic, lead } : null };
+  }
+  markLeadAlerted(id) { this.sql.exec("UPDATE leads SET alerted = 1 WHERE id = ?", id); }
+  demoStats() {
+    const visits = this.sql.exec("SELECT * FROM demo_visits ORDER BY id DESC LIMIT 300").toArray();
+    const leads = this.sql.exec("SELECT * FROM leads ORDER BY t DESC LIMIT 300").toArray().map((l) => ({ ...l, wantsCall: Boolean(l.wants_call) }));
+    const since = (d) => new Date(Date.now() - d * 86_400_000).toISOString();
+    return { visits, leads, counts: { visits7: this.sql.exec("SELECT COUNT(*) AS n FROM demo_visits WHERE t >= ?", since(7)).one().n, visits30: this.sql.exec("SELECT COUNT(*) AS n FROM demo_visits WHERE t >= ?", since(30)).one().n,
+      visitsAll: this.sql.exec("SELECT COUNT(*) AS n FROM demo_visits").one().n, leadsNew: leads.filter((l) => l.status === "new").length, leadsAll: leads.length } };
+  }
+  setLead(id, status) { if (!["new", "contacted", "closed"].includes(status)) return { error: "status" }; this.sql.exec("UPDATE leads SET status = ? WHERE id = ?", status, id); return { ok: true }; }
 
   // ── Owner ────────────────────────────────────────────────────────────────────────────────────────────────────
   customers() {
     const pays = this.sql.exec("SELECT * FROM payments ORDER BY created DESC").toArray();
-    const allUsers = this.sql.exec("SELECT * FROM users ORDER BY created").toArray();
-    const today = new Date().toISOString().slice(0, 10);
-    const customers = this.sql.exec("SELECT * FROM accounts ORDER BY created DESC").toArray().map((r) => {
+    const allUsers = this.sql.exec("SELECT * FROM users WHERE account NOT IN (SELECT id FROM accounts WHERE demo = 1) ORDER BY created").toArray();
+    const today = this.#billingToday();
+    const customers = this.sql.exec("SELECT * FROM accounts WHERE demo = 0 ORDER BY created DESC").toArray().map((r) => {
       const mine = pays.filter((p) => p.account === r.id);
       const users = allUsers.filter((u) => u.account === r.id);
       const admin = users.find((u) => u.role === "admin") || users[0];
@@ -569,6 +784,7 @@ export class Directory extends DurableObject {
         plan: r.plan, contractCents: r.contract_cents, contractStart: r.contract_start, contractEnd: r.contract_end, contractNote: r.contract_note, contractActive: active,
         features: this.#features(r), require2fa: Boolean(r.require_2fa), requireSso: Boolean(r.require_sso), ssoDomains: r.sso_domains, timezone: r.timezone,
         users: users.map((u) => this.#userOut(u)), connections: JSON.parse(r.connections || "[]"),
+        billing: this.billing(r.id, today),
       };
     });
     const acc = customers.filter((c) => c.lastAccuracy !== null && c.lastAccuracy !== undefined);
@@ -581,6 +797,9 @@ export class Directory extends DurableObject {
         avgAccuracy: acc.length ? Math.round((acc.reduce((a, c) => a + c.lastAccuracy, 0) / acc.length) * 10) / 10 : null,
         arrCents: customers.filter((c) => c.contractActive).reduce((a, c) => a + c.contractCents, 0), contracts: customers.filter((c) => c.contractActive).length,
         users: allUsers.length, connections: conns.length, failing: conns.filter((x) => x.status === "error").length,
+        agreementArrCents: customers.filter((c) => ["paid", "overdue"].includes(c.billing.status)).length * B.PLAN.annualCents, agreements: customers.filter((c) => ["paid", "overdue"].includes(c.billing.status)).length,
+        overdueCents: customers.reduce((a, c) => a + c.billing.overdueCents, 0), owedCents: customers.reduce((a, c) => a + c.billing.owedCents, 0),
+        invoicePaidCents: customers.reduce((a, c) => a + c.billing.paidCents, 0),
       },
       contact: this.contact(), minContractCents: MIN_CONTRACT_CENTS,
     };

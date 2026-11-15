@@ -1,5 +1,5 @@
 /**
- * The whole Forecasting Agent with the real Worker (wrangler dev, local storage) and a real browser at phone size:
+ * The whole Draxly with the real Worker (wrangler dev, local storage) and a real browser at phone size:
  *   - two companies sign up; one uploads the sample CSV, the other a real Excel (.xlsx) file;
  *   - the free backtest runs on upload: accuracy score, chart, predicted vs actual table, summary;
  *   - the 3-month forecast is refused (by the server, 402) until the owner records a payment, then shows its chart,

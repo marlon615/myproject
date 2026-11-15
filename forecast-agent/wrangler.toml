@@ -1,4 +1,4 @@
-# Forecasting Agent. The Worker serves the app (packed in by scripts/build-worker.cjs) and the API.
+# Draxly. The Worker serves the app (packed in by scripts/build-worker.cjs) and the API.
 # Directory = logins, payments, switches, owner passcode. Company = one private store per customer company.
 name = "forecast-agent"
 main = "worker/index.js"

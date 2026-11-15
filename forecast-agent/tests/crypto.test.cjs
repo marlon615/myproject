@@ -21,7 +21,7 @@
     "TOTP codes match the RFC 6238 test vectors (4 times)");
   check(await C.checkTotp(sec, "287082", 59000) === 1 && await C.checkTotp(sec, "287082", 59000 + 30000) === 1 && await C.checkTotp(sec, "287082", 59000 + 90000) === null && await C.checkTotp(sec, "12345", 59000) === null,
     "a code is accepted for its 30 seconds ±1 step, not later; malformed codes refused");
-  check(/^otpauth:\/\/totp\/Forecasting%20Agent:a%40b\.c\?secret=[A-Z2-7]+&issuer=Forecasting%20Agent/.test(C.totpUri(C.newTotpSecret(), "a@b.c")), "authenticator-app link format");
+  check(/^otpauth:\/\/totp\/Draxly:a%40b\.c\?secret=[A-Z2-7]+&issuer=Draxly/.test(C.totpUri(C.newTotpSecret(), "a@b.c")), "authenticator-app link format");
 
   const key = C.b64(nodeCrypto.randomBytes(32));
   const e1 = await C.encrypt(key, "Mango Juice 4250.00"), e2 = await C.encrypt(key, "Mango Juice 4250.00");

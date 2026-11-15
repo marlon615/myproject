@@ -171,3 +171,21 @@ pre { background: var(--grid); padding: 12px; border-radius: 8px; overflow-x: au
 .plan.featured { border-color: var(--accent); border-width: 2px; }
 .plan .primary { text-decoration: none; margin-top: 8px; }
 @media (max-width: 720px) { .plans { grid-template-columns: 1fr; } }
+/* Draxly */
+.tagline { font-size: 1.15rem; font-weight: 700; color: var(--accent); margin: 0 0 4px; }
+.auth-brand { display: flex; flex-direction: column; gap: 2px; margin: 0 0 12px; }
+.auth-brand b { font-size: 1.3rem; }
+.auth-brand span { color: var(--ink-2); font-size: .95rem; }
+/* Billing, demo */
+.demo-bar { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding: 10px 16px; background: #14181f; color: #fff; font-size: .92rem; }
+.demo-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.secondary.light { color: #fff; border-color: #fff; }
+.link.light { color: #cfe0ff; }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+textarea { display: block; width: 100%; margin-top: 4px; padding: 10px 12px; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.pre { white-space: pre-line; }
+.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px 16px; margin: 8px 0; }
+.facts div { display: flex; flex-direction: column; } .facts span { color: var(--muted); font-size: .85rem; } .facts b { font-size: 1.05rem; }
+.pill.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.billing-box { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+.inv-table td, .inv-table th { font-size: .85rem; }

@@ -984,6 +984,21 @@ export class Company extends DurableObject {
       forecast: f ? { months: f.months, summary: f.summary, ...(view === "total" ? { total: f.total.forecast } : { items: pick(view === "product" ? f.products : view === "location" ? f.locations : f.regions) }) } : null };
   }
 
+  /** The public demo's data, loaded once (the forecast and reorder suggestions are then worked out in the background). */
+  async seedDemo(account, data) {
+    const id = this.#meta("demo_upload");
+    if (id && this.#upload(id)) return { upload: id, status: this.#upload(id).status };
+    if (this.#meta("demo_seeding")) return { seeding: true }; // set before the first await, so only one visitor seeds
+    this.#setMeta("demo_seeding", "1");
+    try {
+      const r = await this.addUpload(account, { name: data.name, months: data.months, series: data.series, source: "file" }, { forecast: true });
+      this.#setMeta("demo_upload", r.upload.id);
+      await this.upsertInventory(account, data.inventory, { replace: true, source: "demo" });
+      this.setInventorySettings({ mainUpload: r.upload.id });
+      return { upload: r.upload.id, status: "processing" };
+    } finally { this.#setMeta("demo_seeding", null); }
+  }
+
   /** Company deleted: everything goes. */
   async wipe() {
     await this.ctx.storage.deleteAlarm();

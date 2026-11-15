@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex, nofollow">
-  <title>Owner dashboard · Forecasting Agent</title>
+  <title>Owner dashboard · Draxly</title>
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/owner.js"></script>
@@ -39,13 +39,27 @@
         <p class="hint" id="o-none">No customers yet. They sign up on the main page.</p>
         <div id="o-customers"></div>
       </div>
+      <div class="card" id="demo">
+        <h2>Demo and access requests</h2>
+        <p>Public demo link (no sign-up): <a id="dm-link" target="_blank" rel="noopener"></a></p>
+        <p class="hint" id="dm-counts"></p>
+        <h3>Access requests</h3>
+        <div class="table-wrap"><table id="dm-leads"></table></div>
+        <h3>Who opened the demo</h3>
+        <p class="hint">City and country come from Cloudflare's view of the visitor's network; no IP addresses are kept.</p>
+        <div class="table-wrap"><table id="dm-visits"></table></div>
+      </div>
       <div class="card" id="platform">
         <h2>Platform settings</h2>
         <p class="hint">Keys you paste here are stored encrypted and never shown again (a saved key shows as “saved”). Leave a key box empty to keep it.</p>
         <h3>Email (for invites, weekly reports and low-stock alerts)</h3>
-        <p class="hint">Uses <b>Resend</b> (free tier: 3,000 emails a month). Create an account at resend.com, verify your domain there, create an API key, and paste it with the From address (e.g. Forecasts &lt;reports@yourdomain.com&gt;). Without a verified domain, Resend only delivers to your own address.</p>
-        <div class="pay-row"><input id="pl-emailFrom" class="note" placeholder="From: Name <reports@yourdomain.com>"><input id="pl-emailKey" class="note" type="password" autocomplete="off" placeholder="Resend API key"><span class="hint" id="pl-emailKey-state"></span></div>
+        <p class="hint">Uses <b>Resend</b> (free tier: 3,000 emails a month). Create an account at resend.com, verify your domain there, create an API key, and paste it with the From address (e.g. Draxly &lt;billing@yourdomain.com&gt;). Without a verified domain, Resend only delivers to your own address.</p>
+        <div class="pay-row"><input id="pl-emailFrom" class="note" placeholder="From: Draxly <reports@yourdomain.com>"><input id="pl-emailKey" class="note" type="password" autocomplete="off" placeholder="Resend API key"><span class="hint" id="pl-emailKey-state"></span></div>
         <div class="pay-row"><input id="pl-test-to" class="note" type="email" placeholder="Send a test to…"><button class="secondary small" type="button" id="pl-test">Send test email</button> <span class="hint" id="pl-test-msg"></span></div>
+        <h3>Billing and the demo</h3>
+        <div class="pay-row"><input id="pl-billingName" class="note" placeholder="Your business name on invoices"><input id="pl-ownerEmail" class="note" type="email" placeholder="Where access requests are emailed"></div>
+        <label>Payment instructions printed on every invoice (bank transfer / ACH details)<textarea id="pl-paymentInstructions" rows="3" maxlength="1500" placeholder="e.g. ACH or wire to … routing … account … — please include the invoice number."></textarea></label>
+        <div class="pay-row"><input id="pl-bookingUrl" class="note" type="url" placeholder="Booking link for 'Book a call' (https://…)"></div>
         <h3>Sign in with Microsoft</h3>
         <p class="hint">In the Microsoft Entra admin center: App registrations → New registration → “Accounts in any organizational directory and personal Microsoft accounts”, redirect URI (Web): <code id="pl-cb-sso"></code>. Then Certificates &amp; secrets → New client secret.</p>
         <div class="pay-row"><input id="pl-msClientId" class="note" placeholder="Application (client) ID"><input id="pl-msSecret" class="note" type="password" autocomplete="off" placeholder="Client secret value"><span class="hint" id="pl-msSecret-state"></span></div>

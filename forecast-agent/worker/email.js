@@ -5,7 +5,7 @@
  */
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-export async function sendEmail(env, dir, { to, subject, html, text }) {
+export async function sendEmail(env, dir, { to, subject, html, text, attachments }) {
   const key = await dir.secret("emailKey"), from = await dir.secret("emailFrom");
   if (!key || !from) return { ok: false, sent: 0, reason: "Email isn't set up yet (owner dashboard → Email)." };
   let sent = 0; const errors = [];
@@ -13,7 +13,7 @@ export async function sendEmail(env, dir, { to, subject, html, text }) {
     try {
       const res = await fetch(env.EMAIL_URL || "https://api.resend.com/emails", {
         method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ from, to: [addr], subject, html, text }),
+        body: JSON.stringify({ from, to: [addr], subject, html, text, ...(attachments?.length ? { attachments } : {}) }),
       });
       if (res.ok) sent++; else errors.push(`${res.status}`);
     } catch (e) { errors.push("network"); }
@@ -24,8 +24,8 @@ export async function sendEmail(env, dir, { to, subject, html, text }) {
 const shell = (title, body, link) => `<!doctype html><html><body style="margin:0;background:#f6f7f9;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#14181f">
 <div style="max-width:640px;margin:0 auto;padding:24px 16px"><div style="background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:24px">
 <h1 style="font-size:20px;margin:0 0 12px">${esc(title)}</h1>${body}
-${link ? `<p style="margin:20px 0 0"><a href="${esc(link)}" style="display:inline-block;background:#1f5fbf;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600">Open the Forecasting Agent</a></p>` : ""}
-</div><p style="color:#6b7380;font-size:12px;margin:12px 4px">You get this because of your notification settings in the Forecasting Agent (Settings → Emails).</p></div></body></html>`;
+${link ? `<p style="margin:20px 0 0"><a href="${esc(link)}" style="display:inline-block;background:#1f5fbf;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600">Open Draxly</a></p>` : ""}
+</div><p style="color:#6b7380;font-size:12px;margin:12px 4px">You get this because of your notification settings in Draxly (Settings → Emails).</p></div></body></html>`;
 const table = (head, rows) => `<table style="border-collapse:collapse;width:100%;font-size:14px">
 <tr>${head.map((h, i) => `<th style="text-align:${i ? "right" : "left"};color:#6b7380;font-weight:600;padding:6px 8px;border-bottom:1px solid #e1e4ea">${esc(h)}</th>`).join("")}</tr>
 ${rows.map((r) => `<tr>${r.map((c, i) => `<td style="text-align:${i ? "right" : "left"};padding:6px 8px;border-bottom:1px solid #eef0f3">${esc(c)}</td>`).join("")}</tr>`).join("")}</table>`;
@@ -60,6 +60,28 @@ ${items.length > 50 ? `<p style="color:#6b7380">…and ${items.length - 50} more
 }
 
 export function inviteEmail({ company, inviter, link, role }) {
-  const body = `<p>${esc(inviter)} invited you to <b>${esc(company)}</b> on the Forecasting Agent as ${role === "admin" ? "an admin" : `a ${esc(role)}`}.</p><p>The link works for 7 days.</p>`;
-  return { subject: `You're invited to ${company} on the Forecasting Agent`, html: shell("You're invited", body, link), text: `${inviter} invited you to ${company} on the Forecasting Agent. Accept within 7 days: ${link}` };
+  const body = `<p>${esc(inviter)} invited you to <b>${esc(company)}</b> on Draxly as ${role === "admin" ? "an admin" : `a ${esc(role)}`}.</p><p>The link works for 7 days.</p>`;
+  return { subject: `You're invited to ${company} on Draxly`, html: shell("You're invited", body, link), text: `${inviter} invited you to ${company} on Draxly. Accept within 7 days: ${link}` };
+}
+
+const usd = (c) => `$${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const day = (s) => new Date(`${s}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "long", day: "numeric", year: "numeric" });
+const invoiceBody = (invoice, instructions) => `${table(["Invoice", "Period", "Amount", "Due"], [[invoice.number, `${day(invoice.periodStart)} – ${day(invoice.periodEnd)}`, usd(invoice.amountCents), day(invoice.due)]])}
+<p style="margin:16px 0 4px;font-weight:600">How to pay</p><p style="margin:0;white-space:pre-line">${esc(instructions || "Payment instructions will be sent separately.")}</p>
+<p style="color:#6b7380;font-size:13px">The invoice is attached as a PDF and is always available on your billing page. Please include ${esc(invoice.number)} with your payment.</p>`;
+export function invoiceEmail({ company, invoice, link, instructions, seller }) {
+  const body = `<p>Hello ${esc(company)},</p><p>Here's your Draxly invoice ${esc(invoice.number)} for <b>${usd(invoice.amountCents)}</b>, due <b>${day(invoice.due)}</b>.</p>${invoiceBody(invoice, instructions)}<p>Thank you,<br>${esc(seller)}</p>`;
+  return { subject: `Draxly invoice ${invoice.number}: ${usd(invoice.amountCents)} due ${day(invoice.due)}`, html: shell(`Invoice ${invoice.number}`, body, link),
+    text: `Draxly invoice ${invoice.number} for ${company}: ${usd(invoice.amountCents)}, due ${day(invoice.due)}.\n${invoice.description}\n\nHow to pay:\n${instructions || ""}\n\nBilling page: ${link}` };
+}
+export function reminderEmail({ company, invoice, link, instructions, seller, daysLate }) {
+  const body = `<p>Hello ${esc(company)},</p><p>Our records show Draxly invoice ${esc(invoice.number)} for <b>${usd(invoice.amountCents)}</b> was due on ${day(invoice.due)} and is now <b>${daysLate} day${daysLate === 1 ? "" : "s"} overdue</b>. If you've already paid, thank you — please reply with the payment date so we can match it.</p>${invoiceBody(invoice, instructions)}<p>Thank you,<br>${esc(seller)}</p>`;
+  return { subject: `Reminder: Draxly invoice ${invoice.number} is ${daysLate} day${daysLate === 1 ? "" : "s"} overdue`, html: shell(`Payment reminder — ${invoice.number}`, body, link),
+    text: `Reminder: Draxly invoice ${invoice.number} for ${company} (${usd(invoice.amountCents)}) was due ${day(invoice.due)} and is ${daysLate} days overdue.\n\nHow to pay:\n${instructions || ""}\n\nBilling page: ${link}` };
+}
+export function leadEmail({ lead, link }) {
+  const rows = [["Name", lead.name], ["Email", lead.email], ["Company", lead.company], ["Role", lead.title], ["Phone", lead.phone], ["Locations", lead.locations], ["Wants a call", lead.wants_call ? "Yes" : "No"], ["From", [lead.city, lead.country].filter(Boolean).join(", ")]].filter((r) => r[1]);
+  const body = `${table(["", ""], rows)}${lead.message ? `<p style="margin:16px 0 4px;font-weight:600">Message</p><p style="white-space:pre-line;margin:0">${esc(lead.message)}</p>` : ""}`;
+  return { subject: `Draxly access request: ${lead.name} (${lead.company})`, html: shell("New access request from the demo", body, link),
+    text: rows.map(([k, v]) => `${k}: ${v}`).join("\n") + (lead.message ? `\n\n${lead.message}` : "") + `\n\n${link}` };
 }

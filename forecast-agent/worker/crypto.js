@@ -103,7 +103,7 @@ export async function checkTotp(secret, code, now = Date.now()) {
   for (const d of [0, -1, 1]) if (sameText(await totpAt(secret, step + d), c)) return step + d;
   return null;
 }
-export const totpUri = (secret, account, issuer = "Forecasting Agent") =>
+export const totpUri = (secret, account, issuer = "Draxly") =>
   `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 
 // ── ID tokens (OpenID Connect, RS256) ───────────────────────────────────────────────────────────────────────────

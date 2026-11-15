@@ -12,6 +12,24 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const money = (cents) => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const fmt = (v, kind) => (kind === "units" ? `${Math.round(v).toLocaleString("en-US")}` : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2 }));
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—");
+const BILL_PILL = { paid: "on", overdue: "off", cancelled: "warn", ended: "", none: "" };
+const longDay = (s) => (s ? new Date(`${s}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" }) : "—");
+function billingBlock(c) {
+  const b = c.billing, ag = b.agreement, today = new Date().toISOString().slice(0, 10);
+  const canStart = !ag || b.status === "ended" || (ag.cancelledAt && ag.termEnd <= today);
+  return `<div class="billing-box">
+    <div class="cust-head"><b>Billing</b><span class="pill ${BILL_PILL[b.status] || ""}">${esc(b.statusWords)}</span></div>
+    ${ag ? `<div class="cust-facts"><span>Plan: <b>${esc(ag.plan)}</b> (${ag.billing === "annual" ? "paid yearly upfront" : "$2,500 a month"})</span><span>Start: <b>${longDay(ag.start)}</b></span>
+      <span>${ag.cancelledAt ? `Cancelled ${longDay(ag.cancelledAt)} — ends <b>${longDay(ag.termEnd)}</b>` : `Renews: <b>${longDay(ag.renewal)}</b>`}</span>
+      <span>Paid: <b>${money(b.paidCents)}</b></span><span>Owed: <b>${money(b.owedCents)}</b>${b.overdueCents ? ` (<b class="error">${money(b.overdueCents)} overdue</b>)` : ""}</span>
+      ${b.remainingTermCents ? `<span>Still to invoice this year: ${money(b.remainingTermCents)}</span>` : ""}${b.nextPayment ? `<span>Next payment: ${money(b.nextPayment.amountCents)} due ${longDay(b.nextPayment.date)}</span>` : ""}</div>` : `<p class="hint">No agreement yet.</p>`}
+    ${b.invoices.length ? `<div class="table-wrap"><table class="inv-table"><thead><tr><th>Invoice</th><th>Period</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr></thead><tbody>${b.invoices.map((i) => `<tr data-inv="${i.id}"><th scope="row">${esc(i.number)}</th><td>${longDay(i.periodStart)} – ${longDay(i.periodEnd)}</td><td>${money(i.amountCents)}</td><td>${longDay(i.due)}</td>
+      <td><span class="pill ${i.status === "paid" ? "on" : i.due < today ? "off" : ""}">${i.status === "paid" ? `Paid ${longDay(i.paidAt)}` : i.due < today ? "Overdue" : "Open"}</span>${i.sentCount ? ` <span class="hint">emailed ${i.sentCount}×</span>` : ' <span class="hint">not emailed</span>'}${i.reminders ? ` <span class="hint">${i.reminders} reminder${i.reminders === 1 ? "" : "s"}</span>` : ""}</td>
+      <td class="actions">${i.status === "paid" ? '<button class="link inv-unpaid" type="button">Undo paid</button>' : '<button class="secondary small inv-paid" type="button">Mark paid</button>'} <button class="link inv-send" type="button">Send invoice</button> <button class="link inv-pdf" data-n="${esc(i.number)}" type="button">PDF</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+    <div class="pay-row">${canStart ? `<label class="inline">Start<input type="date" class="ag-start" value="${today}"></label><select class="ag-billing" aria-label="Payment option"><option value="annual">$30,000 upfront for the year</option><option value="monthly">$2,500 a month by invoice</option></select><button class="primary small ag-go" type="button">Start Draxly Enterprise</button>`
+      : !ag.cancelledAt ? '<button class="link danger ag-cancel" type="button">Cancel agreement</button>' : ""}</div>
+    <p class="hint bill-msg"></p></div>`;
+}
 const FEATURE_NAMES = { forecasts: "3-month forecasts", multiLocation: "By store & region", inventory: "Stock & reorder", reports: "Weekly email reports", connectors: "Direct connections", api: "API & file drop", sso: "Single sign-on" };
 let features = Object.keys(FEATURE_NAMES), minContract = 3000000;
 const openFeat = new Set();
@@ -72,6 +90,7 @@ async function draw({ auto = false } = {}) {
   if (showing && auto && typing()) return;               // you're typing: try again on the next round
   lastData = sig;
   if (!showing) { show("o-dash"); loadAlerts(); loadPlatform(); }
+  loadDemo();
   stamp();
   // What's open or typed in each customer card, to put back after the redraw.
   const keep = new Map([...document.querySelectorAll("#o-customers .cust")].map((card) => [card.dataset.id, {
@@ -84,6 +103,7 @@ async function draw({ auto = false } = {}) {
   $("o-tiles").innerHTML = tile(totals.customers, "Customers") + tile(totals.paying, "Paying") + tile(money(totals.collectedCents), "Money collected")
     + tile(totals.uploads, "Uploads") + tile(totals.avgAccuracy === null ? "—" : `${totals.avgAccuracy}%`, "Average backtest accuracy")
     + tile(money(totals.arrCents), "Annual contract value") + tile(totals.contracts, "Active contracts") + tile(totals.users, "Users")
+    + tile(money(totals.agreementArrCents), `Draxly Enterprise (${totals.agreements} agreement${totals.agreements === 1 ? "" : "s"})`) + tile(money(totals.overdueCents), "Overdue") + tile(money(totals.owedCents), "Owed (invoiced, unpaid)")
     + tile(totals.failing ? `${totals.failing} failing` : totals.connections, totals.failing ? `of ${totals.connections} connections` : "Connections");
   features = r.data.features || features; minContract = r.data.minContractCents || minContract;
   if (document.activeElement !== $("o-contact")) $("o-contact").value = contact;
@@ -99,6 +119,7 @@ async function draw({ auto = false } = {}) {
         <label class="switch"><input type="checkbox" class="sw-account" ${c.off ? "" : "checked"}> Account on</label>
         <label class="switch"><input type="checkbox" class="sw-forecasts" ${c.forecasts ? "checked" : ""}> 3-month forecasts on</label>
       </div>
+      ${billingBlock(c)}
       <div class="ent">
         <div class="cust-facts"><span>Plan: <b>${esc(c.plan)}</b></span><span>Contract: <b>${c.contractCents ? `${money(c.contractCents)}/year` : "none"}</b>${c.contractStart || c.contractEnd ? ` (${c.contractStart || "?"} to ${c.contractEnd || "?"})` : ""}${c.contractCents && !c.contractActive ? ' <span class="pill off">Not active</span>' : ""}</span>
           <span>${c.users.length} user${c.users.length === 1 ? "" : "s"}</span><span>Two-factor required: ${c.require2fa ? "yes" : "no"}</span><span>Single sign-on required: ${c.requireSso ? "yes" : "no"}</span><span>Time zone: ${esc(c.timezone)}</span></div>
@@ -241,6 +262,34 @@ $("o-customers").addEventListener("click", async (e) => {
   if (!card) return;
   const id = card.dataset.id, t = e.target;
   const name = card.querySelector(".cust-name").textContent;
+  const invRow = t.closest("tr[data-inv]");
+  if (invRow) {
+    const iid = invRow.dataset.inv, msg = card.querySelector(".bill-msg");
+    if (t.classList.contains("inv-paid")) { const note = prompt("Mark this invoice paid. Note (optional, e.g. 'ACH received 12 Dec'):", ""); if (note === null) return; await call(`/api/owner/invoices/${iid}/paid`, { method: "POST", body: { paid: true, note } }); return dash(); }
+    if (t.classList.contains("inv-unpaid")) { if (!confirm("Mark this invoice as not paid?")) return; await call(`/api/owner/invoices/${iid}/paid`, { method: "POST", body: { paid: false } }); return dash(); }
+    if (t.classList.contains("inv-send")) { msg.textContent = "Sending…"; const r = await call(`/api/owner/invoices/${iid}/send`, { method: "POST" }); msg.textContent = r.ok ? `Invoice emailed to ${r.data.sent} admin${r.data.sent === 1 ? "" : "s"}.` : r.data.error; return; }
+    if (t.classList.contains("inv-pdf")) {
+      const res = await fetch(`/api/owner/invoices/${iid}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return alert("Couldn't get the PDF.");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(await res.blob()); a.download = `draxly-invoice-${t.dataset.n}.pdf`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      return;
+    }
+  }
+  if (t.classList.contains("ag-go")) {
+    const billing = card.querySelector(".ag-billing").value, start = card.querySelector(".ag-start").value;
+    if (!confirm(`Start Draxly Enterprise for ${name} from ${start}: ${billing === "annual" ? "$30,000 invoiced now for the year" : "$2,500 invoiced each month"}, renewing every year unless cancelled? Every feature is switched on.`)) return;
+    const r = await call("/api/owner/agreement", { method: "POST", body: { id, billing, start } });
+    if (!r.ok) return alert(r.data.error);
+    return dash();
+  }
+  if (t.classList.contains("ag-cancel")) {
+    const b = JSON.parse(lastData).customers.find((x) => x.id === id).billing;
+    const left = b.agreement.billing === "monthly" ? b.remainingTermCents : 0;
+    if (!confirm(`Cancel ${name}'s agreement? It won't renew on ${b.agreement.termEnd}. They still owe the rest of the year${left ? ` — one invoice for ${money(left)} is issued now` : ""}. Access stays on until you switch it off.`)) return;
+    const r = await call("/api/owner/agreement/cancel", { method: "POST", body: { id } });
+    if (!r.ok) return alert(r.data.error);
+    return dash();
+  }
   if (t.classList.contains("ct-save")) {
     const body = { id, plan: card.querySelector(".ct-plan").value, contract: card.querySelector(".ct-value").value || 0, start: card.querySelector(".ct-start").value, end: card.querySelector(".ct-end").value, note: card.querySelector(".ct-note").value, allFeatures: card.querySelector(".ct-all").checked };
     let r = await call("/api/owner/contract", { method: "POST", body });
@@ -336,7 +385,7 @@ $("o-contact-save").onclick = async () => {
 if (token) { const r = await call("/api/owner/customers"); if (r.ok) dash(); else gate(); } else gate();
 
 // ── Platform settings (email, sign-in apps, QuickBooks app) ─────────────────────────────────────────────────────
-const PL_PLAIN = ["emailFrom", "msClientId", "googleClientId", "qbClientId"], PL_SECRET = ["emailKey", "msSecret", "googleSecret", "qbSecret"];
+const PL_PLAIN = ["emailFrom", "msClientId", "googleClientId", "qbClientId", "billingName", "paymentInstructions", "ownerEmail", "bookingUrl"], PL_SECRET = ["emailKey", "msSecret", "googleSecret", "qbSecret"];
 async function loadPlatform() {
   const r = await call("/api/owner/platform");
   if (!r.ok) return;
@@ -358,3 +407,22 @@ $("pl-test").onclick = async () => {
   const r = await call("/api/owner/email-test", { method: "POST", body: { to: $("pl-test-to").value } });
   $("pl-test-msg").textContent = r.data.ok ? "Sent — check that inbox." : r.data.reason || r.data.error || "Didn't send.";
 };
+
+// ── Demo visits and access requests ─────────────────────────────────────────────────────────────────────────────
+async function loadDemo() {
+  const r = await call("/api/owner/demo");
+  if (!r.ok) return;
+  const { visits, leads, counts } = r.data;
+  $("dm-link").textContent = `${location.origin}/demo`; $("dm-link").href = "/demo";
+  $("dm-counts").textContent = `${counts.visits7} visit${counts.visits7 === 1 ? "" : "s"} in the last 7 days · ${counts.visits30} in 30 days · ${counts.visitsAll} in all · ${counts.leadsNew} new request${counts.leadsNew === 1 ? "" : "s"} (${counts.leadsAll} in all)`;
+  const when = (t) => new Date(t).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+  $("dm-leads").innerHTML = leads.length ? `<thead><tr><th>When</th><th>Who</th><th>Company</th><th>Contact</th><th>Details</th><th>Status</th></tr></thead><tbody>${leads.map((l) => `<tr data-lead="${l.id}"><td class="nowrap">${when(l.t)}</td><th scope="row">${esc(l.name)}${l.title ? `<br><span class="hint">${esc(l.title)}</span>` : ""}</th><td>${esc(l.company)}${l.locations ? `<br><span class="hint">${esc(l.locations)} locations</span>` : ""}</td>
+    <td><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${l.phone ? `<br>${esc(l.phone)}` : ""}</td><td class="wrap">${l.wantsCall ? "<b>Wants a call.</b> " : ""}${esc(l.message)}${l.city || l.country ? `<br><span class="hint">${esc([l.city, l.country].filter(Boolean).join(", "))}</span>` : ""}</td>
+    <td><select class="lead-status">${["new", "contacted", "closed"].map((x) => `<option value="${x}" ${x === l.status ? "selected" : ""}>${x[0].toUpperCase() + x.slice(1)}</option>`).join("")}</select></td></tr>`).join("")}</tbody>` : '<tbody><tr><td class="hint">No requests yet.</td></tr></tbody>';
+  $("dm-visits").innerHTML = visits.length ? `<thead><tr><th>When</th><th>Where</th><th>Device</th><th>Came from</th><th>Requested access</th></tr></thead><tbody>${visits.slice(0, 100).map((v) => `<tr><td class="nowrap">${when(v.t)}</td><td>${esc([v.city, v.region, v.country].filter(Boolean).join(", ") || "—")}</td><td>${esc(v.device || "—")}</td><td class="wrap">${esc([v.referrer, v.source].filter(Boolean).join(" · ") || "Direct")}</td><td>${v.lead ? "Yes" : ""}</td></tr>`).join("")}</tbody>` : '<tbody><tr><td class="hint">Nobody has opened the demo yet.</td></tr></tbody>';
+}
+$("dm-leads").addEventListener("change", async (e) => {
+  if (!e.target.classList.contains("lead-status")) return;
+  await call(`/api/owner/leads/${e.target.closest("tr").dataset.lead}`, { method: "POST", body: { status: e.target.value } });
+  loadDemo();
+});

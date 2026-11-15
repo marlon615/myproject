@@ -4,16 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>Security · Forecasting Agent</title>
-  <meta name="description" content="How the Forecasting Agent protects your data: isolation, encryption, sign-in, roles and the activity log.">
+  <title>Security · Draxly</title>
+  <meta name="description" content="How Draxly protects your data: isolation, encryption, sign-in, roles and the activity log.">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="top"><a class="brand" href="/"><img src="/icon.svg" alt="" width="28" height="28"> Forecasting Agent</a><div class="who"><a class="link" href="/pricing">Pricing</a> <a class="link" href="/security">Security</a> <a class="link" href="/docs">API</a></div></header>
+  <header class="top"><a class="brand" href="/"><img src="/icon.svg" alt="" width="28" height="28"> Draxly</a><div class="who"><a class="link" href="/pricing">Pricing</a> <a class="link" href="/security">Security</a> <a class="link" href="/docs">API</a></div></header>
   <main class="doc">
     <h1>Security</h1>
-    <p class="lead">An overview for IT and security teams of how the Forecasting Agent protects your data. It describes what the service actually does today.</p>
+    <p class="lead">An overview for IT and security teams of how Draxly protects your data. It describes what the service actually does today.</p>
 
     <h2>Where it runs</h2>
     <p>The service runs on Cloudflare (Workers and Durable Objects). Every connection uses HTTPS, and browsers are told to use HTTPS only (HSTS). The app's pages use a strict Content Security Policy, and no third-party scripts are loaded.</p>
@@ -78,11 +78,14 @@
     <h2>Other services we use</h2>
     <ul>
       <li><b>Cloudflare:</b> hosting, storage and secrets.</li>
-      <li><b>Resend:</b> sending email (invites, weekly reports, low-stock alerts), when email is switched on.</li>
+      <li><b>Resend:</b> sending email (invites, invoices and payment reminders, weekly reports, low-stock alerts), when email is switched on.</li>
       <li><b>Microsoft and Google:</b> single sign-on, when you use it.</li>
-      <li><b>ntfy.sh:</b> the platform operator's phone alerts. When someone asks for a password reset link, the alert contains their company name and email.</li>
+      <li><b>ntfy.sh:</b> the platform operator's phone alerts. When someone asks for a password reset link, the alert contains their company name and email. When someone requests access from the demo, it contains the name, company, email and phone number they entered.</li>
       <li><b>The systems you connect,</b> which we contact on your behalf.</li>
     </ul>
+
+    <h2>The public demo</h2>
+    <p>The demo shows a separate, made-up company and can't be changed. For each visit we record the time, the approximate city and country (from Cloudflare's view of the visitor's network), the type of device, and the page that linked to it. No IP addresses or cookies are kept. If a visitor fills in "Request access", what they type is stored and sent to us.</p>
 
     <h2>Deleting data</h2>
     <p>Admins can delete any upload. When an account is closed, all of that company's stored data is deleted: sales, forecasts, stock, connections, the activity log, users and API keys.</p>
@@ -90,6 +93,6 @@
     <h2>Certifications</h2>
     <p>We don't currently hold SOC 2 or ISO 27001 certification. We're happy to answer your security questionnaire.</p>
   </main>
-  <footer class="foot"><a href="/">Forecasting Agent</a> · <a href="/pricing">Pricing</a> · <a href="/security">Security</a> · <a href="/docs">API</a></footer>
+  <footer class="foot"><a href="/">Draxly</a> · <a href="/pricing">Pricing</a> · <a href="/security">Security</a> · <a href="/docs">API</a></footer>
 </body>
 </html>

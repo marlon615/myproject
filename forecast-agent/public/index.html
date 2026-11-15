@@ -4,15 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>Forecasting Agent</title>
-  <meta name="description" content="Sales forecasting for multi-location businesses: a free accuracy test, then 3-month forecasts by product, store and region, reorder suggestions and weekly reports.">
+  <title>Draxly</title>
+  <meta name="description" content="Draxly — Know what to stock before you need it. Sales forecasting for multi-location businesses: a free accuracy test, then 3-month forecasts by product, store and region, reorder suggestions and weekly reports.">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
+  <div class="demo-bar" id="demo-bar" hidden>
+    <span><b>Draxly demo</b> — sample data for Harbor &amp; Vine Provisions, a food and drink distributor. Look around; nothing you do here is saved.</span>
+    <span class="demo-actions"><button type="button" class="primary small" id="demo-call">Book a call</button><button type="button" class="secondary small light" id="demo-request">Request access</button><a class="link light" href="/" id="demo-exit">Exit demo</a></span>
+  </div>
   <header class="top">
-    <a class="brand" href="#/"><img src="/icon.svg" alt="" width="28" height="28"> Forecasting Agent</a>
+    <a class="brand" href="#/"><img src="/icon.svg" alt="" width="28" height="28"> Draxly</a>
     <div class="who" id="who" hidden><span id="who-name"></span> <a class="link" href="#/account" id="account-link">Account</a> <button class="link" id="signout" type="button">Sign out</button></div>
   </header>
   <nav class="nav" id="nav" hidden aria-label="Sections">
@@ -21,6 +25,7 @@
     <a href="#/connections" data-nav="connections" data-feature="connectors" data-role="admin">Connections</a>
     <a href="#/team" data-nav="team" data-role="admin">Team</a>
     <a href="#/activity" data-nav="activity" data-role="admin">Activity</a>
+    <a href="#/billing" data-nav="billing" data-role="admin">Billing</a>
     <a href="#/account" data-nav="account">Settings</a>
   </nav>
 
@@ -30,10 +35,13 @@
     <!-- Signed out -->
     <section id="auth" hidden>
       <div class="hero">
+        <p class="tagline" id="tagline">Know what to stock before you need it.</p>
         <h1>See your next 3 months of sales</h1>
         <p>Upload your past sales as a spreadsheet (CSV or Excel), or connect NetSuite, SAP, Dynamics 365, QuickBooks, Shopify or Square. First, a <b>free accuracy test</b>: we hide your last 3 months, predict them, and show predicted against what really happened. Then the next 3 months, by product, store and region. <a href="/pricing">Pricing</a> · <a href="/security">Security</a></p>
+        <p><a class="primary" href="/demo" id="demo-link">See the live demo</a> <span class="hint">No sign-up needed.</span></p>
       </div>
       <div class="card auth-card">
+        <p class="auth-brand"><b>Draxly</b><span>Know what to stock before you need it.</span></p>
         <div class="tabs" role="tablist">
           <button type="button" role="tab" id="tab-signup" aria-selected="true">Create account</button>
           <button type="button" role="tab" id="tab-login" aria-selected="false">Sign in</button>
@@ -60,7 +68,7 @@
     <section id="twofa" hidden>
       <div class="card auth-card">
         <h1>Two-factor sign-in</h1>
-        <p class="hint">Open your authenticator app and type the 6-digit code for the Forecasting Agent. No phone? Use one of your backup codes.</p>
+        <p class="hint">Open your authenticator app and type the 6-digit code for Draxly. No phone? Use one of your backup codes.</p>
         <form id="twofa-form" novalidate>
           <label>Code<input id="t-code" inputmode="numeric" autocomplete="one-time-code" maxlength="20" spellcheck="false"></label>
           <p class="error" id="t-error" role="alert" hidden></p>
@@ -136,6 +144,41 @@
       </div>
     </section>
 
+    <!-- Billing -->
+    <section id="billing" hidden>
+      <div class="card">
+        <div class="row-between"><h2>Billing</h2><span class="pill" id="bl-status"></span></div>
+        <div id="bl-none" class="notice" hidden><p><b>You're on the free accuracy test.</b> Draxly Enterprise is $30,000 a year per company on a one-year agreement — paid upfront, or $2,500 a month by invoice. <a href="/pricing">See what's included</a>.</p></div>
+        <div id="bl-plan"></div>
+      </div>
+      <div class="card" id="bl-next-card"><h2>Next payment</h2><p id="bl-next"></p></div>
+      <div class="card"><h2>Invoices</h2><p class="hint" id="bl-noinv">No invoices yet.</p><div class="table-wrap"><table id="bl-table"></table></div></div>
+      <div class="card" id="bl-pay-card"><h2>How to pay</h2><p id="bl-pay" class="pre"></p></div>
+    </section>
+
+    <!-- Request access (demo) -->
+    <section id="request" hidden>
+      <div class="card auth-card">
+        <h1>Request access</h1>
+        <p class="hint">Tell us a little about your business and we'll be in touch to set up Draxly with your own data.</p>
+        <form id="rq-form" novalidate>
+          <label>Your name<input id="rq-name" autocomplete="name" maxlength="100"></label>
+          <label>Work email<input id="rq-email" type="email" autocomplete="email" maxlength="200"></label>
+          <label>Company<input id="rq-company" autocomplete="organization" maxlength="150"></label>
+          <label>Your role<input id="rq-title" autocomplete="organization-title" maxlength="100"></label>
+          <label>Phone (optional)<input id="rq-phone" type="tel" autocomplete="tel" maxlength="40"></label>
+          <label>How many stores / warehouses?<select id="rq-locations"><option value="">Choose…</option><option>1–5</option><option>6–20</option><option>21–100</option><option>100+</option></select></label>
+          <label>Anything else? (optional)<textarea id="rq-message" maxlength="2000" rows="3"></textarea></label>
+          <label class="check"><input type="checkbox" id="rq-call"> I'd like a call</label>
+          <label class="hp" aria-hidden="true">Website<input id="rq-website" tabindex="-1" autocomplete="off"></label>
+          <p class="error" id="rq-error" role="alert" hidden></p>
+          <button class="primary" type="submit" id="rq-submit">Send request</button>
+        </form>
+        <p class="ok" id="rq-ok" role="status" hidden></p>
+        <p><a class="link" href="#/" id="rq-back">← Back to the demo</a></p>
+      </div>
+    </section>
+
     <!-- Switched off -->
     <section id="off" hidden>
       <div class="card notice"><h1>This account is switched off</h1><p id="off-contact"></p></div>
@@ -186,7 +229,7 @@
 
     <!-- One upload: backtest + forecast -->
     <section id="result" hidden>
-      <p><a class="link" href="#/">← All data</a></p>
+      <p id="r-back"><a class="link" href="#/">← All data</a></p>
       <h1 id="r-name"></h1>
       <p class="hint" id="r-meta"></p>
       <div class="notice" id="r-status" hidden></div>
@@ -277,7 +320,7 @@
       </div>
       <div class="card">
         <h2>API keys and file drop (any other system)</h2>
-        <p>Any system can send sales, stock levels or CSV exports to the Forecasting Agent over HTTPS with an API key — on a schedule, from your ERP, data warehouse or a nightly script. <a href="/docs">API guide</a></p>
+        <p>Any system can send sales, stock levels or CSV exports to Draxly over HTTPS with an API key — on a schedule, from your ERP, data warehouse or a nightly script. <a href="/docs">API guide</a></p>
         <div id="keys-list"></div>
         <form id="key-form" class="pay-row" novalidate><input id="key-name" class="note" maxlength="60" placeholder="Key name (e.g. Data warehouse)"><button class="secondary small" type="submit">Create API key</button></form>
         <div id="key-new" class="reset-box" hidden></div>

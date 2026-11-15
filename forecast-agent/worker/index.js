@@ -1,5 +1,5 @@
 /**
- * Forecasting Agent — the Worker (front door). Serves the app's pages and routes every API call.
+ * Draxly — the Worker (front door). Serves the app's pages and routes every API call.
  *
  * Storage: Directory (one: companies, users, sign-in, API keys, contracts, owner) and Company (one per company: its
  * data, forecasts, stock, connections, activity log). A customer request's company always comes from its session
@@ -19,6 +19,7 @@ import { CONNECTORS, connectorList, QB, at } from "./connectors.js";
 import { PROVIDERS, endpoints, authorizeUrl, finishSignIn } from "./oidc.js";
 import { sendEmail, inviteEmail } from "./email.js";
 import { pkce } from "./crypto.js";
+import { demoData } from "./demo.js";
 export { Directory, Company };
 
 const MAX_BODY = 4_000_000, MAX_FILE = 20 * 1024 * 1024, MAX_BATCH = 500;
@@ -40,6 +41,12 @@ async function readJson(request, max = MAX_BODY) {
   try { const v = JSON.parse(text); return v && typeof v === "object" ? v : null; } catch { return null; }
 }
 const company = (env, id) => env.COMPANY.get(env.COMPANY.idFromName(id));
+const IID = /^[0-9a-f]{32}$/, LID = /^[0-9a-f]{24}$/;
+const todayUTC = () => new Date().toISOString().slice(0, 10);
+const deviceOf = (ua = "") => `${/iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Macintosh/.test(ua) ? "Mac" : /Linux|CrOS/.test(ua) ? "Linux" : "Other"}${/Edg\//.test(ua) ? " · Edge" : /Chrome\//.test(ua) ? " · Chrome" : /Firefox\//.test(ua) ? " · Firefox" : /Safari\//.test(ua) ? " · Safari" : ""}`;
+/** What a demo session may do: look, never change. */
+const DEMO_READ = [/^\/api\/me$/, /^\/api\/uploads$/, /^\/api\/uploads\/[0-9a-f]{32}$/, /^\/api\/uploads\/[0-9a-f]{32}\/drill$/, /^\/api\/reorder$/, /^\/api\/stock$/, /^\/api\/jobs$/];
+const pdfResponse = (r) => new Response(r.bytes, { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="draxly-invoice-${r.number}.pdf"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 const waitMsg = (r) => json({ error: "Too many wrong tries. Wait a few minutes, then try again." }, 429, { "Retry-After": String(r.retryAfter || 900) });
 
 /** Checks monthly series sent by the browser (or the old one-blob shape). Returns { months, series } or { error }. */
@@ -214,6 +221,31 @@ async function api(request, env, path, ctx) {
     return back(r.error ? "failed" : "connected");
   }
 
+  // The public demo: a read-only visitor session on the demo company (no sign-up).
+  if (path === "/api/demo/session" && method === "POST") {
+    const b = (await readJson(request)) || {};
+    const cf = request.cf || {};
+    const ref = String(b.referrer || "").slice(0, 200);
+    const r = await dir.demoSession({ city: cf.city, region: cf.region, country: cf.country, device: deviceOf(request.headers.get("User-Agent") || ""), referrer: /^https?:\/\//.test(ref) && !ref.startsWith(origin) ? ref : "", source: String(b.source || "").slice(0, 120) });
+    const box = company(env, r.account);
+    ctx.waitUntil(box.setOrigin(origin));
+    const seeded = await box.seedDemo(r.account, demoData());
+    return json({ token: r.token, visit: r.visit, upload: seeded.upload || null, preparing: Boolean(seeded.seeding) || seeded.status === "processing", me: await dir.who(r.token), bookingUrl: (await dir.platform()).bookingUrl || "" });
+  }
+  if (path === "/api/demo/request" && method === "POST") {
+    const b = (await readJson(request, 20000)) || {};
+    if (String(b.website || "")) return json({ ok: true }); // the hidden field only robots fill in
+    const name = String(b.name ?? "").trim(), email = String(b.email ?? "").trim().toLowerCase(), comp = String(b.company ?? "").trim();
+    if (!name || !comp) return json({ error: "Please add your name and company." }, 400);
+    if (!EMAIL.test(email)) return json({ error: "That email doesn't look right." }, 400);
+    const cf = request.cf || {};
+    const r = await dir.requestAccess({ ...b, name, email, company: comp, city: cf.city, country: cf.country }, ip);
+    if (r.error === "busy") return json({ error: "Thanks — we've already received several requests from here. We'll be in touch." }, 429);
+    if (r.alert) ctx.waitUntil(sendAlert(env, r.alert.topic, { title: "Draxly access request", message: `${r.alert.lead.name} (${r.alert.lead.company}) — ${r.alert.lead.email}${r.alert.lead.phone ? `, ${r.alert.lead.phone}` : ""}${r.alert.lead.wants_call ? "\nWants a call." : ""}\nOpen your owner dashboard: ${origin}/owner`, click: `${origin}/owner`, tags: ["wave"], priority: 4 })
+      .then((x) => (x.ok ? dir.markLeadAlerted(r.id) : null)).catch(() => {}));
+    return json({ ok: true });
+  }
+
   // Everything below needs a signed-in, switched-on company; the company comes only from the token.
   const me = await dir.who(token);
   if (!me) return json({ error: "Please sign in." }, 401);
@@ -222,9 +254,22 @@ async function api(request, env, path, ctx) {
   const who = me.user.email;
   const need = (role) => (RANK[me.role] >= RANK[role] ? null : json({ error: role === "admin" ? "Only your company's admins can do that." : "Your role can view but not change this. Ask an admin or manager." }, 403));
   const feature = async (f) => (me.features[f] ? null : json({ error: `${FEATURE_WORDS[f]} isn't switched on for your company.`, locked: true, feature: f, contact: await dir.contact() }, 402));
+  if (me.demo && (method !== "GET" || !DEMO_READ.some((re) => re.test(path)))) return json({ error: "This is a demo — nothing can be changed or saved here. Request access to use Draxly with your own data.", demo: true }, 403);
   if (me.mustEnroll2fa && !["/api/me", "/api/2fa/setup", "/api/2fa/enable", "/api/logout"].includes(path)) return json({ error: "Your company requires two-factor sign-in. Set it up to continue.", enroll2fa: true }, 403);
 
-  if (path === "/api/me" && method === "GET") { ctx.waitUntil(box.setOrigin(origin)); return json({ me, contact: await dir.contact(), minForecast: MIN_FORECAST_MONTHS, minBacktest: MIN_BACKTEST_MONTHS, sso: await dir.ssoProviders() }); }
+  if (path === "/api/billing" && method === "GET") {
+    if (need("admin")) return need("admin");
+    return json({ billing: await dir.billing(me.id), instructions: (await dir.platform()).paymentInstructions || "", seller: (await dir.platform()).billingName || "Draxly" });
+  }
+  const bp = /^\/api\/billing\/invoices\/([0-9a-f]{32})\/pdf$/.exec(path);
+  if (bp && method === "GET") {
+    if (need("admin")) return need("admin");
+    const r = await dir.invoicePdfFor(bp[1], me.id);
+    if (!r) return json({ error: "Not found." }, 404);
+    audit(me.id, who, "downloaded an invoice", r.number);
+    return pdfResponse(r);
+  }
+  if (path === "/api/me" && method === "GET") { ctx.waitUntil(box.setOrigin(origin)); ctx.waitUntil(dir.setOrigin(origin)); return json({ me, contact: await dir.contact(), minForecast: MIN_FORECAST_MONTHS, minBacktest: MIN_BACKTEST_MONTHS, sso: await dir.ssoProviders() }); }
 
   // Own account: password, recovery code, two-factor, email preferences.
   if (path === "/api/password" && method === "POST") {
@@ -537,7 +582,10 @@ async function ownerApi(request, env, path, dir, token, ctx) {
   if (!(await dir.ownerCheck(token))) return json({ error: "Please sign in." }, 401);
   const logFor = (account, action, detail = "") => ctx.waitUntil(company(env, account).log({ user: "platform owner", action, detail, ip: ipOf(request) }).catch(() => {}));
   if (path === "/api/owner/logout" && method === "POST") { await dir.ownerLogout(token); return new Response(null, { status: 204 }); }
-  if (path === "/api/owner/customers" && method === "GET") return json({ ...(await dir.customers()), features: FEATURES });
+  if (path === "/api/owner/customers" && method === "GET") {
+    ctx.waitUntil(dir.setOrigin(origin));
+    return json({ ...(await dir.customers()), features: FEATURES });
+  }
   if (path === "/api/owner/log" && method === "GET") return json({ events: await dir.ownerLog() });
   if (path === "/api/owner/alerts" && method === "GET") return json({ topic: await dir.alertTopic() });
   if (path === "/api/owner/alerts" && method === "POST") {
@@ -557,10 +605,28 @@ async function ownerApi(request, env, path, dir, token, ctx) {
   if (path === "/api/owner/email-test" && method === "POST") {
     const b = (await readJson(request)) || {};
     if (!EMAIL.test(String(b.to || ""))) return json({ error: "Type an email address to send the test to." }, 400);
-    const r = await sendEmail(env, dir, { to: [b.to], subject: "Forecasting Agent: test email", html: "<p>Email from the Forecasting Agent is working.</p>", text: "Email from the Forecasting Agent is working." });
+    const r = await sendEmail(env, dir, { to: [b.to], subject: "Draxly: test email", html: "<p>Email from Draxly is working.</p>", text: "Email from Draxly is working." });
     return json(r);
   }
 
+  const testToday = (t) => (env.ALLOW_TEST_CLOCK === "1" && /^\d{4}-\d{2}-\d{2}$/.test(t || "") ? t : todayUTC());
+  if (path === "/api/owner/demo" && method === "GET") return json(await dir.demoStats());
+  const lm = /^\/api\/owner\/leads\/([0-9a-f]{24})$/.exec(path);
+  if (lm && method === "POST") { const b = (await readJson(request)) || {}; const r = await dir.setLead(lm[1], b.status); return r.error ? json({ error: "Status must be new, contacted or closed." }, 400) : json(r); }
+  if (path === "/api/owner/billing/run" && method === "POST") { const b = (await readJson(request)) || {}; return json(await dir.billingRun(testToday(b.today))); }
+  const im = /^\/api\/owner\/invoices\/([0-9a-f]{32})\/(paid|send|pdf)$/.exec(path);
+  if (im) {
+    const [, iid, act] = im;
+    if (act === "pdf" && method === "GET") { const r = await dir.invoicePdfFor(iid); return r ? pdfResponse(r) : json({ error: "Not found." }, 404); }
+    if (act === "paid" && method === "POST") {
+      const b = (await readJson(request)) || {};
+      const r = await dir.markInvoice(iid, b.paid !== false, String(b.note ?? ""));
+      if (r.error) return json({ error: "Not found." }, 404);
+      logFor(r.account, b.paid !== false ? "invoice marked paid" : "invoice marked unpaid", r.number);
+      return json(r);
+    }
+    if (act === "send" && method === "POST") { const r = await dir.sendInvoice(iid); return r.ok ? json(r) : json({ error: r.reason || "Didn't send." }, 400); }
+  }
   const u = /^\/api\/owner\/customers\/([0-9a-f]{32})\/(uploads|audit|connections)(?:\/([0-9a-f]{32})(\/forecast)?)?$/.exec(path);
   if (u) {
     const [, cid, what, uid, fc] = u;
@@ -585,6 +651,23 @@ async function ownerApi(request, env, path, dir, token, ctx) {
     const r = await dir.setSwitch(id, { account: b.account, forecasts: b.forecasts });
     if (r.error) return json({ error: "Not found." }, 404);
     if (typeof b.account === "boolean") logFor(id, b.account ? "company switched on" : "company switched off");
+    return json(r);
+  }
+  if (path === "/api/owner/agreement") {
+    const billing = b.billing === "annual" ? "annual" : b.billing === "monthly" ? "monthly" : null;
+    if (!billing) return json({ error: "Choose: pay the full year upfront, or $2,500 a month." }, 400);
+    const start = /^\d{4}-\d{2}-\d{2}$/.test(b.start || "") ? b.start : todayUTC();
+    const r = await dir.startAgreement(id, { start, billing }, testToday(b.today));
+    if (r.error === "exists") return json({ error: "This company already has an active agreement. Cancel it first to change it." }, 409);
+    if (r.error) return json({ error: "Not found." }, 404);
+    logFor(id, "Draxly Enterprise agreement started", `${billing === "annual" ? "paid yearly upfront" : "$2,500 a month"}, from ${start}`);
+    ctx.waitUntil(company(env, id).ensureAlarm(id).catch(() => {}));
+    return json(r);
+  }
+  if (path === "/api/owner/agreement/cancel") {
+    const r = await dir.cancelAgreement(id, testToday(b.today));
+    if (r.error) return json({ error: "There's no active agreement to cancel." }, 400);
+    logFor(id, "Draxly Enterprise agreement cancelled", "won't renew; the rest of the year is still owed");
     return json(r);
   }
   if (path === "/api/owner/features") {
@@ -657,6 +740,7 @@ export default {
     try { path = decodeURIComponent(url.pathname); } catch { path = url.pathname; }
     if (/\/index\.html$/.test(path)) return Response.redirect(new URL(path.replace(/index\.html$/, "") + url.search, url), 307);
     if (/\.html$/.test(path) && path !== "/404.html") return Response.redirect(new URL(path.replace(/\.html$/, "") + url.search, url), 307);
+    if (path === "/demo") return respond(request, path, FILES["/index.html"]); // the public demo is the app itself, in demo mode
     const key = path.endsWith("/") ? path + "index.html" : FILES[path] ? path : FILES[path + ".html"] ? path + ".html" : null;
     if (key && FILES[key]) return respond(request, path, FILES[key]);
     return respond(request, path, FILES["/404.html"], 404);
@@ -665,6 +749,7 @@ export default {
   async scheduled(event, env, ctx) {
     const dir = env.DIRECTORY.get(env.DIRECTORY.idFromName("main"));
     const hour = new Date(event.scheduledTime || Date.now()).getUTCHours();
+    ctx.waitUntil(dir.billingRun().catch(() => {})); // daily invoices, renewals and reminders (safe to run every hour)
     const ids = await dir.companyIds("", 2000);
     const mine = ids.filter((_, i) => i % 24 === hour).slice(0, 45);
     await Promise.all(mine.map((id) => company(env, id).ensureAlarm(id).catch(() => {})));

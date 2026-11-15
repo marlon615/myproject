@@ -1,5 +1,5 @@
 /**
- * Forecasting Agent — the customer app.
+ * Draxly — the customer app.
  * Spreadsheets are read here in the browser (CSV by parse.js, Excel by the bundled SheetJS); only monthly totals per
  * product × store × region are sent. Everything else (forecasts, stock, connections, team, activity) is on the server,
  * in this company's own encrypted store. What a person can see and change follows their role.
@@ -15,7 +15,9 @@ const METHOD_WORDS = { flat: "Recent average", trend: "Straight-line trend", hol
 const DIM_WORDS = { products: ["Product", "products"], locations: ["Store / warehouse", "locations"], regions: ["Region", "regions"] };
 const RANK = { viewer: 0, manager: 1, admin: 2 };
 const MAX_MONTHS = 120, BATCH = 40; // big files go in parts of 40 series, so each request stays small
-const VIEWS = ["loading", "auth", "off", "home", "result", "forgot", "reset", "code", "account", "twofa", "invite", "stock", "connections", "team", "activity"];
+const VIEWS = ["loading", "auth", "off", "home", "result", "forgot", "reset", "code", "account", "twofa", "invite", "stock", "connections", "team", "activity", "billing", "request"];
+const DEMO = location.pathname === "/demo";
+let demo = null; // { visit, upload, bookingUrl } while in the public demo
 let token = load(TOKEN_KEY), me = null, contact = "", mode = "signup", ssoProviders = { microsoft: false, google: false };
 let sheet = null, current = null, ticket = null, resetToken = null, inviteToken = null, pollTimer = null;
 
@@ -46,17 +48,19 @@ async function call(path, { method = "GET", body } = {}) {
   if (res.status === 401 && !PUBLIC.includes(path.split("?")[0])) { token = null; me = null; save(TOKEN_KEY, null); setMode("login"); show("auth"); }
   if (res.status === 403 && data.off) showOff(data.contact);
   if (res.status === 403 && data.enroll2fa && me) { me.mustEnroll2fa = true; location.hash = "#/account"; }
+  if (res.status === 403 && data.demo) alert(data.error);
   return { ok: res.ok, status: res.status, data };
 }
 
 function show(view) {
   for (const id of VIEWS) $(id).hidden = id !== view;
   const signedIn = Boolean(me) && !["auth", "forgot", "reset", "code", "twofa", "invite", "off", "loading"].includes(view);
-  $("who").hidden = !signedIn;
+  $("who").hidden = !signedIn || Boolean(demo);
+  $("demo-bar").hidden = !demo;
   $("nav").hidden = !signedIn || me?.mustEnroll2fa;
   if (signedIn) {
     for (const a of document.querySelectorAll("#nav a")) {
-      a.hidden = (a.dataset.feature && !me.features[a.dataset.feature]) || (a.dataset.role && !can(a.dataset.role));
+      a.hidden = (a.dataset.feature && !me.features[a.dataset.feature]) || (a.dataset.role && !can(a.dataset.role)) || (demo && !["home", "stock"].includes(a.dataset.nav));
       a.classList.toggle("active", a.dataset.nav === view || (view === "result" && a.dataset.nav === "home"));
     }
     for (const el of document.querySelectorAll("[data-min-role]")) el.hidden = !can(el.dataset.minRole);
@@ -135,7 +139,7 @@ function showCode(code, title, then, text) {
 $("code-ok").onchange = () => { $("code-continue").disabled = !$("code-ok").checked; };
 $("code-continue").onclick = () => { const f = afterCode; afterCode = null; $("code-value").textContent = ""; $("code").hidden = true; if (location.hash !== "#/" && !/^#\/account/.test(location.hash)) history.replaceState(null, "", "#/"); f?.(); };
 $("code-copy").onclick = async () => { try { await navigator.clipboard.writeText($("code-value").textContent); $("code-copied").textContent = "Copied"; } catch { $("code-copied").textContent = "Select the code and copy it"; } };
-$("code-save").onclick = () => download("forecasting-agent-codes.txt", `Forecasting Agent — ${$("code-title").textContent}\n\nAccount: ${me?.email || ""}\n${$("code-value").textContent}\n\nRecovery code: use it at ${location.origin}/#/forgot if you forget your password.\nBackup codes: use one instead of the 6-digit code if you don't have your phone. Each works once.\n`, "text/plain");
+$("code-save").onclick = () => download("draxly-codes.txt", `Draxly — ${$("code-title").textContent}\n\nAccount: ${me?.email || ""}\n${$("code-value").textContent}\n\nRecovery code: use it at ${location.origin}/#/forgot if you forget your password.\nBackup codes: use one instead of the 6-digit code if you don't have your phone. Each works once.\n`, "text/plain");
 
 // ── Forgot password, reset link, invite ────────────────────────────────────────────────────────────────────────
 $("forgot-form").onsubmit = async (e) => {
@@ -372,6 +376,7 @@ async function renderUpload(id) {
   const places = [u.locations ? `${u.locations} location${u.locations === 1 ? "" : "s"}` : "", u.regions ? `${u.regions} region${u.regions === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
   $("r-meta").textContent = u.months ? `${u.months} months of sales (${monthLabel(u.first)} to ${monthLabel(u.last)}) · ${u.products} product${u.products === 1 ? "" : "s"}${places ? ` · ${places}` : ""} · ${u.kind === "units" ? "quantities" : "dollar sales"}${u.measures.length > 1 ? " and quantities" : ""}` : "No data yet.";
   $("r-delete").hidden = !can("manager");
+  $("r-back").hidden = Boolean(demo);
   const busy = u.status === "processing" || u.status === "waiting";
   $("r-status").hidden = !busy && u.status !== "error";
   $("r-status").textContent = u.status === "error" ? `Problem: ${u.error || "something went wrong."}` : u.status === "waiting" ? "Waiting for the first sync from the connected system." : `Working through ${u.series.toLocaleString("en-US")} product × location combinations… ${u.progress ?? 0}%`;
@@ -384,6 +389,7 @@ async function renderUpload(id) {
     $("fc").hidden = true;
     $("fc-ask").hidden = !me.features.forecasts || !can("manager");
     if (!me.features.forecasts) showLocked();
+    else if (demo) { showErr("fc-error", "The forecast is being prepared — it appears here in a moment."); clearTimeout(pollTimer); pollTimer = setTimeout(() => { if (location.hash === `#/u/${id}`) renderUpload(id); }, 2000); }
     else if (!can("manager")) showErr("fc-error", "No forecast yet — ask a manager or admin to make one.");
   }
 }
@@ -511,7 +517,7 @@ $("fc-csv").onclick = () => {
   const lines = [csvRow([DIM_WORDS[d][0] === "Product" ? "Product" : DIM_WORDS[d][0], ...fc.months.map(monthLabel), "Next 3 months", "Last 3 months"])];
   for (const p of fc[d] || []) lines.push(csvRow([p.name, ...p.forecast, p.next3, p.last3]));
   lines.push(csvRow(["Total", ...fc.total.forecast, Math.round(sum(fc.total.forecast) * 100) / 100, Math.round(sum(fc.total.history.slice(-3)) * 100) / 100]));
-  download(`forecast-${current.name.replace(/[^\w-]+/g, "-").slice(0, 40)}.csv`, lines.join("\n") + "\n");
+  download(`draxly-forecast-${current.name.replace(/[^\w-]+/g, "-").slice(0, 40)}.csv`, lines.join("\n") + "\n");
 };
 $("r-delete").onclick = async () => {
   if (!confirm(`Delete "${current.name}"? Its accuracy test and forecast go too.`)) return;
@@ -557,7 +563,7 @@ $("ro-csv").onclick = () => {
   if (!reorderData?.ok) return;
   const lines = [csvRow(["Item", "Store/warehouse", "Status", "On hand", "On order", "Daily demand", "Days of cover", "Safety stock", "Reorder point", "Order up to", "Suggested order", "Order value"])];
   for (const x of reorderData.items) lines.push(csvRow([x.product, x.location, STATUS_WORDS[x.status], x.onHand, x.onOrder || 0, x.dailyDemand ?? "", x.daysOfCover ?? "", x.safetyStock ?? "", x.reorderPoint ?? "", x.orderUpTo ?? "", x.suggestedQty ?? 0, x.orderValue ?? ""]));
-  download("reorder-suggestions.csv", lines.join("\n") + "\n");
+  download("draxly-reorder-suggestions.csv", lines.join("\n") + "\n");
 };
 $("stock-file").onchange = async () => {
   const f = $("stock-file").files[0];
@@ -732,7 +738,7 @@ async function renderActivity(more = false) {
   $("act-more").hidden = r.data.events.length < 100;
 }
 $("act-more").onclick = () => renderActivity(true);
-$("act-csv").onclick = () => download("activity-log.csv", [csvRow(["Time (UTC)", "Who", "What", "Details", "IP"]), ...actRows.map((a) => csvRow([a.t, a.user, a.action, a.detail, a.ip]))].join("\n") + "\n");
+$("act-csv").onclick = () => download("draxly-activity-log.csv", [csvRow(["Time (UTC)", "Who", "What", "Details", "IP"]), ...actRows.map((a) => csvRow([a.t, a.user, a.action, a.detail, a.ip]))].join("\n") + "\n");
 
 // ── Settings ───────────────────────────────────────────────────────────────────────────────────────────────────
 async function renderAccount() {
@@ -822,6 +828,82 @@ $("rp-save").onclick = async () => {
 };
 $("rp-send").onclick = async () => { const r = await call("/api/reports/send", { method: "POST" }); $("rp-msg").textContent = r.ok ? "Sending now — check your inbox in a minute (and the Activity log)." : r.data.error; };
 
+// ── Billing ────────────────────────────────────────────────────────────────────────────────────────────────────
+const usd = (c) => (c / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+const longDay = (s) => (s ? new Date(`${s}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "long", day: "numeric", year: "numeric" }) : "—");
+const BILL_PILL = { paid: "on", overdue: "off", cancelled: "warn", ended: "", none: "" };
+async function renderBilling() {
+  show("billing");
+  const r = await call("/api/billing");
+  if (!r.ok) return;
+  const b = r.data.billing, ag = b.agreement;
+  $("bl-status").textContent = b.statusWords; $("bl-status").className = `pill ${BILL_PILL[b.status] || ""}`;
+  $("bl-none").hidden = Boolean(ag);
+  $("bl-plan").innerHTML = ag ? `<div class="facts">
+    <div><span>Plan</span><b>${esc(ag.plan)}</b></div>
+    <div><span>Price</span><b>$30,000 a year</b></div>
+    <div><span>Paying</span><b>${ag.billing === "annual" ? "Yearly, upfront" : "$2,500 a month"}</b></div>
+    <div><span>Started</span><b>${longDay(ag.start)}</b></div>
+    <div><span>This agreement year</span><b>${longDay(ag.termStart)} – ${longDay(new Date(Date.parse(`${ag.termEnd}T00:00:00Z`) - 86400000).toISOString().slice(0, 10))}</b></div>
+    <div><span>${ag.cancelledAt ? "Ends" : "Renews"}</span><b>${ag.cancelledAt ? `${longDay(ag.termEnd)} (cancelled ${longDay(ag.cancelledAt)})` : longDay(ag.renewal)}</b></div>
+    <div><span>Paid this year</span><b>${usd(b.paidThisTermCents)}</b></div>
+    <div><span>Owed now</span><b>${usd(b.owedCents)}</b></div></div>
+    <p class="hint">One-year agreement that renews automatically each year unless cancelled. If cancelled early, the rest of the year is still owed.</p>` : "";
+  $("bl-next-card").hidden = !b.nextPayment;
+  if (b.nextPayment) $("bl-next").innerHTML = b.nextPayment.invoice ? `<b>${usd(b.nextPayment.amountCents)}</b> due <b>${longDay(b.nextPayment.date)}</b> (invoice ${esc(b.nextPayment.invoice)}).` : `<b>${usd(b.nextPayment.amountCents)}</b> — invoiced on ${longDay(b.nextPayment.invoiceOn)}, due ${longDay(b.nextPayment.date)}.`;
+  $("bl-noinv").hidden = b.invoices.length > 0;
+  const today = new Date().toISOString().slice(0, 10);
+  $("bl-table").innerHTML = b.invoices.length ? `<thead><tr><th>Invoice</th><th>Period</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr></thead><tbody>` + b.invoices.map((i) => `<tr><th scope="row">${esc(i.number)}</th><td>${longDay(i.periodStart)} – ${longDay(i.periodEnd)}</td><td>${usd(i.amountCents)}</td><td>${longDay(i.due)}</td>
+    <td><span class="pill ${i.status === "paid" ? "on" : i.due < today ? "off" : ""}">${i.status === "paid" ? `Paid ${longDay(i.paidAt)}` : i.due < today ? "Overdue" : "Open"}</span></td><td><button class="link bl-pdf" data-id="${i.id}" data-n="${esc(i.number)}" type="button">PDF</button></td></tr>`).join("") + "</tbody>" : "";
+  $("bl-pay-card").hidden = !ag;
+  $("bl-pay").textContent = r.data.instructions || "Payment instructions will be sent with your invoice.";
+}
+$("bl-table").addEventListener("click", async (e) => {
+  if (!e.target.classList.contains("bl-pdf")) return;
+  const res = await fetch(`/api/billing/invoices/${e.target.dataset.id}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return alert("That invoice couldn't be downloaded.");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(await res.blob()); a.download = `draxly-invoice-${e.target.dataset.n}.pdf`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+});
+
+// ── The public demo ────────────────────────────────────────────────────────────────────────────────────────────
+async function startDemo() {
+  show("loading");
+  $("loading").textContent = "Opening the Draxly demo…";
+  const q = new URLSearchParams(location.search);
+  const source = ["utm_source", "utm_medium", "utm_campaign", "ref"].map((k) => q.get(k) && `${k.replace("utm_", "")}=${q.get(k)}`).filter(Boolean).join(" ");
+  const r = await call("/api/demo/session", { method: "POST", body: { referrer: document.referrer, source } });
+  if (!r.ok) { $("loading").textContent = "The demo couldn't open. Please try again in a minute."; return; }
+  token = r.data.token; // kept in memory only: a demo never signs anyone in for real
+  me = r.data.me; demo = { visit: r.data.visit, upload: r.data.upload, bookingUrl: r.data.bookingUrl };
+  $("who-name").textContent = me.company;
+  if (!demo.upload) { // someone else's visit is setting the demo up this very second
+    for (let i = 0; i < 30 && !demo.upload; i++) { await new Promise((ok) => setTimeout(ok, 1000)); const u = await call("/api/uploads"); demo.upload = u.data.uploads?.[0]?.id; }
+  }
+  if (!location.hash || location.hash === "#/" || location.hash === "#") history.replaceState(null, "", `#/u/${demo.upload}`);
+  route();
+}
+$("demo-call").onclick = () => {
+  if (demo?.bookingUrl) { window.open(demo.bookingUrl, "_blank", "noopener"); return; }
+  $("rq-call").checked = true; location.hash = "#/request";
+};
+$("demo-request").onclick = () => { location.hash = "#/request"; };
+$("rq-back").onclick = (e) => { e.preventDefault(); location.hash = demo?.upload ? `#/u/${demo.upload}` : "#/"; };
+$("rq-form").onsubmit = async (e) => {
+  e.preventDefault();
+  showErr("rq-error");
+  const body = { name: $("rq-name").value, email: $("rq-email").value, company: $("rq-company").value, title: $("rq-title").value, phone: $("rq-phone").value,
+    locations: $("rq-locations").value, message: $("rq-message").value, wantsCall: $("rq-call").checked, website: $("rq-website").value, visit: demo?.visit || null };
+  $("rq-submit").disabled = true;
+  const r = await call("/api/demo/request", { method: "POST", body });
+  $("rq-submit").disabled = false;
+  if (!r.ok) return showErr("rq-error", r.data.error || "That didn't send. Please try again.");
+  $("rq-form").hidden = true;
+  $("rq-ok").textContent = `Thanks, ${body.name.split(" ")[0]} — we've got your request and will be in touch at ${body.email} shortly.`;
+  $("rq-ok").hidden = false;
+};
+
 // ── Routing ────────────────────────────────────────────────────────────────────────────────────────────────────
 /** Pages that work signed out (reset link, forgot password, invite, single sign-on return). True if one was shown. */
 async function routeSignedOut() {
@@ -854,6 +936,13 @@ async function route() {
   if (/^#\/(reset|forgot|invite|sso|login)/.test(location.hash) && await routeSignedOut()) return;
   if (!$("code").hidden) return; // a code is on screen: it stays until "Continue"
   if (!me) { if (location.hash === "#/" || location.hash === "") show("auth"); return; }
+  if (demo) {
+    const dh = location.hash.split("?")[0];
+    if (dh === "#/request") return show("request");
+    if (dh === "#/stock") return renderStock();
+    const dm = /^#\/u\/([0-9a-f]{32})$/.exec(dh);
+    return renderUpload(dm ? dm[1] : demo.upload);
+  }
   if (me.mustEnroll2fa) { if (location.hash !== "#/account") history.replaceState(null, "", "#/account"); return renderAccount(); }
   const h = location.hash.split("?")[0];
   if (h === "#/account") return renderAccount();
@@ -861,6 +950,7 @@ async function route() {
   if (h === "#/connections" && me.features.connectors && can("admin")) return renderConnections();
   if (h === "#/team" && can("admin")) return renderTeam();
   if (h === "#/activity" && can("admin")) return renderActivity();
+  if (h === "#/billing" && can("admin")) return renderBilling();
   const m = /^#\/u\/([0-9a-f]{32})$/.exec(h);
   if (m) return renderUpload(m[1]);
   return renderHome();
@@ -868,6 +958,7 @@ async function route() {
 window.addEventListener("hashchange", route);
 
 async function start() {
+  if (DEMO) return startDemo();
   if (/^#\/(reset|forgot|invite|sso|login)/.test(location.hash) && await routeSignedOut()) return;
   if (!token) { show("auth"); return; }
   const r = await call("/api/me");

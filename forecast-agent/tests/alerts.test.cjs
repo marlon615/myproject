@@ -94,7 +94,7 @@ async function pullDown(page) {
     await O.click("#al-make");
     await O.waitForSelector("#al-on:not([hidden])");
     const topic = await O.textContent("#al-topic");
-    check(/^forecast-[a-z2-9]{20}$/.test(topic), "'Turn on phone alerts' makes a private random topic name", topic.slice(0, 13) + "…");
+    check(/^draxly-[a-z2-9]{20}$/.test(topic), "'Turn on phone alerts' makes a private random topic name", topic.slice(0, 13) + "…");
     await O.click("#al-test");
     await O.waitForFunction(() => /Sent/.test(document.querySelector("#al-result").textContent));
     const test = sent.at(-1)?.body;
