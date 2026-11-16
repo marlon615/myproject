@@ -49,7 +49,7 @@ const topMethod = (m) => Object.entries(m).sort((a, b) => b[1] - a[1])[0]?.[0] |
 /** Biggest VIEW_MAX items by size, the rest folded into "Other (N …)". */
 function view(groups, label, size) {
   let items = Object.entries(groups).map(([name, g]) => ({ name, g }));
-  items.sort((a, b) => size(b.g) - size(a.g));
+  items.sort((a, b) => (a.name.startsWith("Other (") - b.name.startsWith("Other (")) || size(b.g) - size(a.g)); // an "Other (…)" group stays last
   if (items.length > VIEW_MAX) {
     const rest = items.slice(VIEW_MAX - 1), other = blank();
     for (const { g } of rest) { addInto(other.hist, g.hist); addInto(other.pred, g.pred); addInto(other.act, g.act); for (const [m, c] of Object.entries(g.methods)) other.methods[m] = (other.methods[m] || 0) + c; other.n += g.n; }
@@ -108,3 +108,16 @@ export function mergePartial(acc, part) {
 }
 /** What a batch needs to keep (the month list itself is the same for every batch). */
 export const partialOf = (acc) => ({ total: acc.total, product: acc.product, location: acc.location, region: acc.region, series: acc.series });
+
+export function mergeGroup(a, b) { addInto(a.hist, b.hist); addInto(a.pred, b.pred); addInto(a.act, b.act); for (const [m, c] of Object.entries(b.methods)) a.methods[m] = (a.methods[m] || 0) + c; a.n += b.n; return a; }
+export const groupSize = (g, mode) => (mode === "backtest" ? sum(g.act) : sum(g.pred) + sum(g.hist.slice(-3)));
+/** Keeps the biggest 199 groups; everything else is added into one "Other" group (counted). */
+export function keepTop(t, name, g, size) {
+  t.top.push({ name, g, s: size(g) });
+  if (t.top.length > VIEW_MAX - 1) {
+    t.top.sort((a, b) => b.s - a.s);
+    const out = t.top.pop();
+    t.other = t.other ? mergeGroup(t.other, out.g) : JSON.parse(JSON.stringify(out.g));
+    t.count++;
+  }
+}

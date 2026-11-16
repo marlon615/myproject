@@ -8,7 +8,11 @@ const te = new TextEncoder(), td = new TextDecoder();
 export const hex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
 export const randomHex = (n) => hex(crypto.getRandomValues(new Uint8Array(n)));
 export const sha256 = async (text) => hex(await crypto.subtle.digest("SHA-256", te.encode(text)));
-export const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
+export const b64 = (bytes) => {
+  const u = new Uint8Array(bytes); let s = "";
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); // in pieces: big data would overflow the call stack
+  return btoa(s);
+};
 export const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 export const b64url = (bytes) => b64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 export const unb64url = (s) => unb64(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));

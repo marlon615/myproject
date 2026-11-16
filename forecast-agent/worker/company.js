@@ -14,7 +14,7 @@
  */
 import { DurableObject } from "cloudflare:workers";
 import * as C from "./crypto.js";
-import { newAccumulator, addSeries, finish, mergePartial, partialOf } from "./aggregate.js";
+import { newAccumulator, addSeries, finish, mergeGroup, groupSize, keepTop } from "./aggregate.js";
 import { monthLabel, addMonths } from "./forecast.js";
 import { suggest, sortSuggestions, DEFAULT_SETTINGS } from "./reorder.js";
 import { CONNECTORS, ConnectorError } from "./connectors.js";
@@ -23,7 +23,7 @@ import { parseCSV, detectColumns, detectExtra, dateOrderOf, toYearMonth, parseNu
 
 // Batch sizes per background step. Cloudflare's free plan allows ~10 ms of CPU per step, so these are small; on the
 // Workers Paid plan (30 s per step) set CPU_PLAN = "paid" in wrangler.toml and every batch is 10× bigger (fewer steps).
-const SIZES = { free: { CHUNK: 12, MERGE_FAN: 12, APPLY_CHUNK: 40, INV_CHUNK: 60, INLINE_MAX: 24 }, paid: { CHUNK: 120, MERGE_FAN: 60, APPLY_CHUNK: 400, INV_CHUNK: 600, INLINE_MAX: 240 } };
+const SIZES = { free: { CHUNK: 12, RANK_CHUNK: 60, APPLY_CHUNK: 40, INV_CHUNK: 60, INLINE_MAX: 24 }, paid: { CHUNK: 120, RANK_CHUNK: 600, APPLY_CHUNK: 400, INV_CHUNK: 600, INLINE_MAX: 240 } };
 const INDEX_PART = 2000;
 export const MAX_SERIES = 50_000, MAX_MONTHS = 120, MAX_UPLOADS = 50;
 const HOUR = 3_600_000, DAY = 86_400_000;
@@ -77,6 +77,9 @@ export class Company extends DurableObject {
       cursor TEXT NOT NULL DEFAULT '', total INTEGER NOT NULL DEFAULT 0, done INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending',
       error TEXT, payload TEXT NOT NULL DEFAULT '{}', created TEXT NOT NULL, updated TEXT NOT NULL)`);
     x(`CREATE TABLE IF NOT EXISTS partials (id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL, blob TEXT NOT NULL)`);
+    // Running totals per product / location / region while a forecast is worked out: one small row each (encrypted),
+    // so nothing grows with the number of products (a stored value can be at most 2 MB on Cloudflare).
+    x(`CREATE TABLE IF NOT EXISTS groups (job INTEGER NOT NULL, dim TEXT NOT NULL, hk TEXT NOT NULL, blob TEXT NOT NULL, PRIMARY KEY (job, dim, hk))`);
     x(`CREATE TABLE IF NOT EXISTS stage (id INTEGER PRIMARY KEY AUTOINCREMENT, job INTEGER NOT NULL, type TEXT NOT NULL, blob TEXT NOT NULL)`);
     x(`CREATE TABLE IF NOT EXISTS inventory (k TEXT PRIMARY KEY, blob TEXT NOT NULL, updated TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'file')`);
     x(`CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, t TEXT NOT NULL, user TEXT NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT '')`);
@@ -356,6 +359,7 @@ export class Company extends DurableObject {
   #endJob(job, status, error = null) {
     this.sql.exec("UPDATE jobs SET status = ?, error = ?, updated = ? WHERE id = ?", status, error, this.#now(), job.id);
     this.sql.exec("DELETE FROM partials WHERE job = ?", job.id);
+    this.sql.exec("DELETE FROM groups WHERE job = ?", job.id);
     this.sql.exec("DELETE FROM stage WHERE job = ?", job.id);
   }
   #save(job, patch) {
@@ -366,24 +370,49 @@ export class Company extends DurableObject {
   // compute: batches of 40 series, then add the batches up (24 at a time) into the views.
   async #stepCompute(job) {
     const axis = this.#range(job.upload);
+    const dims = [["total", "total"], ["product", "product"], ["location", "location"], ["region", "region"]];
     if (job.phase === "series") {
+      // A batch of series: each one's forecast is kept, and added into its product / location / region running totals.
       const rows = this.sql.exec("SELECT key, blob FROM series WHERE upload = ? AND measure = ? AND key > ? ORDER BY key LIMIT ?", job.upload, job.measure, job.cursor, this.#z.CHUNK).toArray();
-      if (!rows.length) return this.#save(job, { phase: "merge" });
+      if (!rows.length) return this.#save(job, { phase: "rank", cursor: "" });
       const acc = newAccumulator(job.mode, axis);
       for (const row of rows) {
         const s = await this.#dec(row.blob);
         const res = addSeries(acc, { product: s.p, location: s.l, region: s.r, values: axis.map((m) => s.v[m] || 0) });
         this.sql.exec("INSERT OR REPLACE INTO results (upload, measure, mode, key, blob) VALUES (?, ?, ?, ?, ?)", job.upload, job.measure, job.mode, row.key, await this.#enc(res));
       }
-      this.sql.exec("INSERT INTO partials (job, blob) VALUES (?, ?)", job.id, await this.#enc(partialOf(acc)));
+      for (const [dim, field] of dims) {
+        const entries = dim === "total" ? [["", acc.total]] : Object.entries(acc[field]);
+        for (const [name, g] of entries) {
+          const hk = dim === "total" ? "" : C.hex(await C.hmac("SHA-256", this.#secret, `${dim}${SEP}${name}`)).slice(0, 32);
+          const old = this.sql.exec("SELECT blob FROM groups WHERE job = ? AND dim = ? AND hk = ?", job.id, dim, hk).toArray()[0];
+          const cur = old ? await this.#dec(old.blob) : { name, g: null };
+          cur.g = cur.g ? mergeGroup(cur.g, g) : g;
+          this.sql.exec("INSERT OR REPLACE INTO groups (job, dim, hk, blob) VALUES (?, ?, ?, ?)", job.id, dim, hk, await this.#enc(cur));
+        }
+      }
       return this.#save(job, { cursor: rows[rows.length - 1].key, done: job.done + rows.length });
     }
-    const parts = this.sql.exec("SELECT id, blob FROM partials WHERE job = ? ORDER BY id LIMIT ?", job.id, this.#z.MERGE_FAN).toArray();
-    const remaining = this.sql.exec("SELECT COUNT(*) AS n FROM partials WHERE job = ?", job.id).one().n;
+    // rank: go through the running totals in batches, keeping the biggest 200 per view (the rest add up into "Other").
+    const st = this.sql.exec("SELECT id, blob FROM stage WHERE job = ? AND type = 'rank'", job.id).toArray()[0];
+    const tops = st ? await this.#dec(st.blob) : { product: { top: [], other: null, count: 0 }, location: { top: [], other: null, count: 0 }, region: { top: [], other: null, count: 0 } };
+    const [cd, ck] = job.cursor ? job.cursor.split("|") : ["", ""];
+    const rows = this.sql.exec("SELECT dim, hk, blob FROM groups WHERE job = ? AND dim != 'total' AND (dim > ? OR (dim = ? AND hk > ?)) ORDER BY dim, hk LIMIT ?", job.id, cd, cd, ck, this.#z.RANK_CHUNK).toArray();
+    if (rows.length) {
+      for (const r of rows) { const x = await this.#dec(r.blob); keepTop(tops[r.dim], x.name, x.g, (g) => groupSize(g, job.mode)); }
+      const blob = await this.#enc(tops);
+      if (st) this.sql.exec("UPDATE stage SET blob = ? WHERE id = ?", blob, st.id); else this.sql.exec("INSERT INTO stage (job, type, blob) VALUES (?, 'rank', ?)", job.id, blob);
+      return this.#save(job, { cursor: `${rows[rows.length - 1].dim}|${rows[rows.length - 1].hk}`, done: job.done });
+    }
+    const totalRow = this.sql.exec("SELECT blob FROM groups WHERE job = ? AND dim = 'total'", job.id).toArray()[0];
     const acc = newAccumulator(job.mode, axis);
-    for (const p of parts) mergePartial(acc, await this.#dec(p.blob));
-    for (const p of parts) this.sql.exec("DELETE FROM partials WHERE id = ?", p.id);
-    if (remaining > parts.length) { this.sql.exec("INSERT INTO partials (job, blob) VALUES (?, ?)", job.id, await this.#enc(partialOf(acc))); return; }
+    if (totalRow) acc.total = (await this.#dec(totalRow.blob)).g;
+    acc.series = acc.total.n;
+    for (const [dim, field] of dims.slice(1)) {
+      const t = tops[dim];
+      for (const it of t.top) acc[field][it.name] = it.g;
+      if (t.count) acc[field][`Other (${t.count.toLocaleString("en-US")} ${dim === "product" ? "products" : dim === "location" ? "locations" : "regions"})`] = t.other;
+    }
     const view = finish(acc, job.measure === "units" ? "units" : "money");
     this.sql.exec("INSERT OR REPLACE INTO views (upload, measure, mode, blob, updated) VALUES (?, ?, ?, ?, ?)", job.upload, job.measure, job.mode, await this.#enc(view), this.#now());
     this.#endJob(job, "done");
