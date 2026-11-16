@@ -128,15 +128,20 @@ export class Directory extends DurableObject {
   ownerLog(limit = 200) { return this.sql.exec("SELECT * FROM owner_log ORDER BY id DESC LIMIT ?", limit).toArray(); }
   logOwner(action, account, detail) { this.#log(action, account, detail); }
 
-  contact() { return this.#meta("contact") || ""; }
+  /** Draxly's contact email (wrangler.toml CONTACT_EMAIL). */
+  contactEmail() { return String(this.env?.CONTACT_EMAIL || "").trim(); }
+  /** What customers are told to do to get in touch: the owner's saved text, or the contact email. Any other email address in it
+   *  is replaced by the contact email, so there is only ever one address. */
+  contact() { return this.#oneEmail(this.#meta("contact")) || this.contactEmail(); }
+  #oneEmail(text) { const e = this.contactEmail(); return text && e ? String(text).replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/g, e) : text || ""; }
   setContact(text) { this.#setMeta("contact", text); return this.contact(); }
 
   // ── Platform settings (email, sign-in apps, QuickBooks app): secrets are encrypted ──────────────────────────────
   static SETTINGS = { emailFrom: false, emailKey: true, msClientId: false, msSecret: true, googleClientId: false, googleSecret: true, qbClientId: false, qbSecret: true,
     billingName: false, paymentInstructions: false, ownerEmail: false };
   /** Settings with a built-in default (wrangler.toml [vars]) used until the owner changes them. */
-  #default(k) { return k === "billingName" ? this.env.BILLING_NAME || "Draxly" : k === "ownerEmail" ? this.env.DEMO_REQUEST_EMAIL || "" : ""; }
-  #setting(k) { return this.#meta(`set_${k}`) || this.#default(k); }
+  #default(k) { return k === "billingName" ? this.env.BILLING_NAME || "Draxly" : k === "ownerEmail" ? this.contactEmail() : ""; }
+  #setting(k) { return k === "ownerEmail" ? this.contactEmail() || this.#meta("set_ownerEmail") || "" : this.#meta(`set_${k}`) || this.#default(k); } // one contact email, set in wrangler.toml
   platform() {
     const out = {};
     for (const [k, secret] of Object.entries(Directory.SETTINGS)) out[k] = secret ? Boolean(this.#meta(`set_${k}`)) : this.#setting(k);
@@ -680,7 +685,7 @@ export class Directory extends DurableObject {
     const i = this.sql.exec("SELECT * FROM invoices WHERE id = ?", id).toArray()[0];
     if (!i || (account && i.account !== account)) return null;
     const a = this.#account(i.account);
-    return { number: i.number, bytes: invoicePdf({ seller: this.#setting("billingName"), buyer: a.company, invoice: this.#invoiceOut(i), instructions: this.#meta("set_paymentInstructions") }) };
+    return { number: i.number, bytes: invoicePdf({ seller: this.#setting("billingName"), buyer: a.company, invoice: this.#invoiceOut(i), instructions: this.#meta("set_paymentInstructions"), contact: this.contactEmail() }) };
   }
   /** Emails an invoice (or an overdue reminder) with the PDF attached to the company's admins. */
   async #emailInvoice(id, kind, daysLate = 0) {
@@ -690,7 +695,7 @@ export class Directory extends DurableObject {
     const to = this.recipients(i.account, "billing", ["admin"]).map((r) => r.email);
     if (!to.length) return { ok: false, reason: "No admin to send it to." };
     const pdf = await this.invoicePdfFor(id);
-    const args = { company: a.company, invoice: this.#invoiceOut(i), link: `${this.#origin()}/#/billing`, instructions: this.#meta("set_paymentInstructions"), seller: this.#setting("billingName"), daysLate };
+    const args = { company: a.company, invoice: this.#invoiceOut(i), link: `${this.#origin()}/#/billing`, instructions: this.#meta("set_paymentInstructions"), seller: this.#setting("billingName"), contact: this.contactEmail(), daysLate };
     const mail = kind === "reminder" ? reminderEmail(args) : invoiceEmail(args);
     const r = await sendEmail(this.env, this, { to, ...mail, attachments: [{ filename: `${i.number}.pdf`, content: toBase64(pdf.bytes) }] });
     if (r.ok && kind === "invoice") this.sql.exec("UPDATE invoices SET sent_count = sent_count + 1, last_sent = ? WHERE id = ?", new Date().toISOString(), id);

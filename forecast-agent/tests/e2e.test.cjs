@@ -200,12 +200,12 @@ function makeXlsx(file) {
     await O.waitForFunction(() => /Account off/.test([...document.querySelectorAll(".cust")].find((c) => /Bay Market/.test(c.textContent)).textContent));
     check((await req("/api/uploads", { token: tokenB })).status === 401, "switching B off signs B out everywhere");
     const offLogin = await req("/api/login", { method: "POST", body: { email: "boss@baymarket.test", password: "bay-market-22" } });
-    check(offLogin.status === 403 && offLogin.data.contact === "hello@forecast.test", "B can't sign in while off, and is told who to contact");
+    check(offLogin.status === 403 && offLogin.data.contact === "draxlyforecast@gmail.com", "B can't sign in while off, and is told to contact draxlyforecast@gmail.com (the address typed in is replaced)");
     await B.reload();
     await B.waitForSelector("#auth:not([hidden])");
     await B.click("#tab-login"); await B.fill("#email", "boss@baymarket.test"); await B.fill("#password", "bay-market-22"); await B.click("#auth-submit");
     await B.waitForSelector("#off:not([hidden])");
-    check(/hello@forecast\.test/.test(await B.textContent("#off")), "B's page shows 'switched off' with your contact");
+    check(/draxlyforecast@gmail\.com/.test(await B.textContent("#off")), "B's page shows 'switched off' with your contact");
     await O.locator(".cust", { hasText: "Bay Market" }).locator(".sw-account").check();
     await O.waitForFunction(() => /Account on/.test([...document.querySelectorAll(".cust")].find((c) => /Bay Market/.test(c.textContent)).textContent));
     check((await req("/api/login", { method: "POST", body: { email: "boss@baymarket.test", password: "bay-market-22" } })).status === 200, "switched back on: B can sign in again, data intact");

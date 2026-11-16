@@ -59,6 +59,15 @@ const pdfText = (b64) => Buffer.from(b64, "base64").toString("latin1");
     const invMail = mails.slice(n0).filter((m) => /Draxly invoice DRX-2026-0001/.test(m.subject));
     check(invMail.length === 1 && invMail[0].to[0] === "cfo@cascade.test" && invMail[0].attachments?.[0]?.filename === "DRX-2026-0001.pdf" && /^%PDF-1\.4/.test(pdfText(invMail[0].attachments[0].content)) && /DRX-2026-0001/.test(pdfText(invMail[0].attachments[0].content)) && /ACH to Example Bank/.test(invMail[0].html),
       "the invoice is emailed automatically to the company's admin (not the manager) with the PDF attached and how to pay", invMail[0]?.subject);
+    // ── One contact email everywhere: draxlyforecast@gmail.com ─────────────────────────────────────────────
+    const CE = "draxlyforecast@gmail.com", emailsIn = (t) => t.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/g) || [];
+    check(["/", "/pricing", "/security", "/docs", "/demo"].every((p) => pages[p].includes(`mailto:${CE}`) && emailsIn(pages[p]).every((e) => e === CE)), "the home, pricing, security, API and demo pages say 'Contact us: draxlyforecast@gmail.com', and show no other email");
+    check(/Questions about this invoice\? Email draxlyforecast@gmail\.com/.test(pdfText(invMail[0].attachments[0].content)) && invMail[0].html.includes(`mailto:${CE}`) && invMail[0].text.includes(CE), "the invoice PDF and invoice email say 'Questions about this invoice? Email draxlyforecast@gmail.com'");
+    check((await req("/api/me", { token: adminA })).data.contact === CE, "with nothing saved, customers are told to contact draxlyforecast@gmail.com");
+    const ct = (await req("/api/owner/contact", { method: "POST", token: owner, body: { contact: "Email sales@old-address.test to switch it on" } })).data.contact;
+    check(ct === `Email ${CE} to switch it on` && (await req("/api/me", { token: adminA })).data.contact === ct, "any other email typed into 'What locked customers are told' is replaced with draxlyforecast@gmail.com", ct);
+    await req("/api/owner/contact", { method: "POST", token: owner, body: { contact: "" } });
+    check((await req("/api/owner/platform", { token: owner })).data.platform.ownerEmail === CE, "the owner dashboard shows draxlyforecast@gmail.com as Draxly's contact email (an older saved address is ignored)");
     check((await req("/api/owner/agreement", { method: "POST", token: owner, body: { id: aid, billing: "monthly", today: "2026-02-01" } })).status === 409, "a company can't get a second agreement while one is active");
     // Reminders: 1, 7, 14 days late, then every 14 days; never twice.
     const reminders = async (today) => { const k = mails.length; await run(today); return mails.slice(k).filter((m) => /^Reminder: Draxly invoice/.test(m.subject)).map((m) => m.subject); };

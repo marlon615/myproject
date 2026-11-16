@@ -105,7 +105,7 @@ function companyFile() {
     await P.fill("#d-name", "Lee Park"); await P.fill("#d-email", "lee@parkfoods.test"); await P.fill("#d-company", "Park Foods");
     await P.click("#d-send");
     await P.waitForSelector("#d-form-ok:not([hidden])");
-    check((await req("/api/owner/demo", { token: owner })).data.leads.some((l) => l.email === "lee@parkfoods.test" && Number(l.visit) === v.id) && mails.some((m) => m.to[0] === "foliopayments.ja@gmail.com" && /Lee Park/.test(m.subject)), "'Request access' on the results page reaches you (email to foliopayments.ja@gmail.com, linked to the visit)");
+    check((await req("/api/owner/demo", { token: owner })).data.leads.some((l) => l.email === "lee@parkfoods.test" && Number(l.visit) === v.id) && mails.some((m) => m.to[0] === "draxlyforecast@gmail.com" && /Lee Park/.test(m.subject)), "'Request access' on the results page reaches you (email to draxlyforecast@gmail.com, linked to the visit)");
     P.once("dialog", (d) => d.accept());
     await P.click("#d-restart");
     check(await P.isVisible("#d-start") && !(await P.isVisible("#d-result")) && (await P.locator("#d-table tr").count()) === 0, "'Start over' clears everything from the page");

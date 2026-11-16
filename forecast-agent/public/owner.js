@@ -385,11 +385,12 @@ $("o-contact-save").onclick = async () => {
 if (token) { const r = await call("/api/owner/customers"); if (r.ok) dash(); else gate(); } else gate();
 
 // ── Platform settings (email, sign-in apps, QuickBooks app) ─────────────────────────────────────────────────────
-const PL_PLAIN = ["emailFrom", "msClientId", "googleClientId", "qbClientId", "billingName", "paymentInstructions", "ownerEmail"], PL_SECRET = ["emailKey", "msSecret", "googleSecret", "qbSecret"];
+const PL_PLAIN = ["emailFrom", "msClientId", "googleClientId", "qbClientId", "billingName", "paymentInstructions"], PL_SECRET = ["emailKey", "msSecret", "googleSecret", "qbSecret"];
 async function loadPlatform() {
   const r = await call("/api/owner/platform");
   if (!r.ok) return;
   for (const k of PL_PLAIN) if (document.activeElement !== $(`pl-${k}`)) $(`pl-${k}`).value = r.data.platform[k] || "";
+  $("pl-ownerEmail").value = r.data.platform.ownerEmail || ""; // Draxly's contact email (read-only)
   for (const k of PL_SECRET) { $(`pl-${k}`).value = ""; $(`pl-${k}-state`).textContent = r.data.platform[k] ? "saved" : "not set"; }
   $("pl-cb-sso").textContent = r.data.callbacks.sso; $("pl-cb-qb").textContent = r.data.callbacks.quickbooks;
 }

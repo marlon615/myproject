@@ -66,18 +66,20 @@ export function inviteEmail({ company, inviter, link, role }) {
 
 const usd = (c) => `$${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const day = (s) => new Date(`${s}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "long", day: "numeric", year: "numeric" });
+const ask = (contact) => (contact ? `<p style="color:#6b7380;font-size:13px">Questions about this invoice? Email <a href="mailto:${esc(contact)}">${esc(contact)}</a>.</p>` : "");
+const askText = (contact) => (contact ? `\nQuestions? Email ${contact}` : "");
 const invoiceBody = (invoice, instructions) => `${table(["Invoice", "Period", "Amount", "Due"], [[invoice.number, `${day(invoice.periodStart)} – ${day(invoice.periodEnd)}`, usd(invoice.amountCents), day(invoice.due)]])}
 <p style="margin:16px 0 4px;font-weight:600">How to pay</p><p style="margin:0;white-space:pre-line">${esc(instructions || "Payment instructions will be sent separately.")}</p>
 <p style="color:#6b7380;font-size:13px">The invoice is attached as a PDF and is always available on your billing page. Please include ${esc(invoice.number)} with your payment.</p>`;
-export function invoiceEmail({ company, invoice, link, instructions, seller }) {
-  const body = `<p>Hello ${esc(company)},</p><p>Here's your Draxly invoice ${esc(invoice.number)} for <b>${usd(invoice.amountCents)}</b>, due <b>${day(invoice.due)}</b>.</p>${invoiceBody(invoice, instructions)}<p>Thank you,<br>${esc(seller)}</p>`;
+export function invoiceEmail({ company, invoice, link, instructions, seller, contact }) {
+  const body = `<p>Hello ${esc(company)},</p><p>Here's your Draxly invoice ${esc(invoice.number)} for <b>${usd(invoice.amountCents)}</b>, due <b>${day(invoice.due)}</b>.</p>${invoiceBody(invoice, instructions)}${ask(contact)}<p>Thank you,<br>${esc(seller)}</p>`;
   return { subject: `Draxly invoice ${invoice.number}: ${usd(invoice.amountCents)} due ${day(invoice.due)}`, html: shell(`Invoice ${invoice.number}`, body, link),
-    text: `Draxly invoice ${invoice.number} for ${company}: ${usd(invoice.amountCents)}, due ${day(invoice.due)}.\n${invoice.description}\n\nHow to pay:\n${instructions || ""}\n\nBilling page: ${link}` };
+    text: `Draxly invoice ${invoice.number} for ${company}: ${usd(invoice.amountCents)}, due ${day(invoice.due)}.\n${invoice.description}\n\nHow to pay:\n${instructions || ""}\n\nBilling page: ${link}${askText(contact)}` };
 }
-export function reminderEmail({ company, invoice, link, instructions, seller, daysLate }) {
-  const body = `<p>Hello ${esc(company)},</p><p>Our records show Draxly invoice ${esc(invoice.number)} for <b>${usd(invoice.amountCents)}</b> was due on ${day(invoice.due)} and is now <b>${daysLate} day${daysLate === 1 ? "" : "s"} overdue</b>. If you've already paid, thank you — please reply with the payment date so we can match it.</p>${invoiceBody(invoice, instructions)}<p>Thank you,<br>${esc(seller)}</p>`;
+export function reminderEmail({ company, invoice, link, instructions, seller, daysLate, contact }) {
+  const body = `<p>Hello ${esc(company)},</p><p>Our records show Draxly invoice ${esc(invoice.number)} for <b>${usd(invoice.amountCents)}</b> was due on ${day(invoice.due)} and is now <b>${daysLate} day${daysLate === 1 ? "" : "s"} overdue</b>. If you've already paid, thank you — please reply with the payment date so we can match it.</p>${invoiceBody(invoice, instructions)}${ask(contact)}<p>Thank you,<br>${esc(seller)}</p>`;
   return { subject: `Reminder: Draxly invoice ${invoice.number} is ${daysLate} day${daysLate === 1 ? "" : "s"} overdue`, html: shell(`Payment reminder — ${invoice.number}`, body, link),
-    text: `Reminder: Draxly invoice ${invoice.number} for ${company} (${usd(invoice.amountCents)}) was due ${day(invoice.due)} and is ${daysLate} days overdue.\n\nHow to pay:\n${instructions || ""}\n\nBilling page: ${link}` };
+    text: `Reminder: Draxly invoice ${invoice.number} for ${company} (${usd(invoice.amountCents)}) was due ${day(invoice.due)} and is ${daysLate} days overdue.\n\nHow to pay:\n${instructions || ""}\n\nBilling page: ${link}${askText(contact)}` };
 }
 export function leadEmail({ lead, link }) {
   const rows = [["Name", lead.name], ["Email", lead.email], ["Company", lead.company], ["Role", lead.title], ["Locations", lead.locations], ["From", [lead.city, lead.country].filter(Boolean).join(", ")]].filter((r) => r[1]);

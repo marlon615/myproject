@@ -57,7 +57,8 @@
         <div class="pay-row"><input id="pl-emailFrom" class="note" placeholder="From: Draxly <reports@yourdomain.com>"><input id="pl-emailKey" class="note" type="password" autocomplete="off" placeholder="Resend API key"><span class="hint" id="pl-emailKey-state"></span></div>
         <div class="pay-row"><input id="pl-test-to" class="note" type="email" placeholder="Send a test to…"><button class="secondary small" type="button" id="pl-test">Send test email</button> <span class="hint" id="pl-test-msg"></span></div>
         <h3>Billing and the demo</h3>
-        <div class="pay-row"><input id="pl-billingName" class="note" placeholder="Your business name on invoices" aria-label="Business name on invoices"><input id="pl-ownerEmail" class="note" type="email" placeholder="Where access requests are emailed" aria-label="Where access requests are emailed"></div>
+        <div class="pay-row"><input id="pl-billingName" class="note" placeholder="Your business name on invoices" aria-label="Business name on invoices"><input id="pl-ownerEmail" class="note" type="email" readonly title="Set in wrangler.toml (CONTACT_EMAIL)" aria-label="Draxly contact email"></div>
+        <p class="hint">Draxly contact email (shown on the demo page, invoices and every page footer; access requests go here): <b>draxlyforecast@gmail.com</b></p>
         <label>Payment instructions printed on every invoice (bank transfer / ACH details)<textarea id="pl-paymentInstructions" rows="3" maxlength="1500" placeholder="e.g. ACH or wire to … routing … account … — please include the invoice number."></textarea></label>
         <h3>Sign in with Microsoft</h3>
         <p class="hint">In the Microsoft Entra admin center: App registrations → New registration → “Accounts in any organizational directory and personal Microsoft accounts”, redirect URI (Web): <code id="pl-cb-sso"></code>. Then Certificates &amp; secrets → New client secret.</p>
@@ -86,8 +87,8 @@
       </div>
       <div class="card">
         <h2>What locked customers are told</h2>
-        <p class="hint">Shown when a customer's forecast is locked or their account is switched off — for example your email or phone number.</p>
-        <div class="pay-row"><input id="o-contact" class="note" maxlength="300" placeholder="e.g. Email us to get your forecast"><button class="secondary small" type="button" id="o-contact-save">Save</button> <span class="hint" id="o-contact-saved"></span></div>
+        <p class="hint">Shown when a customer's forecast is locked or their account is switched off. Leave it empty to show draxlyforecast@gmail.com; any other email typed here is replaced with it.</p>
+        <div class="pay-row"><input id="o-contact" class="note" maxlength="300" placeholder="draxlyforecast@gmail.com"><button class="secondary small" type="button" id="o-contact-save">Save</button> <span class="hint" id="o-contact-saved"></span></div>
       </div>
     </section>
   </main>

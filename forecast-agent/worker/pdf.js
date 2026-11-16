@@ -16,7 +16,7 @@ function wrap(text, width) {
   return out;
 }
 
-export function invoicePdf({ seller, buyer, invoice, instructions }) {
+export function invoicePdf({ seller, buyer, invoice, instructions, contact }) {
   const ops = [];
   const text = (x, y, s, size = 10, bold = false, gray = 0.1) => ops.push(`BT /F${bold ? 2 : 1} ${size} Tf ${gray} g ${x} ${y} Td (${esc(s)}) Tj ET`);
   const right = (x, y, s, size = 10, bold = false) => text(x - String(s).length * size * (bold ? 0.56 : 0.5), y, s, size, bold); // close enough for Helvetica digits
@@ -48,6 +48,7 @@ export function invoicePdf({ seller, buyer, invoice, instructions }) {
   text(54, y, "HOW TO PAY", 8, true, 0.45); y -= 15;
   for (const l of wrap(instructions || "Payment instructions will be sent separately.", 95).slice(0, 12)) { text(54, y, l, 10); y -= 13; }
   y -= 8; text(54, y, `Please include the invoice number ${invoice.number} with your payment.`, 9, false, 0.4);
+  if (contact) { y -= 14; text(54, y, `Questions about this invoice? Email ${contact}`, 9, false, 0.4); }
   const terms = [
     "Draxly Enterprise: $30,000 per company per year on a one-year agreement, paid upfront or $2,500 a month by invoice.",
     "The agreement renews automatically each year unless cancelled. If cancelled early, the rest of the year is still owed.",
