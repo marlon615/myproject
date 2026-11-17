@@ -57,6 +57,7 @@ const state = {
 };
 const rows = new Map(); // productId → { li, cb, qty, price, total, detail, product }
 let pad = null;
+let isRep = false; // a team sales rep: no owner dashboard on this phone (the boss has the dashboard)
 let thanks = null; // the signing thank-you: "Thank you" writes itself as the customer signs
 
 const itemsText = (n) => `${n} item${n === 1 ? "" : "s"}`;
@@ -80,6 +81,8 @@ async function start() {
   const access = await ensureAccess(el.gate);
   if (!access.ok) { blockApp(); signalReady(); return; }
   document.addEventListener("app:blocked", blockApp); // switched off by the maker while open
+  isRep = Boolean(access.team);
+  if (isRep) document.getElementById("owner-link").hidden = true; // reps don't get the dashboard button
   // A new phone: the business sets itself up first (company, address, phone, products and prices).
   let me = await profile.get();
   if (!me) {
@@ -301,7 +304,7 @@ function renderList() {
   rows.clear();
   const all = [...state.products, ...state.extra.map((x) => ({ ...x, removed: true }))];
   el.list.replaceChildren(...all.map(buildRow));
-  if (!all.length) el.list.append(h("li", { class: "prod-empty" }, "No products yet. Add one below — or all of them, with prices, in the owner dashboard → Settings."));
+  if (!all.length) el.list.append(h("li", { class: "prod-empty" }, isRep ? "No products yet. Add one below." : "No products yet. Add one below — or all of them, with prices, in the owner dashboard → Settings."));
 }
 
 function buildRow(p) {
@@ -680,7 +683,7 @@ function showListening(on) {
 function onMic() {
   if (voice.listener?.active) { finishListening(); return; }
   if (voice.busy) return;
-  if (!state.products.length) { toast("Add your products first (below, or owner dashboard → Settings), then speak the invoice.", { ms: 4200 }); return; }
+  if (!state.products.length) { toast(isRep ? "Add your products first (below), then speak the invoice." : "Add your products first (below, or owner dashboard → Settings), then speak the invoice.", { ms: 4200 }); return; }
   if (!canListen()) { typedInvoice("unsupported", ""); return; }
   startListening();
 }
@@ -862,7 +865,8 @@ function go(hash) {
 }
 
 async function route() {
-  const owner = location.hash === "#/owner";
+  if (isRep && location.hash === "#/owner") { history.replaceState(null, "", "#/"); } // typing the address doesn't open it either
+  const owner = !isRep && location.hash === "#/owner";
   if (owner && voice.listener) { voice.listener.abort(); voice.listener = null; showListening(false); el.voicePanel.hidden = true; }
   el.main.hidden = owner;
   el.brandBar.hidden = owner;

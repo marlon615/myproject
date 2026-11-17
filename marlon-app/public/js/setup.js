@@ -72,7 +72,7 @@ export function runSetup(root, { team = false, company = "", repName: givenName 
         h("p", { class: "setup-hint setup-hint-top" }, "Add what you sell, with your usual price. You can change a price on any invoice."),
         list,
         h("button", { type: "button", class: "btn btn-ghost setup-add", onclick: () => { addRow().querySelector("input").focus(); } }, "+ Add another product")),
-      h("p", { class: "setup-note" }, "You can change all of this later: owner dashboard → Settings."),
+      h("p", { class: "setup-note" }, team ? "You can add products later on the invoice screen, and change a price on any invoice." : "You can change all of this later: owner dashboard → Settings."),
       team
         ? h("p", { class: "setup-note setup-privacy" }, "Team version: every invoice you make is saved on this phone first, then sent to your company's boss dashboard whenever there's internet (it waits while there's no signal).")
         : h("p", { class: "setup-note setup-privacy" }, "Your customers, invoices and prices never leave this phone. The app only sends anonymous counts (how many invoices, no names or amounts) so its maker can see how many businesses use it. You can turn that off in Settings."),

@@ -157,6 +157,11 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     let n = 0;
     for (let i = 0; i < 30 && (n = await countOf()) < 1; i++) await A.waitForTimeout(500);
     check(n === 1, "back online: the waiting invoice is sent to the boss by itself", `${n} on the server`);
+    // ── Reps don't get the owner dashboard (the boss has the dashboard) ─────────────────────────────────────────
+    check(await A.locator("#owner-link").count() === 1 && !(await A.isVisible("#owner-link")), "a rep's phone has no dashboard button");
+    await A.evaluate(() => { location.hash = "#/owner"; });
+    await A.waitForTimeout(600);
+    check(!(await A.isVisible("#dashboard")) && await A.isVisible("#store") && !A.url().endsWith("#/owner"), "…and typing the dashboard address doesn't open it either (it stays on the invoice)", A.url());
     await makeInvoice(A, "Hill Top Grocery", [["Coconut Water", 10, 180], ["Eggs", 2, 480]]);
     await markPaid(A, "Bay Market");
 
@@ -223,7 +228,7 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     const onRep = await A.evaluate(async () => (await (await import("/js/db.js")).invoices.all()).find((i) => i.store === "Hill Top Grocery").payment);
     check(onRep?.status === "paid" && onRep.markedBy === "boss", "…and it shows as paid on Andre's phone", JSON.stringify(onRep));
     const repView = await A.evaluate(async () => { const { paymentState } = await import("/js/payment.js"); const db = await import("/js/db.js"); return paymentState((await db.invoices.all()).find((i) => i.store === "Hill Top Grocery")).text; });
-    check(/marked by your boss/.test(repView), "the rep's own dashboard says it was marked paid by the boss", repView);
+    check(/marked by your boss/.test(repView), "the rep's phone records it as marked paid by the boss", repView);
     const aLic = await A.evaluate(async () => (await (await import("/js/db.js")).settings.get("license")));
     const stale = await post("/api/team/sync", { key: aLic.key, device: aLic.device, rep: "Andre Brown", invoices: [{ id: (await A.evaluate(async () => (await (await import("/js/db.js")).invoices.all()).find((i) => i.store === "Hill Top Grocery").id)), store: "Hill Top Grocery", total: 2760, items: [], payment: { status: "unpaid" } }] });
     check(stale.ok, "an old 'not paid' copy sent from a phone is accepted…");
@@ -296,6 +301,7 @@ const markPaid = (page, store) => page.evaluate(async (s) => {
     watch(S, "solo-then-rep phone");
     await S.goto(solo.link);
     await setUp(S, { name: "Test Company", address: "", phone: "", products: [{ name: "Juice", price: "100", unit: "each" }] });
+    check(await S.isVisible("#owner-link"), "a solo business still has its dashboard button");
     const freshSlot = new URL(big.repLinks[1]).searchParams.get("k"); // Big Team Ltd's Rep 2 link, not opened yet
     await S.goto(`${BASE}/?k=${freshSlot}`);
     await S.waitForSelector(".gate[data-reason='switch']");
