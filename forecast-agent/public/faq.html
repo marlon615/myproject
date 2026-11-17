@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FAQ · Draxly</title>
+  <meta name="description" content="Answers to common questions about Draxly: data, accuracy, integrations, security, pricing and the free test demo.">
+  <link rel="canonical" href="__SITE_URL__/faq">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Draxly">
+  <meta property="og:title" content="FAQ · Draxly">
+  <meta property="og:description" content="Answers to common questions about Draxly: data, accuracy, integrations, security, pricing and the free test demo.">
+  <meta property="og:url" content="__SITE_URL__/faq">
+  <meta name="theme-color" content="#0b1f3a">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site-chrome.css">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+</head>
+<body class="site page-faq">
+<a class="skip" href="#main">Skip to content</a>
+<header class="sitenav" data-site-header>
+  <div class="nav-in">
+    <a class="logo" href="/" aria-label="Draxly home"><img src="/icon.svg" alt="" width="30" height="30"><span>Draxly</span></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu"><span class="sr">Menu</span><span class="bars" aria-hidden="true"></span></button>
+    <nav class="nav-menu" id="nav-menu" aria-label="Main">
+      <a href="/how-it-works" data-nav="how-it-works">How it works</a>
+      <a href="/integrations" data-nav="integrations">Integrations</a>
+      <a href="/security" data-nav="security">Security</a>
+      <a href="/pricing" data-nav="pricing">Pricing</a>
+      <a href="/faq" data-nav="faq">FAQ</a>
+      <a href="/about" data-nav="about">About</a>
+      <a href="/contact" data-nav="contact">Contact</a>
+      <span class="nav-cta">
+        <a class="btn btn-ghost" href="/app">Sign in</a>
+        <a class="btn btn-primary" href="/free-demo">Free demo</a>
+      </span>
+    </nav>
+  </div>
+</header>
+<main id="main">
+<section class="page-head">
+  <div class="wrap">
+    <span class="eyebrow">FAQ</span>
+    <h1>Frequently asked questions</h1>
+    <p class="lead">Can't find your answer? Email <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a> or use the <a href="/contact">contact form</a>.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap faq">
+    <h2>The product</h2>
+    <details><summary>What does Draxly do?</summary><div><p>Draxly forecasts the next 3 months of sales for every product at every store or warehouse, rolled up by region and in total. With your stock levels, it suggests what to reorder and sends low-stock alerts. It's built for US food and drink distributors and wholesalers.</p></div></details>
+    <details><summary>Who is it for?</summary><div><p>Food and drink distributors and wholesalers with roughly $20M to $500M in annual sales: companies with many products and locations, but usually no dedicated forecasting team.</p></div></details>
+    <details><summary>How does the forecasting work?</summary><div><p>For each product, Draxly tries several proven forecasting methods (recent average, trend, smoothing with a damped trend, and seasonal patterns once there are 2 or more years of history). It keeps the one that best predicted that product's own recent months. <a href="/how-it-works">More on how it works</a>.</p></div></details>
+    <details><summary>How accurate is it?</summary><div><p>It depends on your products and your history, so we don't quote a general number. Instead, Draxly measures it on your own data: it hides your last 3 months, predicts them, and shows predicted against actual by product, store and region. The free test demo lets you check it yourself against months you keep back.</p></div></details>
+    <details><summary>How much history do I need?</summary><div><p>At least 6 months to forecast and 9 months for the accuracy test. 12 to 24 months works best, and 2 or more years lets Draxly use seasonal patterns.</p></div></details>
+    <details><summary>How many products can it handle?</summary><div><p>Up to 50,000 product and location combinations per data set. We've tested the open demo and the full app with 50,000 products.</p></div></details>
+    <details><summary>Does it forecast dollars or units?</summary><div><p>Either or both. Reorder suggestions use units.</p></div></details>
+    <details><summary>Do we need to install anything?</summary><div><p>No. Draxly runs in the browser on desktop and phone.</p></div></details>
+
+    <h2>Data and integrations</h2>
+    <details><summary>Which systems does Draxly connect to?</summary><div><p>Oracle NetSuite, SAP S/4HANA, Microsoft Dynamics 365 Business Central, QuickBooks Online, Shopify and Square, with nightly syncs. Any other system can use the API, the HTTPS file drop, or a nightly file at a web address. You can also upload CSV or Excel files. <a href="/integrations">See integrations</a>.</p></div></details>
+    <details><summary>How often is data refreshed?</summary><div><p>With a connection, every night at about 2 a.m. in your time zone. The accuracy test and forecasts then update on their own.</p></div></details>
+    <details><summary>Do you offer SFTP?</summary><div><p>No. Draxly runs on Cloudflare, which doesn't accept SFTP connections. Most schedulers that drop files over SFTP can also send them to the HTTPS file drop.</p></div></details>
+    <details><summary>Does Draxly change anything in our ERP?</summary><div><p>No. Connections only read sales and stock. We recommend giving them read-only access.</p></div></details>
+
+    <h2>Security and privacy</h2>
+    <details><summary>How is our data protected?</summary><div><p>Each company's data is kept in its own separate storage. Sales figures, names, forecasts, stock levels and credentials are encrypted at rest with AES-256-GCM. Sign-in supports Microsoft and Google single sign-on, two-factor codes and roles, and every important action is logged. <a href="/security">Read the security overview</a>.</p></div></details>
+    <details><summary>Are you SOC 2 certified?</summary><div><p>Not currently. We don't hold SOC 2 or ISO 27001 certification. We're happy to complete your security questionnaire.</p></div></details>
+    <details><summary>Do you sell or share our data?</summary><div><p>No. Your data is used only to provide Draxly to you. It isn't sold, shared for advertising, or used to serve other customers.</p></div></details>
+    <details><summary>What happens to our data if we leave?</summary><div><p>When an account is closed, all of that company's stored data is deleted. You can download your forecasts as CSV at any time before then.</p></div></details>
+
+    <h2>Pricing and contract</h2>
+    <details><summary>How much does Draxly cost?</summary><div><p>$30,000 per company per year on a one-year agreement. Pay the full year upfront, or $2,500 a month by invoice. Every feature and unlimited users are included.</p></div></details>
+    <details><summary>Can we cancel?</summary><div><p>Yes, at any time. The agreement renews automatically each year unless cancelled. If you cancel partway through a year, the rest of that year is still owed.</p></div></details>
+    <details><summary>Is there a per-user fee?</summary><div><p>No. Users are unlimited.</p></div></details>
+    <details><summary>How do we pay?</summary><div><p>By invoice. Each invoice shows the payment details and is due 15 days after it's issued.</p></div></details>
+
+    <h2>The free test demo</h2>
+    <details><summary>Do I need to sign up?</summary><div><p>No. Open the <a href="/demo">demo</a>, upload your file, and get your forecast.</p></div></details>
+    <details><summary>Is my file stored?</summary><div><p>No. It's read in your browser, only monthly totals are sent to be forecast, and nothing is kept after you close the page.</p></div></details>
+    <details><summary>How do I get the most from the test?</summary><div><p>Export 24 months of monthly sales, upload the first 21, and keep the last 3 to yourself. Then compare Draxly's forecast with what really happened.</p></div></details>
+
+    <h2>Getting in touch</h2>
+    <details><summary>Do you offer phone or video calls?</summary><div><p>We work by email only, so there's nothing to schedule. Write to <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a> or use the <a href="/contact">contact form</a>.</p></div></details>
+  </div>
+</section>
+</main>
+<footer class="foot-site" data-site-footer>
+  <div class="foot-in">
+    <div class="foot-brand">
+      <a class="logo" href="/"><img src="/icon.svg" alt="" width="26" height="26"><span>Draxly</span></a>
+      <p>Know what to stock before you need it.</p>
+      <p>Sales forecasting for US food and drink distributors and wholesalers.</p>
+      <p><a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+    </div>
+    <div class="foot-col">
+      <h2>Product</h2>
+      <a href="/how-it-works">How it works</a>
+      <a href="/integrations">Integrations</a>
+      <a href="/pricing">Pricing and contract</a>
+      <a href="/free-demo">Free test demo</a>
+      <a href="/docs">API guide</a>
+    </div>
+    <div class="foot-col">
+      <h2>Company</h2>
+      <a href="/about">About</a>
+      <a href="/security">Security and privacy</a>
+      <a href="/faq">FAQ</a>
+      <a href="/contact">Contact us</a>
+      <a href="/app">Customer sign-in</a>
+    </div>
+    <div class="foot-col">
+      <h2>Legal</h2>
+      <a href="/terms">Terms of Service</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/dpa">Data Processing Addendum</a>
+      <a href="/legal">All legal documents</a>
+    </div>
+  </div>
+  <div class="foot-base">
+    <p>© 2026 M. D. Williams Enterprise, trading as Draxly. All rights reserved.</p>
+    <p>Contact us: <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,6 @@
+User-agent: *
+Disallow: /app
+Disallow: /owner
+Disallow: /api/
+Disallow: /v1/
+Sitemap: __SITE_URL__/sitemap.xml

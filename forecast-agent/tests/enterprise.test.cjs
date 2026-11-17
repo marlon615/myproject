@@ -230,7 +230,7 @@ const months = (start, n) => Array.from({ length: n }, (_, i) => { const d = new
     const P = await ctx.newPage();
     P.on("pageerror", (e) => errors.push(e.message));
     P.on("console", (m) => { if (m.type() === "error" && !/status of (40[0-9]|429)/.test(m.text())) errors.push("console: " + m.text()); });
-    await P.goto(w.base + "/");
+    await P.goto(w.base + "/app");
     await P.evaluate((t) => localStorage.setItem("forecast.token", t), admin);
     await P.goto(`${w.base}/#/u/${multi.id}`);
     await P.reload();

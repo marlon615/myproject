@@ -1,0 +1,113 @@
+<!--
+title: Integrations · Draxly
+description: Draxly pulls sales every night from Oracle NetSuite, SAP S/4HANA, Microsoft Dynamics 365 Business Central, QuickBooks Online, Shopify and Square, with a secure API and HTTPS file drop for any other system.
+path: /integrations
+-->
+<section class="page-head">
+  <div class="wrap">
+    <span class="eyebrow">Integrations</span>
+    <h1>Connect once. Fresh forecasts every morning.</h1>
+    <p class="lead">Draxly pulls your sales, and stock on hand where your system has it, every night at about 2 a.m. in your time zone. It uses read access only, and credentials are encrypted at rest.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="grid g3">
+      <div class="card int-card">
+        <div class="int-head"><span class="int-mark" aria-hidden="true">NS</span><h3>Oracle NetSuite</h3></div>
+        <p>Sales through SuiteQL over NetSuite's REST web services, using token-based authentication.</p>
+        <p><span class="tag">Sales</span><span class="tag">Token-based auth</span></p>
+        <p class="meta">Your admin creates an integration record and an access token for a role with read access.</p>
+      </div>
+      <div class="card int-card">
+        <div class="int-head"><span class="int-mark" aria-hidden="true">SAP</span><h3>SAP S/4HANA</h3></div>
+        <p>Billing documents through SAP's OData API, using a communication user.</p>
+        <p><span class="tag">Sales</span><span class="tag">OData</span></p>
+        <p class="meta">Your SAP team sets up a communication arrangement for the billing document scenario (SAP_COM_0120 in S/4HANA Cloud).</p>
+      </div>
+      <div class="card int-card">
+        <div class="int-head"><span class="int-mark" aria-hidden="true">BC</span><h3>Microsoft Dynamics 365 Business Central</h3></div>
+        <p>Sales through the Business Central API (v2.0), using an app registered in Microsoft Entra.</p>
+        <p><span class="tag">Sales</span><span class="tag">Microsoft Entra app</span></p>
+        <p class="meta">Your IT team registers the app and gives it read access to sales in Business Central.</p>
+      </div>
+      <div class="card int-card">
+        <div class="int-head"><span class="int-mark" aria-hidden="true">QB</span><h3>QuickBooks Online</h3></div>
+        <p>Sales through the QuickBooks Online accounting API. A QuickBooks admin approves access with one click.</p>
+        <p><span class="tag">Sales</span><span class="tag">Stock on hand</span><span class="tag">OAuth sign-in</span></p>
+        <p class="meta">No keys to copy: click "Connect to QuickBooks" and approve.</p>
+      </div>
+      <div class="card int-card">
+        <div class="int-head"><span class="int-mark" aria-hidden="true">SH</span><h3>Shopify</h3></div>
+        <p>Orders, products, locations and inventory through the Shopify Admin API.</p>
+        <p><span class="tag">Sales</span><span class="tag">Stock on hand</span><span class="tag">Locations</span></p>
+        <p class="meta">Create a custom app with read-only scopes and paste its Admin API access token.</p>
+      </div>
+      <div class="card int-card">
+        <div class="int-head"><span class="int-mark" aria-hidden="true">SQ</span><h3>Square</h3></div>
+        <p>Orders, catalog, locations and inventory through the Square API.</p>
+        <p><span class="tag">Sales</span><span class="tag">Stock on hand</span><span class="tag">Locations</span></p>
+        <p class="meta">Paste an access token with read permissions from the Square Developer Dashboard.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band alt">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Any other system</span>
+      <h2>Secure API and HTTPS file drop</h2>
+      <p class="lead">If your system isn't listed, it can still feed Draxly. Each method uses API keys that an admin creates, with their own permissions.</p>
+    </div>
+    <div class="grid g3">
+      <div class="card">
+        <h3>REST API</h3>
+        <p>Send sales and stock levels as JSON, and read forecasts and reorder suggestions back.</p>
+        <p><code>POST /v1/sales</code> · <code>POST /v1/inventory</code> · <code>GET /v1/forecasts</code> · <code>GET /v1/reorder</code></p>
+      </div>
+      <div class="card">
+        <h3>HTTPS file drop</h3>
+        <p>Have your scheduler send a CSV export to <code>POST /v1/files</code>, up to 20 MB per file. Columns are recognized the same way as an upload.</p>
+        <p class="fine">SFTP isn't offered. Most schedulers that drop files over SFTP can also send them to this HTTPS endpoint.</p>
+      </div>
+      <div class="card">
+        <h3>Nightly file from a web address</h3>
+        <p>Point Draxly at a CSV export published at an HTTPS address, such as a SharePoint, OneDrive, S3 or Azure link, or your own server. Draxly fetches it every night.</p>
+      </div>
+    </div>
+    <pre><code>curl -X POST __SITE_URL__/v1/files \
+  -H "Authorization: Bearer $DRAXLY_KEY" \
+  -H "Content-Type: text/csv" --data-binary @sales.csv</code></pre>
+    <p><a href="/docs">Read the full API guide →</a></p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap split">
+    <div>
+      <span class="eyebrow">Setup</span>
+      <h2>How a connection is set up</h2>
+      <ul class="ticks">
+        <li>An admin opens Connections in Draxly and picks the system.</li>
+        <li>They enter the details your IT team provides. Step-by-step instructions are shown for each system.</li>
+        <li>"Test connection" checks the details before the first sync.</li>
+        <li>The first sync pulls your history; after that, Draxly syncs every night.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <p><b>Read access only.</b> Draxly only reads sales and stock. Ask your administrators to give the connection read-only access.</p>
+      <p>Each connector is built to the vendor's published API. Because every company's setup is different, we confirm each connection with you during onboarding, ideally against a sandbox or test company first.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="cta-band">
+      <div><h2>Using a system that isn't listed?</h2><p>Tell us what you use and we'll tell you the simplest way to connect it.</p></div>
+      <div class="cta-row"><a class="btn btn-light btn-lg" href="/contact">Contact us</a></div>
+    </div>
+  </div>
+</section>

@@ -8,10 +8,33 @@
   <meta name="description" content="Try Draxly on your own sales: upload 21 months, keep your last 3 months back, and see how close the forecast gets. No sign-up.">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/site-chrome.css">
+  <script src="/site.js" defer></script>
   <script type="module" src="/demo.js"></script>
 </head>
 <body>
-  <header class="top"><a class="brand" href="/"><img src="/icon.svg" alt="" width="28" height="28"> Draxly</a><span class="hint">Know what to stock before you need it.</span></header>
+<!--site:header-->
+<a class="skip" href="#main">Skip to content</a>
+<header class="sitenav" data-site-header>
+  <div class="nav-in">
+    <a class="logo" href="/" aria-label="Draxly home"><img src="/icon.svg" alt="" width="30" height="30"><span>Draxly</span></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu"><span class="sr">Menu</span><span class="bars" aria-hidden="true"></span></button>
+    <nav class="nav-menu" id="nav-menu" aria-label="Main">
+      <a href="/how-it-works" data-nav="how-it-works">How it works</a>
+      <a href="/integrations" data-nav="integrations">Integrations</a>
+      <a href="/security" data-nav="security">Security</a>
+      <a href="/pricing" data-nav="pricing">Pricing</a>
+      <a href="/faq" data-nav="faq">FAQ</a>
+      <a href="/about" data-nav="about">About</a>
+      <a href="/contact" data-nav="contact">Contact</a>
+      <span class="nav-cta">
+        <a class="btn btn-ghost" href="/app">Sign in</a>
+        <a class="btn btn-primary" href="/free-demo">Free demo</a>
+      </span>
+    </nav>
+  </div>
+</header>
+<!--/site:header-->
   <main>
     <section id="d-start">
       <h1>Test Draxly on your own sales</h1>
@@ -82,6 +105,44 @@
       </div>
     </section>
   </main>
-  <footer class="foot">Draxly · <a href="/security">Security</a> · <a href="/pricing">Pricing</a> · Contact us: <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></footer>
+<!--site:footer-->
+<footer class="foot-site" data-site-footer>
+  <div class="foot-in">
+    <div class="foot-brand">
+      <a class="logo" href="/"><img src="/icon.svg" alt="" width="26" height="26"><span>Draxly</span></a>
+      <p>Know what to stock before you need it.</p>
+      <p>Sales forecasting for US food and drink distributors and wholesalers.</p>
+      <p><a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+    </div>
+    <div class="foot-col">
+      <h2>Product</h2>
+      <a href="/how-it-works">How it works</a>
+      <a href="/integrations">Integrations</a>
+      <a href="/pricing">Pricing and contract</a>
+      <a href="/free-demo">Free test demo</a>
+      <a href="/docs">API guide</a>
+    </div>
+    <div class="foot-col">
+      <h2>Company</h2>
+      <a href="/about">About</a>
+      <a href="/security">Security and privacy</a>
+      <a href="/faq">FAQ</a>
+      <a href="/contact">Contact us</a>
+      <a href="/app">Customer sign-in</a>
+    </div>
+    <div class="foot-col">
+      <h2>Legal</h2>
+      <a href="/terms">Terms of Service</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/dpa">Data Processing Addendum</a>
+      <a href="/legal">All legal documents</a>
+    </div>
+  </div>
+  <div class="foot-base">
+    <p>© 2026 M. D. Williams Enterprise, trading as Draxly. All rights reserved.</p>
+    <p>Contact us: <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+  </div>
+</footer>
+<!--/site:footer-->
 </body>
 </html>

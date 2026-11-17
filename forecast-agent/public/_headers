@@ -5,3 +5,5 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
 /owner*
   X-Robots-Tag: noindex, nofollow
+/app
+  X-Robots-Tag: noindex, nofollow

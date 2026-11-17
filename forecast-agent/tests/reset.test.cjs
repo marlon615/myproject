@@ -57,7 +57,7 @@ function startWorker(stateDir) {
 
     // ── Sign up in the browser: the recovery code is shown once ──────────────────────────────────────────────
     const ctx = await browser.newContext({ ...PHONE, acceptDownloads: true }); const P = await ctx.newPage(); watch(P, "customer");
-    await P.goto(BASE + "/");
+    await P.goto(BASE + "/app");
     await P.fill("#company", "Sunny Farm"); await P.fill("#email", EMAIL); await P.fill("#password", "first-password-1");
     await P.click("#auth-submit");
     await P.waitForSelector("#code:not([hidden])");

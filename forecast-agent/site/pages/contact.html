@@ -1,0 +1,53 @@
+<!--
+title: Contact · Draxly
+description: Contact Draxly by email or with the contact form. We reply by email.
+path: /contact
+-->
+<section class="page-head">
+  <div class="wrap">
+    <span class="eyebrow">Contact</span>
+    <h1>Contact us</h1>
+    <p class="lead">Send a message with the form, or email <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a>. We reply by email.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap split" style="align-items:start">
+    <div class="card">
+      <form id="contact-form" novalidate>
+        <div class="form-grid">
+          <div class="field"><label for="c-name">Your name</label><input id="c-name" name="name" autocomplete="name" maxlength="100" required></div>
+          <div class="field"><label for="c-email">Work email</label><input id="c-email" name="email" type="email" autocomplete="email" maxlength="200" required></div>
+          <div class="field"><label for="c-company">Company</label><input id="c-company" name="company" autocomplete="organization" maxlength="150" required></div>
+          <div class="field"><label for="c-title">Job title <span class="opt">(optional)</span></label><input id="c-title" name="title" autocomplete="organization-title" maxlength="100"></div>
+          <div class="field"><label for="c-sales">Annual sales <span class="opt">(optional)</span></label>
+            <select id="c-sales" name="sales"><option value="">Choose…</option><option>Under $20M</option><option>$20M to $50M</option><option>$50M to $100M</option><option>$100M to $250M</option><option>$250M to $500M</option><option>Over $500M</option></select></div>
+          <div class="field"><label for="c-locations">Warehouses or stores <span class="opt">(optional)</span></label><input id="c-locations" name="locations" inputmode="numeric" maxlength="40"></div>
+          <div class="field full"><label for="c-erp">Systems you use <span class="opt">(optional)</span></label><input id="c-erp" name="erp" maxlength="200" placeholder="e.g. NetSuite, SAP, Dynamics, QuickBooks"></div>
+          <div class="field full"><label for="c-topic">Topic</label>
+            <select id="c-topic" name="topic"><option>Getting started</option><option>Pricing and contract</option><option>Integrations</option><option>Security questionnaire</option><option>Free test demo</option><option>General question</option></select></div>
+          <div class="field full"><label for="c-message">Message</label><textarea id="c-message" name="message" maxlength="1800" required></textarea></div>
+          <div class="hp" aria-hidden="true"><label for="c-website">Website</label><input id="c-website" name="website" tabindex="-1" autocomplete="off"></div>
+        </div>
+        <p class="fine">By sending this form you agree that we'll use these details to reply to you, as described in our <a href="/privacy">Privacy Policy</a>.</p>
+        <button class="btn btn-primary btn-lg" type="submit">Send message</button>
+        <p class="form-msg" id="form-msg" role="status" aria-live="polite"></p>
+      </form>
+      <div class="form-done" id="form-done" hidden>
+        <h3>Thanks, your message was sent.</h3>
+        <p>We'll reply by email. If it's urgent, you can also write to <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a>.</p>
+      </div>
+    </div>
+    <div>
+      <div class="panel">
+        <h3>Email</h3>
+        <p><a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+        <h3>Company</h3>
+        <p>M. D. Williams Enterprise, trading as Draxly</p>
+        <h3>How we work</h3>
+        <p>We handle everything by email: questions, security questionnaires, order forms and support. There's no phone line, and no calls or video meetings to schedule.</p>
+      </div>
+      <p style="margin-top:20px">Want to see Draxly first? <a href="/free-demo">Try the free test demo</a>. No sign-up needed.</p>
+    </div>
+  </div>
+</section>

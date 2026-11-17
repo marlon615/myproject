@@ -302,7 +302,7 @@ $("o-customers").addEventListener("click", async (e) => {
     const r = await call("/api/owner/reset-link", { method: "POST", body: { id, user: t.dataset.user } });
     if (!r.ok) return alert(r.data.error || "That didn't work.");
     const host = card.querySelector(".reset-host");
-    host.innerHTML = `<div class="reset-box"><b>Send this link to ${esc(r.data.user)}.</b> It works once, for 24 hours.<input class="reset-url" readonly value="${esc(`${location.origin}/#/reset/${r.data.token}`)}" aria-label="Reset link"><button class="secondary small reset-copy" type="button">Copy link</button> <span class="hint reset-copied"></span></div>`;
+    host.innerHTML = `<div class="reset-box"><b>Send this link to ${esc(r.data.user)}.</b> It works once, for 24 hours.<input class="reset-url" readonly value="${esc(`${location.origin}/app#/reset/${r.data.token}`)}" aria-label="Reset link"><button class="secondary small reset-copy" type="button">Copy link</button> <span class="hint reset-copied"></span></div>`;
     return;
   }
   if (t.tagName === "SUMMARY" && t.parentElement.classList.contains("act-box") && !t.parentElement.open) {
@@ -321,7 +321,7 @@ $("o-customers").addEventListener("click", async (e) => {
     if (!confirm(`Make a password reset link for ${name}? It works once, for 24 hours. Any earlier link stops working.`)) return;
     const r = await call("/api/owner/reset-link", { method: "POST", body: { id } });
     if (!r.ok) return alert(r.data.error || "That didn't work.");
-    const link = `${location.origin}/#/reset/${r.data.token}`;
+    const link = `${location.origin}/app#/reset/${r.data.token}`;
     const host = card.querySelector(".reset-host");
     host.innerHTML = `<div class="reset-box"><b>Send this link to ${esc(name)}</b> (by text or email). It works once, until ${new Date(r.data.expires).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}. Only send it to the person who owns the account.
       <input class="reset-url" readonly value="${esc(link)}" aria-label="Reset link"><button class="secondary small reset-copy" type="button">Copy link</button> <span class="hint reset-copied"></span></div>`;

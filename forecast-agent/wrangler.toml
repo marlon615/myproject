@@ -34,6 +34,9 @@ CPU_PLAN = "free"
 BILLING_NAME = "M. D. Williams Enterprise, trading as Draxly"
 # Draxly's contact email: shown to customers and demo visitors, on invoices, and where demo access requests go.
 CONTACT_EMAIL = "draxlyforecast@gmail.com"
+# The website's address, e.g. "https://www.draxly.com" (no slash at the end). Used for page links (canonical, sitemap,
+# API examples) and links in emails. Leave empty to use whatever address the visitor came in on.
+SITE_URL = ""
 
 # ENCRYPTION_KEY (a secret, set with `wrangler secret put ENCRYPTION_KEY`, never in this file): the AES-256 key for
 # data at rest. Losing it makes the stored data unreadable; it lives only in Cloudflare's secret store.

@@ -575,7 +575,7 @@ export class Directory extends DurableObject {
   company(id) { const a = this.#account(id); return a ? { id: a.id, company: a.company, timezone: a.timezone, features: this.#features(a), off: Boolean(a.off) } : null; }
   companyIds(after = "", limit = 40) { return this.sql.exec("SELECT id FROM accounts WHERE id > ? ORDER BY id LIMIT ?", after, limit).toArray().map((r) => r.id); }
   setOrigin(o) { if (/^https?:\/\/[^/]+$/.test(o || "") && this.#meta("origin") !== o) this.#setMeta("origin", o); }
-  #origin() { return this.#meta("origin") || "https://forecast-agent.marlon615.workers.dev"; }
+  #origin() { return String(this.env?.SITE_URL || "").replace(/\/+$/, "") || this.#meta("origin") || "https://forecast-agent.marlon615.workers.dev"; } // SITE_URL (wrangler.toml) wins when set
 
   // ── Billing: Draxly Enterprise agreements and invoices ──────────────────────────────────────────────────────
   #agreement(account) { return this.sql.exec("SELECT * FROM agreements WHERE account = ?", account).toArray()[0] || null; }
@@ -695,7 +695,7 @@ export class Directory extends DurableObject {
     const to = this.recipients(i.account, "billing", ["admin"]).map((r) => r.email);
     if (!to.length) return { ok: false, reason: "No admin to send it to." };
     const pdf = await this.invoicePdfFor(id);
-    const args = { company: a.company, invoice: this.#invoiceOut(i), link: `${this.#origin()}/#/billing`, instructions: this.#meta("set_paymentInstructions"), seller: this.#setting("billingName"), contact: this.contactEmail(), daysLate };
+    const args = { company: a.company, invoice: this.#invoiceOut(i), link: `${this.#origin()}/app#/billing`, instructions: this.#meta("set_paymentInstructions"), seller: this.#setting("billingName"), contact: this.contactEmail(), daysLate };
     const mail = kind === "reminder" ? reminderEmail(args) : invoiceEmail(args);
     const r = await sendEmail(this.env, this, { to, ...mail, attachments: [{ filename: `${i.number}.pdf`, content: toBase64(pdf.bytes) }] });
     if (r.ok && kind === "invoice") this.sql.exec("UPDATE invoices SET sent_count = sent_count + 1, last_sent = ? WHERE id = ?", new Date().toISOString(), id);

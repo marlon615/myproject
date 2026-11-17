@@ -8,14 +8,15 @@ const path = require("path");
 const crypto = require("crypto");
 
 const ROOT = path.join(__dirname, "..");
+require("./build-site.cjs"); // the website pages first (site/ → public/)
 const PUBLIC = path.join(ROOT, "public");
 const OUT = path.join(ROOT, "worker", "assets.generated.js");
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml",
-  ".png": "image/png", ".ico": "image/x-icon", ".txt": "text/plain; charset=utf-8",
+  ".png": "image/png", ".ico": "image/x-icon", ".txt": "text/plain; charset=utf-8", ".xml": "application/xml; charset=utf-8",
 };
-const TEXT = new Set([".html", ".js", ".css", ".json", ".webmanifest", ".svg", ".txt"]);
+const TEXT = new Set([".html", ".js", ".css", ".json", ".webmanifest", ".svg", ".txt", ".xml"]);
 
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
   const p = path.join(dir, d.name);

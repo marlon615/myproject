@@ -8,9 +8,32 @@
   <meta name="description" content="Send sales, stock levels and CSV files to Draxly, and read forecasts and reorder suggestions.">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/site-chrome.css">
+  <script src="/site.js" defer></script>
 </head>
 <body>
-  <header class="top"><a class="brand" href="/"><img src="/icon.svg" alt="" width="28" height="28"> Draxly</a><div class="who"><a class="link" href="/pricing">Pricing</a> <a class="link" href="/security">Security</a> <a class="link" href="/docs">API</a></div></header>
+<!--site:header-->
+<a class="skip" href="#main">Skip to content</a>
+<header class="sitenav" data-site-header>
+  <div class="nav-in">
+    <a class="logo" href="/" aria-label="Draxly home"><img src="/icon.svg" alt="" width="30" height="30"><span>Draxly</span></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu"><span class="sr">Menu</span><span class="bars" aria-hidden="true"></span></button>
+    <nav class="nav-menu" id="nav-menu" aria-label="Main">
+      <a href="/how-it-works" data-nav="how-it-works">How it works</a>
+      <a href="/integrations" data-nav="integrations">Integrations</a>
+      <a href="/security" data-nav="security">Security</a>
+      <a href="/pricing" data-nav="pricing">Pricing</a>
+      <a href="/faq" data-nav="faq">FAQ</a>
+      <a href="/about" data-nav="about">About</a>
+      <a href="/contact" data-nav="contact">Contact</a>
+      <span class="nav-cta">
+        <a class="btn btn-ghost" href="/app">Sign in</a>
+        <a class="btn btn-primary" href="/free-demo">Free demo</a>
+      </span>
+    </nav>
+  </div>
+</header>
+<!--/site:header-->
   <main class="doc">
     <h1>API guide</h1>
     <p class="lead">Send sales, stock levels or CSV exports from any system, and read forecasts and reorder suggestions back. An admin creates API keys in <b>Connections → API keys</b>. The API must be switched on for your company.</p>
@@ -22,7 +45,7 @@
 
     <h2>POST /v1/sales</h2>
     <p>Up to 5,000 rows per call. Dates can be days (<code>2026-11-15</code>) or months (<code>2026-11</code>). Rows are added up by month for each product × location × region.</p>
-    <pre>curl -X POST https://forecast-agent.marlon615.workers.dev/v1/sales \
+    <pre>curl -X POST __SITE_URL__/v1/sales \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"mode":"replace_months","rows":[
         {"date":"2026-10-03","product":"Mango Juice","location":"Store 12","region":"West","amount":250.00,"quantity":10}
@@ -36,7 +59,7 @@
 
     <h2>POST /v1/files: HTTPS file drop</h2>
     <p>Send a CSV export as the request body (up to 20 MB; split bigger exports). The columns are recognised the same way as an upload. Name them in the query string if needed:</p>
-    <pre>curl -X POST "https://forecast-agent.marlon615.workers.dev/v1/files?date=Order%20Date&amp;product=SKU&amp;location=Store&amp;amount=Net%20Sales&amp;units=Qty&amp;dateOrder=mdy" \
+    <pre>curl -X POST "__SITE_URL__/v1/files?date=Order%20Date&amp;product=SKU&amp;location=Store&amp;amount=Net%20Sales&amp;units=Qty&amp;dateOrder=mdy" \
   -H "Authorization: Bearer $KEY" -H "Content-Type: text/csv" --data-binary @sales.csv</pre>
     <p>The same <code>mode</code> options apply; the default replaces the months in the file. You can also have the service <b>pull</b> a file from a web address every night: add a "File from a web address" connection.</p>
     <p class="hint">SFTP isn't offered: the service runs on Cloudflare, which doesn't accept SFTP connections. Most schedulers that can drop a file over SFTP can also send it to this HTTPS endpoint.</p>
@@ -75,6 +98,44 @@
       <li><code>429</code>: slow down.</li>
     </ul>
   </main>
-  <footer class="foot"><a href="/">Draxly</a> · <a href="/pricing">Pricing</a> · <a href="/security">Security</a> · <a href="/docs">API</a> · Contact us: <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></footer>
+<!--site:footer-->
+<footer class="foot-site" data-site-footer>
+  <div class="foot-in">
+    <div class="foot-brand">
+      <a class="logo" href="/"><img src="/icon.svg" alt="" width="26" height="26"><span>Draxly</span></a>
+      <p>Know what to stock before you need it.</p>
+      <p>Sales forecasting for US food and drink distributors and wholesalers.</p>
+      <p><a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+    </div>
+    <div class="foot-col">
+      <h2>Product</h2>
+      <a href="/how-it-works">How it works</a>
+      <a href="/integrations">Integrations</a>
+      <a href="/pricing">Pricing and contract</a>
+      <a href="/free-demo">Free test demo</a>
+      <a href="/docs">API guide</a>
+    </div>
+    <div class="foot-col">
+      <h2>Company</h2>
+      <a href="/about">About</a>
+      <a href="/security">Security and privacy</a>
+      <a href="/faq">FAQ</a>
+      <a href="/contact">Contact us</a>
+      <a href="/app">Customer sign-in</a>
+    </div>
+    <div class="foot-col">
+      <h2>Legal</h2>
+      <a href="/terms">Terms of Service</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/dpa">Data Processing Addendum</a>
+      <a href="/legal">All legal documents</a>
+    </div>
+  </div>
+  <div class="foot-base">
+    <p>© 2026 M. D. Williams Enterprise, trading as Draxly. All rights reserved.</p>
+    <p>Contact us: <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+  </div>
+</footer>
+<!--/site:footer-->
 </body>
 </html>

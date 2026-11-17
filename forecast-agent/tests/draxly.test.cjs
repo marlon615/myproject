@@ -30,11 +30,11 @@ const pdfText = (b64) => Buffer.from(b64, "base64").toString("latin1");
 
     // ── The new name ───────────────────────────────────────────────────────────────────────────────────────
     const pages = {};
-    for (const p of ["/", "/owner", "/pricing", "/security", "/docs", "/demo", "/no-such-page", "/app.js", "/owner.js", "/demo.js"]) pages[p] = (await (await fetch(w.base + p)).text());
+    for (const p of ["/", "/app", "/owner", "/pricing", "/security", "/docs", "/demo", "/no-such-page", "/app.js", "/owner.js", "/demo.js"]) pages[p] = (await (await fetch(w.base + p)).text());
     check(Object.values(pages).every((t) => !/Forecasting Agent/i.test(t)), "no page, script or 404 says 'Forecasting Agent' any more");
     check(Object.values(pages).every((t) => !/Book a call|bookingUrl|I'd like a call/i.test(t)), "no booking links or call options anywhere");
     check(["/", "/owner", "/pricing", "/security", "/docs", "/demo", "/no-such-page"].every((p) => /<title>[^<]*Draxly[^<]*<\/title>/.test(pages[p])), "every page's title says Draxly");
-    check((pages["/"].match(/Know what to stock before you need it\./g) || []).length >= 2, "the tagline is on the home page and on the sign-in card");
+    check(/Know what to stock <em>before you need it\.<\/em>/.test(pages["/"]) && (pages["/app"].match(/Know what to stock before you need it\./g) || []).length >= 2, "the tagline is the home page headline, and on the app's sign-in card");
     check(/draxly-forecast-/.test(pages["/app.js"]) && /draxly-reorder-suggestions\.csv/.test(pages["/app.js"]) && /draxly-activity-log\.csv/.test(pages["/app.js"]) && /draxly-invoice-/.test(pages["/app.js"]), "downloads are named draxly-… (forecast, reorder, activity log, invoices)");
     check(/\$30,000/.test(pages["/pricing"]) && /\$2,500 a month/.test(pages["/pricing"]) && /renews automatically/.test(pages["/pricing"]) && /rest of that year is still owed/.test(pages["/pricing"]), "the pricing page states the plan and terms");
 
@@ -130,7 +130,7 @@ const pdfText = (b64) => Buffer.from(b64, "base64").toString("latin1");
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, acceptDownloads: true });
     const C2 = await ctx.newPage();
     C2.on("pageerror", (e) => errors.push("billing: " + e.message));
-    await C2.goto(w.base + "/");
+    await C2.goto(w.base + "/app");
     await C2.evaluate((t) => localStorage.setItem("forecast.token", t), adminA2);
     await C2.goto(w.base + "/#/billing"); await C2.reload();
     await C2.waitForSelector("#bl-table tbody tr");

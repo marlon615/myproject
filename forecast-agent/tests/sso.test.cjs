@@ -122,7 +122,7 @@ const idp = http.createServer(async (rq, rs) => {
     const P = await ctx.newPage();
     const errors = [];
     P.on("pageerror", (e) => errors.push(e.message));
-    await P.goto(w.base + "/");
+    await P.goto(w.base + "/app");
     await P.click("#tab-login");
     await P.waitForSelector("#sso-ms:not([hidden])");
     check(await P.isVisible("#sso-ms") && await P.isVisible("#sso-google"), "the sign-in page shows 'Sign in with Microsoft' and 'Sign in with Google'");

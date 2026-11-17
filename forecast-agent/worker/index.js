@@ -185,14 +185,14 @@ async function api(request, env, path, ctx) {
   if (ssoStart && method === "GET") {
     const provider = ssoStart[1], q = new URL(request.url).searchParams;
     const clientId = await dir.secret(PROVIDERS[provider].clientIdKey), secret = await dir.secret(PROVIDERS[provider].secretKey);
-    if (!clientId || !secret) return Response.redirect(`${origin}/#/login?sso=unavailable`, 302);
+    if (!clientId || !secret) return Response.redirect(`${origin}/app#/login?sso=unavailable`, 302);
     const { verifier, challenge } = await pkce();
     const { state, nonce } = await dir.ssoBegin(provider, verifier, q.get("invite") || null);
     return Response.redirect(authorizeUrl(endpoints(env, provider), { clientId, redirectUri: `${origin}/api/sso/callback`, state, nonce, challenge, loginHint: q.get("email") || "" }), 302);
   }
   if (path === "/api/sso/callback" && method === "GET") {
     const q = new URL(request.url).searchParams;
-    const back = (why) => Response.redirect(`${origin}/#/login?sso=${encodeURIComponent(why)}`, 302);
+    const back = (why) => Response.redirect(`${origin}/app#/login?sso=${encodeURIComponent(why)}`, 302);
     const s = await dir.ssoTake(q.get("state") || "");
     if (!s || !PROVIDERS[s.provider]) return back("expired");
     if (q.get("error") || !q.get("code")) return back("cancelled");
@@ -203,7 +203,7 @@ async function api(request, env, path, ctx) {
     const r = await dir.ssoSignIn(s.provider, id.email, id.subject, s.invite);
     if (r.error) { audit(r.account, id.email, "single sign-on refused", r.error); return back(r.error); }
     audit(r.account, id.email, r.joined ? `joined through ${PROVIDERS[s.provider].name} sign-in (viewer)` : `signed in with ${PROVIDERS[s.provider].name}`);
-    return Response.redirect(`${origin}/#/sso/${r.code}`, 302);
+    return Response.redirect(`${origin}/app#/sso/${r.code}`, 302);
   }
   if (path === "/api/sso/redeem" && method === "POST") {
     const b = await readJson(request);
@@ -215,7 +215,7 @@ async function api(request, env, path, ctx) {
   // QuickBooks sends the browser back here after the customer approves access.
   if (path === "/api/oauth/quickbooks" && method === "GET") {
     const q = new URL(request.url).searchParams;
-    const back = (why) => Response.redirect(`${origin}/#/connections?qb=${encodeURIComponent(why)}`, 302);
+    const back = (why) => Response.redirect(`${origin}/app#/connections?qb=${encodeURIComponent(why)}`, 302);
     const s = await dir.ssoTake(q.get("state") || "");
     if (!s || s.provider !== "quickbooks" || !q.get("code") || !q.get("realmId")) return back(q.get("error") ? "cancelled" : "expired");
     const [account, connId] = String(s.invite).split(":");
@@ -462,7 +462,7 @@ async function api(request, env, path, ctx) {
     const r = await dir.invite(me.id, email, String(b.name ?? "").trim().slice(0, 100), role);
     if (r.error === "exists") return json({ error: "That email already has an account (here or at another company)." }, 409);
     if (r.error) return json({ error: "Pick a role: admin, manager or viewer." }, 400);
-    const link = `${origin}/#/invite/${r.token}`;
+    const link = `${origin}/app#/invite/${r.token}`;
     const mail = await sendEmail(env, dir, { to: [email], ...inviteEmail({ company: me.company, inviter: me.user.name || who, link, role }) });
     audit(me.id, who, "invited a user", `${email} as ${role}${mail.ok ? " (emailed)" : ""}`);
     return json({ user: r.user, link, emailed: mail.ok, emailNote: mail.ok ? "" : mail.reason });
@@ -471,8 +471,8 @@ async function api(request, env, path, ctx) {
   if (tm) {
     if (need("admin")) return need("admin");
     const [, uid, sub] = tm;
-    if (sub === "/reinvite" && method === "POST") { const r = await dir.reinvite(me.id, uid); if (r.error) return json({ error: "Not found." }, 404); audit(me.id, who, "sent a new invite link", r.email); return json({ link: `${origin}/#/invite/${r.token}` }); }
-    if (sub === "/reset" && method === "POST") { const r = await dir.resetLink(uid, { account: me.id }); if (r.error) return json({ error: "Not found." }, 404); audit(me.id, who, "made a password reset link", r.user); return json({ link: `${origin}/#/reset/${r.token}`, expires: r.expires }); }
+    if (sub === "/reinvite" && method === "POST") { const r = await dir.reinvite(me.id, uid); if (r.error) return json({ error: "Not found." }, 404); audit(me.id, who, "sent a new invite link", r.email); return json({ link: `${origin}/app#/invite/${r.token}` }); }
+    if (sub === "/reset" && method === "POST") { const r = await dir.resetLink(uid, { account: me.id }); if (r.error) return json({ error: "Not found." }, 404); audit(me.id, who, "made a password reset link", r.user); return json({ link: `${origin}/app#/reset/${r.token}`, expires: r.expires }); }
     if (!sub && method === "PATCH") {
       const b = (await readJson(request)) || {};
       if (uid === me.user.id && (b.off === true || (b.role && b.role !== "admin"))) return json({ error: "You can't switch off or demote yourself. Ask another admin." }, 400);
@@ -745,11 +745,15 @@ const bodyOf = (path, f) => {
   return bodies.get(path);
 };
 const matches = (pattern, path) => (pattern.endsWith("*") ? path.startsWith(pattern.slice(0, -1)) : pattern === path);
-function respond(request, path, f, status = 200) {
+/** Pages never contain the domain: "__SITE_URL__" becomes SITE_URL (wrangler.toml), or the address the visitor used. */
+const siteUrl = (env, url) => String(env.SITE_URL || "").replace(/\/+$/, "") || url.origin;
+function respond(request, path, f, status = 200, site = "") {
   const headers = new Headers({ "Content-Type": f.type, "Cache-Control": "no-cache", ETag: f.etag, "Strict-Transport-Security": "max-age=31536000; includeSubDomains" });
   for (const r of RULES) if (matches(r.pattern, path)) for (const [k, v] of Object.entries(r.headers)) headers.set(k, v);
   if (status === 200 && request.headers.get("If-None-Match") === f.etag) return new Response(null, { status: 304, headers });
-  return new Response(request.method === "HEAD" ? null : bodyOf(path, f), { status, headers });
+  let body = bodyOf(path, f);
+  if (typeof body === "string" && body.includes("__SITE_URL__")) body = body.replaceAll("__SITE_URL__", site);
+  return new Response(request.method === "HEAD" ? null : body, { status, headers });
 }
 
 export default {
@@ -768,8 +772,8 @@ export default {
     if (/\/index\.html$/.test(path)) return Response.redirect(new URL(path.replace(/index\.html$/, "") + url.search, url), 307);
     if (/\.html$/.test(path) && path !== "/404.html") return Response.redirect(new URL(path.replace(/\.html$/, "") + url.search, url), 307);
     const key = path.endsWith("/") ? path + "index.html" : FILES[path] ? path : FILES[path + ".html"] ? path + ".html" : null;
-    if (key && FILES[key]) return respond(request, path, FILES[key]);
-    return respond(request, path, FILES["/404.html"], 404);
+    if (key && FILES[key]) return respond(request, path, FILES[key], 200, siteUrl(env, url));
+    return respond(request, path, FILES["/404.html"], 404, siteUrl(env, url));
   },
   /** Hourly safety net: makes sure every company's own schedule (nightly syncs, weekly reports) is armed. */
   async scheduled(event, env, ctx) {

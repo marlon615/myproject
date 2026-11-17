@@ -101,7 +101,7 @@ export class Company extends DurableObject {
   get #account() { return this.#meta("account"); }
   #dir() { return this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("main")); }
   async #company() { return this.#account ? this.#dir().company(this.#account) : null; }
-  #origin() { return this.#meta("origin") || "https://forecast-agent.marlon615.workers.dev"; }
+  #origin() { return String(this.env?.SITE_URL || "").replace(/\/+$/, "") || this.#meta("origin") || "https://forecast-agent.marlon615.workers.dev"; } // SITE_URL (wrangler.toml) wins when set
   setOrigin(o) { if (/^https?:\/\/[^/]+$/.test(o || "") && this.#meta("origin") !== o) this.#setMeta("origin", o); }
   #now() { return new Date().toISOString(); }
 
@@ -949,7 +949,7 @@ export class Company extends DurableObject {
     if (!fresh.length) return;
     const to = (await this.#dir().recipients(this.#account, "lowStock")).map((r) => r.email);
     if (!to.length) return;
-    const mail = lowStockEmail({ company: co.company, items: fresh, link: `${this.#origin()}/#/stock` });
+    const mail = lowStockEmail({ company: co.company, items: fresh, link: `${this.#origin()}/app#/stock` });
     const r = await sendEmail(this.env, this.#dir(), { to, ...mail });
     this.log({ user: "system", action: r.ok ? "low-stock email sent" : "low-stock email not sent", detail: r.ok ? `${fresh.length} items to ${r.sent} people` : r.reason });
   }
@@ -1000,7 +1000,7 @@ export class Company extends DurableObject {
     const low = ro.ok ? ro.items.filter((x) => x.status === "out" || x.status === "low") : [];
     const to = (await this.#dir().recipients(this.#account, "reports")).map((r) => r.email);
     if (!forecast.ok || !to.length) { this.#endJob(job, "done"); this.log({ user: "system", action: "weekly report skipped", detail: !to.length ? "Nobody has weekly reports switched on." : forecast.reason }); return; }
-    const mail = weeklyReport({ company: co.company, uploadName: up.name, forecast, backtest, low, link: `${this.#origin()}/#/u/${upload}`, monthLabel });
+    const mail = weeklyReport({ company: co.company, uploadName: up.name, forecast, backtest, low, link: `${this.#origin()}/app#/u/${upload}`, monthLabel });
     const r = await sendEmail(this.env, this.#dir(), { to, ...mail });
     this.log({ user: p.by || "system", action: r.ok ? "weekly report sent" : "weekly report not sent", detail: r.ok ? `to ${r.sent} people` : r.reason });
     this.#endJob(job, "done");

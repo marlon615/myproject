@@ -76,7 +76,7 @@ function makeXlsx(file) {
 
     // ── Company A signs up in the browser and tries the sample ────────────────────────────────────────────────
     const actx = await browser.newContext({ ...PHONE, acceptDownloads: true }); const A = await actx.newPage(); watch(A, "A");
-    await A.goto(BASE + "/");
+    await A.goto(BASE + "/app");
     await A.waitForSelector("#auth:not([hidden])");
     await A.fill("#company", "Island Drinks Co"); await A.fill("#email", "owner@islanddrinks.test"); await A.fill("#password", "mango-season-1");
     await A.click("#auth-submit");
@@ -110,7 +110,7 @@ function makeXlsx(file) {
 
     // ── Company B signs up and uploads a real Excel file ───────────────────────────────────────────────────────
     const bctx = await browser.newContext({ ...PHONE }); const B = await bctx.newPage(); watch(B, "B");
-    await B.goto(BASE + "/");
+    await B.goto(BASE + "/app");
     await B.fill("#company", "Bay Market"); await B.fill("#email", "BOSS@baymarket.test "); await B.fill("#password", "bay-market-22");
     await B.click("#auth-submit");
     await B.waitForSelector("#code:not([hidden])"); await B.check("#code-ok"); await B.click("#code-continue");

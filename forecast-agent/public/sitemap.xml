@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>__SITE_URL__/about</loc></url>
+  <url><loc>__SITE_URL__/contact</loc></url>
+  <url><loc>__SITE_URL__/dpa</loc></url>
+  <url><loc>__SITE_URL__/faq</loc></url>
+  <url><loc>__SITE_URL__/free-demo</loc></url>
+  <url><loc>__SITE_URL__/</loc></url>
+  <url><loc>__SITE_URL__/how-it-works</loc></url>
+  <url><loc>__SITE_URL__/integrations</loc></url>
+  <url><loc>__SITE_URL__/legal</loc></url>
+  <url><loc>__SITE_URL__/pricing</loc></url>
+  <url><loc>__SITE_URL__/privacy</loc></url>
+  <url><loc>__SITE_URL__/security</loc></url>
+  <url><loc>__SITE_URL__/terms</loc></url>
+  <url><loc>__SITE_URL__/demo</loc></url>
+  <url><loc>__SITE_URL__/docs</loc></url>
+</urlset>

@@ -3,404 +3,222 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
-  <title>Draxly</title>
-  <meta name="description" content="Draxly — Know what to stock before you need it. Sales forecasting for multi-location businesses: a free accuracy test, then 3-month forecasts by product, store and region, reorder suggestions and weekly reports.">
+  <title>Draxly · AI sales forecasting for food and drink distributors</title>
+  <meta name="description" content="Draxly forecasts the next 3 months of sales for every product, warehouse and region, so US food and drink distributors and wholesalers know what to stock before they need it.">
+  <link rel="canonical" href="__SITE_URL__/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Draxly">
+  <meta property="og:title" content="Draxly · AI sales forecasting for food and drink distributors">
+  <meta property="og:description" content="Draxly forecasts the next 3 months of sales for every product, warehouse and region, so US food and drink distributors and wholesalers know what to stock before they need it.">
+  <meta property="og:url" content="__SITE_URL__/">
+  <meta name="theme-color" content="#0b1f3a">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css">
-  <script type="module" src="/app.js"></script>
+  <link rel="stylesheet" href="/site-chrome.css">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
 </head>
-<body>
-  <header class="top">
-    <a class="brand" href="#/"><img src="/icon.svg" alt="" width="28" height="28"> Draxly</a>
-    <div class="who" id="who" hidden><span id="who-name"></span> <a class="link" href="#/account" id="account-link">Account</a> <button class="link" id="signout" type="button">Sign out</button></div>
-  </header>
-  <nav class="nav" id="nav" hidden aria-label="Sections">
-    <a href="#/" data-nav="home">Forecasts</a>
-    <a href="#/stock" data-nav="stock" data-feature="inventory">Stock &amp; reorder</a>
-    <a href="#/connections" data-nav="connections" data-feature="connectors" data-role="admin">Connections</a>
-    <a href="#/team" data-nav="team" data-role="admin">Team</a>
-    <a href="#/activity" data-nav="activity" data-role="admin">Activity</a>
-    <a href="#/billing" data-nav="billing" data-role="admin">Billing</a>
-    <a href="#/account" data-nav="account">Settings</a>
-  </nav>
-
-  <main id="main">
-    <p class="loading" id="loading">Loading…</p>
-
-    <!-- Signed out -->
-    <section id="auth" hidden>
-      <div class="hero">
-        <p class="tagline" id="tagline">Know what to stock before you need it.</p>
-        <h1>See your next 3 months of sales</h1>
-        <p>Upload your past sales as a spreadsheet (CSV or Excel), or connect NetSuite, SAP, Dynamics 365, QuickBooks, Shopify or Square. First, a <b>free accuracy test</b>: we hide your last 3 months, predict them, and show predicted against what really happened. Then the next 3 months, by product, store and region. <a href="/pricing">Pricing</a> · <a href="/security">Security</a></p>
-        <p><a class="primary" href="/demo" id="demo-link">Try the demo with your own sales</a> <span class="hint">No sign-up needed.</span></p>
+<body class="site page-home">
+<a class="skip" href="#main">Skip to content</a>
+<header class="sitenav" data-site-header>
+  <div class="nav-in">
+    <a class="logo" href="/" aria-label="Draxly home"><img src="/icon.svg" alt="" width="30" height="30"><span>Draxly</span></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu"><span class="sr">Menu</span><span class="bars" aria-hidden="true"></span></button>
+    <nav class="nav-menu" id="nav-menu" aria-label="Main">
+      <a href="/how-it-works" data-nav="how-it-works">How it works</a>
+      <a href="/integrations" data-nav="integrations">Integrations</a>
+      <a href="/security" data-nav="security">Security</a>
+      <a href="/pricing" data-nav="pricing">Pricing</a>
+      <a href="/faq" data-nav="faq">FAQ</a>
+      <a href="/about" data-nav="about">About</a>
+      <a href="/contact" data-nav="contact">Contact</a>
+      <span class="nav-cta">
+        <a class="btn btn-ghost" href="/app">Sign in</a>
+        <a class="btn btn-primary" href="/free-demo">Free demo</a>
+      </span>
+    </nav>
+  </div>
+</header>
+<main id="main">
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">For US food and drink distributors and wholesalers</span>
+      <h1>Know what to stock <em>before you need it.</em></h1>
+      <p class="lead">Draxly forecasts the next 3 months of sales for every product, warehouse, store and region, straight from your own sales history. It turns the forecast into reorder suggestions and low-stock alerts your buyers can act on.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary btn-lg" href="/free-demo">Test it free on your own sales</a>
+        <a class="btn btn-ghost btn-lg" href="/how-it-works">See how it works</a>
       </div>
-      <div class="card auth-card">
-        <p class="auth-brand"><b>Draxly</b><span>Know what to stock before you need it.</span></p>
-        <div class="tabs" role="tablist">
-          <button type="button" role="tab" id="tab-signup" aria-selected="true">Create account</button>
-          <button type="button" role="tab" id="tab-login" aria-selected="false">Sign in</button>
+      <p class="fine">No sign-up for the demo. Your file is read in your browser and nothing is stored.</p>
+    </div>
+    <div class="mock" role="img" aria-label="Illustration of a Draxly forecast: sales history as a solid line, the next three months as a dashed line, and a short list of reorder suggestions.">
+      <div class="mock-bar"><i></i><i></i><i></i></div>
+      <div class="mock-body">
+        <div class="mock-title"><b>Total sales · next 3 months</b><span>Illustration</span></div>
+        <div class="mock-legend"><span><i></i>Your sales history</span><span><i class="f"></i>Forecast</span></div>
+        <svg viewBox="0 0 520 210" aria-hidden="true">
+          <g stroke="#e2e7ef" stroke-width="1"><line x1="20" y1="40" x2="510" y2="40"/><line x1="20" y1="90" x2="510" y2="90"/><line x1="20" y1="140" x2="510" y2="140"/><line x1="20" y1="190" x2="510" y2="190"/></g>
+                <polyline fill="none" stroke="#6b7890" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="20,150 52,142 84,146 116,128 148,134 180,120 212,126 244,112 276,118 308,104 340,110 372,100 392,113"/>
+          <polyline fill="none" stroke="#1f5fbf" stroke-width="2.5" stroke-dasharray="6 5" stroke-linejoin="round" stroke-linecap="round" points="392,113 432,110 472,110 508,118"/>
+          <line x1="392" y1="30" x2="392" y2="190" stroke="#cfd7e3" stroke-dasharray="3 4"/>
+          <text x="398" y="26" font-size="11" fill="#6b7890">Forecast</text>
+        </svg>
+        <div class="mock-rows">
+          <div class="mock-row"><b>Product A · Warehouse 1</b><span>12 days of cover</span><span class="pill warn">Low</span></div>
+          <div class="mock-row"><b>Product B · Warehouse 2</b><span>41 days of cover</span><span class="pill">OK</span></div>
         </div>
-        <form id="auth-form" novalidate>
-          <label id="company-row">Company name<input id="company" autocomplete="organization" maxlength="100"></label>
-          <label>Email<input id="email" type="email" autocomplete="email" maxlength="254"></label>
-          <label>Password<input id="password" type="password" autocomplete="new-password" minlength="8" maxlength="200"></label>
-          <p class="hint" id="pw-hint">At least 8 characters.</p>
-          <p class="error" id="auth-error" role="alert" hidden></p>
-          <button class="primary" type="submit" id="auth-submit">Create free account</button>
-        </form>
-        <p id="forgot-row" hidden><a class="link" href="#/forgot">Forgot your password?</a></p>
-        <div class="sso" id="sso-row" hidden>
-          <p class="hint or">or</p>
-          <a class="secondary sso-btn" id="sso-ms" href="/api/sso/microsoft/start" hidden>Sign in with Microsoft</a>
-          <a class="secondary sso-btn" id="sso-google" href="/api/sso/google/start" hidden>Sign in with Google</a>
-        </div>
-        <p class="fine">Your data is kept separate from every other company's and encrypted. Only monthly totals leave your computer when you upload a spreadsheet — the file itself is read in your browser.</p>
       </div>
-    </section>
+      <p class="caption">Illustration only. Not customer data.</p>
+    </div>
+  </div>
+</section>
 
-    <!-- Two-factor step -->
-    <section id="twofa" hidden>
-      <div class="card auth-card">
-        <h1>Two-factor sign-in</h1>
-        <p class="hint">Open your authenticator app and type the 6-digit code for Draxly. No phone? Use one of your backup codes.</p>
-        <form id="twofa-form" novalidate>
-          <label>Code<input id="t-code" inputmode="numeric" autocomplete="one-time-code" maxlength="20" spellcheck="false"></label>
-          <p class="error" id="t-error" role="alert" hidden></p>
-          <button class="primary" type="submit" id="t-submit">Sign in</button>
-        </form>
-        <p><a class="link" href="#/">← Start again</a></p>
-      </div>
-    </section>
-
-    <!-- Invite -->
-    <section id="invite" hidden>
-      <div class="card auth-card">
-        <h1>Join <span id="i-company"></span></h1>
-        <p class="hint" id="i-hint"></p>
-        <div id="i-sso" class="sso" hidden>
-          <a class="secondary sso-btn" id="i-sso-ms" hidden>Join with Microsoft</a>
-          <a class="secondary sso-btn" id="i-sso-google" hidden>Join with Google</a>
-        </div>
-        <form id="invite-form" novalidate>
-          <label>Your name<input id="i-name" autocomplete="name" maxlength="100"></label>
-          <label>Choose a password<input id="i-password" type="password" autocomplete="new-password" maxlength="200"></label>
-          <p class="hint">At least 8 characters.</p>
-          <p class="error" id="i-error" role="alert" hidden></p>
-          <button class="primary" type="submit" id="i-submit">Join</button>
-        </form>
-      </div>
-    </section>
-
-    <!-- Forgot password -->
-    <section id="forgot" hidden>
-      <div class="card auth-card">
-        <h1>Reset your password</h1>
-        <p class="hint">Use the recovery code you saved when you signed up.</p>
-        <form id="forgot-form" novalidate>
-          <label>Email<input id="f-email" type="email" autocomplete="email" maxlength="254"></label>
-          <label>Recovery code<input id="f-code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="60" placeholder="XXXXX-XXXXX-XXXXX-XXXXX"></label>
-          <label>New password<input id="f-password" type="password" autocomplete="new-password" maxlength="200"></label>
-          <p class="hint">At least 8 characters.</p>
-          <p class="error" id="f-error" role="alert" hidden></p>
-          <button class="primary" type="submit" id="f-submit">Set new password</button>
-        </form>
-        <h3>Don't have your recovery code?</h3>
-        <p class="hint">Ask us for a reset link. Type your email above, then:</p>
-        <button class="secondary" type="button" id="f-ask">Ask for a reset link</button>
-        <p class="ok" id="f-asked" role="status" hidden></p>
-        <p><a class="link" href="#/">← Back to sign in</a></p>
-      </div>
-    </section>
-
-    <!-- One-time reset link -->
-    <section id="reset" hidden>
-      <div class="card auth-card">
-        <h1>Choose a new password</h1>
-        <form id="reset-form" novalidate>
-          <label>New password<input id="r-password" type="password" autocomplete="new-password" maxlength="200"></label>
-          <label>Type it again<input id="r-password2" type="password" autocomplete="new-password" maxlength="200"></label>
-          <p class="hint">At least 8 characters.</p>
-          <p class="error" id="r-error" role="alert" hidden></p>
-          <button class="primary" type="submit" id="r-submit">Set new password</button>
-        </form>
-      </div>
-    </section>
-
-    <!-- A code shown once (recovery code, or backup codes) -->
-    <section id="code" hidden>
-      <div class="card auth-card">
-        <h1 id="code-title">Save your recovery code</h1>
-        <p id="code-text">If you ever forget your password, this code lets you set a new one. <b>It's shown only now.</b> Keep it somewhere safe, like a password manager or a printed copy.</p>
-        <p class="code" id="code-value"></p>
-        <div class="upload-row"><button type="button" class="secondary" id="code-copy">Copy</button><button type="button" class="secondary" id="code-save">Download as a file</button> <span class="hint" id="code-copied"></span></div>
-        <label class="check"><input type="checkbox" id="code-ok"> I've saved it</label>
-        <button type="button" class="primary" id="code-continue" disabled>Continue</button>
-      </div>
-    </section>
-
-    <!-- Billing -->
-    <section id="billing" hidden>
+<section class="band">
+  <div class="wrap">
+    <div class="sec-head center">
+      <span class="eyebrow">Why Draxly</span>
+      <h2>Stock decisions based on what your own customers buy</h2>
+      <p class="lead">Too much stock ties up cash and spoils. Too little loses orders. Draxly gives your buyers a clear 3-month view, built and tested on your own numbers.</p>
+    </div>
+    <div class="grid g3">
       <div class="card">
-        <div class="row-between"><h2>Billing</h2><span class="pill" id="bl-status"></span></div>
-        <div id="bl-none" class="notice" hidden><p><b>You're on the free accuracy test.</b> Draxly Enterprise is $30,000 a year per company on a one-year agreement — paid upfront, or $2,500 a month by invoice. <a href="/pricing">See what's included</a>.</p></div>
-        <div id="bl-plan"></div>
-      </div>
-      <div class="card" id="bl-next-card"><h2>Next payment</h2><p id="bl-next"></p></div>
-      <div class="card"><h2>Invoices</h2><p class="hint" id="bl-noinv">No invoices yet.</p><div class="table-wrap"><table id="bl-table"></table></div></div>
-      <div class="card" id="bl-pay-card"><h2>How to pay</h2><p id="bl-pay" class="pre"></p></div>
-      <p class="hint">Questions about billing? Email <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a>.</p>
-    </section>
-
-    <!-- Switched off -->
-    <section id="off" hidden>
-      <div class="card notice"><h1>This account is switched off</h1><p id="off-contact"></p></div>
-    </section>
-
-    <!-- Home: upload + uploads -->
-    <section id="home" hidden>
-      <div class="card" id="upload-card">
-        <h2>Upload your sales</h2>
-        <p>A CSV or Excel file with one row per sale (or per day, week or month): a <b>date</b>, a <b>product</b>, and the <b>sales amount</b> and/or <b>quantity</b>. Add <b>store/warehouse</b> and <b>region</b> columns for forecasts by location. At least 9 months for the accuracy test.</p>
-        <div class="upload-row">
-          <label class="file-btn primary" id="file-label">Choose file<input type="file" id="file" accept=".csv,.txt,.tsv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" hidden></label>
-          <button type="button" class="secondary" id="sample">Try with sample data</button>
-          <a class="link" href="/sample-sales.csv" download>Download the sample file</a>
-        </div>
-        <p class="error" id="file-error" role="alert" hidden></p>
-
-        <div id="map" hidden>
-          <h3>Check the columns</h3>
-          <p class="hint" id="map-file"></p>
-          <div class="grid3">
-            <label>Date column<select id="col-date"></select></label>
-            <label>Product column<select id="col-product"></select></label>
-            <label>Sales column<select id="col-value"></select></label>
-          </div>
-          <div class="grid3">
-            <label>Quantity column<select id="col-units"></select></label>
-            <label>Store / warehouse column<select id="col-location"></select></label>
-            <label>Region column<select id="col-region"></select></label>
-          </div>
-          <div class="grid3">
-            <label>The sales column is<select id="kind"><option value="money">Money ($)</option><option value="units">Quantity (units)</option></select></label>
-            <label id="order-row" hidden>Dates are written<select id="order"><option value="">— choose —</option><option value="dmy">Day/Month/Year (31/01/2025)</option><option value="mdy">Month/Day/Year (01/31/2025)</option></select></label>
-            <label>Name for this upload<input id="upload-name" maxlength="120"></label>
-          </div>
-          <div class="preview" id="preview" aria-live="polite"></div>
-          <p class="error" id="map-error" role="alert" hidden></p>
-          <button type="button" class="primary" id="run">Run the free accuracy test</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Your data</h2>
-        <p class="hint" id="no-uploads">Nothing yet — upload a file, try the sample, or connect a system.</p>
-        <ul class="uploads" id="uploads"></ul>
-      </div>
-    </section>
-
-    <!-- One upload: backtest + forecast -->
-    <section id="result" hidden>
-      <p id="r-back"><a class="link" href="#/">← All data</a></p>
-      <h1 id="r-name"></h1>
-      <p class="hint" id="r-meta"></p>
-      <div class="notice" id="r-status" hidden></div>
-
-      <div class="card">
-        <h2>Free accuracy test</h2>
-        <div id="bt-none" class="notice" hidden></div>
-        <div id="bt">
-          <div class="score"><span class="score-num" id="bt-acc"></span><span class="score-label">accurate on your total sales<br><span class="hint" id="bt-months"></span></span></div>
-          <ul class="summary" id="bt-summary"></ul>
-          <div id="bt-chart"></div>
-          <div class="row-between"><h3>Predicted against actual, side by side</h3><label class="inline" id="bt-by-row" hidden>By<select id="bt-by"></select></label></div>
-          <div class="table-wrap"><table id="bt-table"></table></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Next 3 months</h2>
-        <div id="fc-locked" class="notice" hidden><p><b>The 3-month forecast isn't switched on for your account yet.</b></p><p id="fc-contact"></p></div>
-        <div id="fc-ask" hidden>
-          <p>See the next 3 months for every product, store and region, with a chart and a plain-English summary.</p>
-          <button type="button" class="primary" id="fc-run">Make my 3-month forecast</button>
-        </div>
-        <p class="error" id="fc-error" role="alert" hidden></p>
-        <div id="fc" hidden>
-          <ul class="summary" id="fc-summary"></ul>
-          <div class="upload-row">
-            <label class="inline" id="fc-by-row" hidden>View by<select id="fc-by"></select></label>
-            <label class="inline">Show<select id="fc-pick"></select></label>
-            <label class="inline" id="fc-measure-row" hidden>Measure<select id="fc-measure"></select></label>
-          </div>
-          <div id="fc-chart"></div>
-          <h3 id="fc-table-title">By product</h3>
-          <div class="table-wrap"><table id="fc-table"></table></div>
-          <div id="fc-drill" hidden><h3 id="fc-drill-title"></h3><div class="table-wrap"><table id="fc-drill-table"></table></div></div>
-          <p><button type="button" class="secondary" id="fc-csv">Download forecast (CSV)</button> <span class="hint" id="fc-when"></span></p>
-        </div>
-      </div>
-      <p><button type="button" class="link danger" id="r-delete">Delete this data</button></p>
-    </section>
-
-    <!-- Stock & reorder -->
-    <section id="stock" hidden>
-      <div class="card">
-        <div class="row-between"><h2>Reorder suggestions</h2><span class="hint" id="ro-when"></span></div>
-        <div id="ro-none" class="notice" hidden></div>
-        <div class="tiles small" id="ro-tiles"></div>
-        <div class="upload-row"><label class="inline">Show<select id="ro-filter"><option value="act">Needs ordering</option><option value="all">Everything</option></select></label><button type="button" class="secondary small" id="ro-csv">Download (CSV)</button></div>
-        <div class="table-wrap"><table id="ro-table"></table></div>
-        <p class="hint">Reorder point = expected daily demand × lead time + safety stock (from the forecast's own error, at your service level). When stock on hand + on order is at or below it, the suggestion orders up to the reorder point plus your review period's demand, rounded to the case pack.</p>
-      </div>
-      <div class="card" id="stock-upload" data-min-role="manager">
-        <h2>Stock levels</h2>
-        <p class="hint" id="stock-count"></p>
-        <p>Upload a CSV or Excel file with <b>product</b>, <b>store/warehouse</b> (optional) and <b>on hand</b>; optionally <b>on order</b>, <b>lead time (days)</b>, <b>case pack</b>, <b>minimum order</b> and <b>unit cost</b>. Product and store names must match your sales data. Connected Shopify, Square and QuickBooks accounts send stock levels every night.</p>
-        <div class="upload-row"><label class="file-btn primary">Upload stock levels<input type="file" id="stock-file" accept=".csv,.txt,.xlsx,.xls" hidden></label><label class="check inline-check"><input type="checkbox" id="stock-replace"> Replace the whole list</label></div>
-        <p class="ok" id="stock-ok" role="status" hidden></p><p class="error" id="stock-error" role="alert" hidden></p>
-        <h3>Settings</h3>
-        <div class="grid3">
-          <label>Service level<select id="st-service"><option value="0.9">90%</option><option value="0.95">95%</option><option value="0.975">97.5%</option><option value="0.99">99%</option></select></label>
-          <label>Review period (days)<input id="st-review" type="number" min="1" max="365"></label>
-          <label>Default lead time (days)<input id="st-lead" type="number" min="1" max="365"></label>
-        </div>
-        <label>Forecast to use<select id="st-main"></select></label>
-        <button type="button" class="secondary small" id="st-save">Save settings</button> <span class="hint" id="st-saved"></span>
-      </div>
-    </section>
-
-    <!-- Connections -->
-    <section id="connections" hidden>
-      <div class="card">
-        <h2>Connected systems</h2>
-        <p class="hint">Sales (and stock where the system has it) are pulled in automatically every night at about 2am your time; each night re-reads the last two months to catch late changes.</p>
-        <p class="notice" id="qb-msg" hidden></p>
-        <div id="conn-list"></div>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg></div>
+        <h3>Forecasts at every level</h3>
+        <p>The next 3 months for each product, at each store or warehouse, rolled up by region and in total. The parts always add up to the whole.</p>
       </div>
       <div class="card">
-        <h2>Add a connection</h2>
-        <label>System<select id="conn-kind"></select></label>
-        <p class="hint" id="conn-help"></p>
-        <form id="conn-form" novalidate>
-          <label>Name<input id="conn-name" maxlength="80"></label>
-          <div id="conn-fields"></div>
-          <label>History to pull on the first sync<select id="conn-history"><option value="12">12 months</option><option value="24" selected>24 months</option><option value="36">36 months</option><option value="60">60 months</option></select></label>
-          <p class="error" id="conn-error" role="alert" hidden></p><p class="ok" id="conn-ok" role="status" hidden></p>
-          <button class="primary" type="submit" id="conn-save">Save, test and sync</button>
-        </form>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg></div>
+        <h3>Accuracy you can check</h3>
+        <p>Draxly hides your last 3 months, predicts them, and shows predicted against actual by product and location before you rely on it.</p>
       </div>
       <div class="card">
-        <h2>API keys and file drop (any other system)</h2>
-        <p>Any system can send sales, stock levels or CSV exports to Draxly over HTTPS with an API key — on a schedule, from your ERP, data warehouse or a nightly script. <a href="/docs">API guide</a></p>
-        <div id="keys-list"></div>
-        <form id="key-form" class="pay-row" novalidate><input id="key-name" class="note" maxlength="60" placeholder="Key name (e.g. Data warehouse)"><button class="secondary small" type="submit">Create API key</button></form>
-        <div id="key-new" class="reset-box" hidden></div>
-        <p class="error" id="key-error" role="alert" hidden></p>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7L12 12l8.7-5M12 22V12"/></svg></div>
+        <h3>Reorder suggestions</h3>
+        <p>With your stock on hand, lead times and case packs, Draxly suggests what to order and how much, and emails low-stock alerts.</p>
       </div>
-    </section>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M4 9h16M9 20V9"/></svg></div>
+        <h3>Works with your systems</h3>
+        <p>Nightly connections to NetSuite, SAP S/4HANA, Dynamics 365 Business Central, QuickBooks Online, Shopify and Square, plus an API and HTTPS file drop.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H5.2L4 17.2z"/><path d="M8 9h8M8 12h5"/></svg></div>
+        <h3>Weekly reports</h3>
+        <p>A weekly forecast report by email for each team member who switches it on, so the numbers reach the people who place orders.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+        <h3>Enterprise security</h3>
+        <p>Single sign-on with Microsoft and Google, two-factor sign-in, roles, a full activity log, and AES-256 encryption of your sales data at rest.</p>
+      </div>
+    </div>
+  </div>
+</section>
 
-    <!-- Team -->
-    <section id="team" hidden>
-      <div class="card">
-        <h2>Team</h2>
-        <p class="hint">Admins manage the team, security, connections and API keys. Managers upload data, run forecasts and manage stock. Viewers can see everything but change nothing.</p>
-        <div class="table-wrap"><table id="team-table"></table></div>
-        <div id="team-link" class="reset-box" hidden></div>
-        <p class="error" id="team-error" role="alert" hidden></p>
-      </div>
-      <div class="card">
-        <h2>Invite someone</h2>
-        <form id="invite-new" novalidate>
-          <div class="grid3">
-            <label>Email<input id="inv-email" type="email" maxlength="254"></label>
-            <label>Name<input id="inv-name" maxlength="100"></label>
-            <label>Role<select id="inv-role"><option value="viewer">Viewer</option><option value="manager">Manager</option><option value="admin">Admin</option></select></label>
-          </div>
-          <button class="primary" type="submit">Send invite</button>
-        </form>
-      </div>
-    </section>
+<section class="band alt">
+  <div class="wrap">
+    <div class="sec-head center">
+      <span class="eyebrow">How it works</span>
+      <h2>From sales history to a buying plan</h2>
+    </div>
+    <div class="steps">
+      <div class="step"><h3>Connect or upload</h3><p>Connect your ERP or point-of-sale system, send data through the API, or upload a CSV or Excel export.</p></div>
+      <div class="step"><h3>Check the accuracy</h3><p>Draxly tests itself on your own last 3 months and shows how close it got, product by product.</p></div>
+      <div class="step"><h3>Plan and reorder</h3><p>See the next 3 months, reorder suggestions and low-stock alerts. With a connection, everything refreshes every night.</p></div>
+    </div>
+    <p class="center" style="margin-top:28px"><a href="/how-it-works">Read the full walkthrough →</a></p>
+  </div>
+</section>
 
-    <!-- Activity -->
-    <section id="activity" hidden>
-      <div class="card">
-        <div class="row-between"><h2>Activity log</h2><button type="button" class="secondary small" id="act-csv">Download (CSV)</button></div>
-        <p class="hint">Every sign-in, change, upload, forecast, sync, API call and email, with who did it and from which address. Kept for the life of the account.</p>
-        <div class="table-wrap"><table id="act-table"></table></div>
-        <button type="button" class="secondary small" id="act-more" hidden>Show older</button>
-      </div>
-    </section>
+<section class="band">
+  <div class="wrap split">
+    <div>
+      <span class="eyebrow">Built for your size</span>
+      <h2>Made for distributors with $20M to $500M in sales</h2>
+      <p class="lead">Big enough to carry thousands of products across several warehouses, but without a forecasting team. Draxly gives you the planning of a much larger company.</p>
+      <ul class="ticks">
+        <li>Thousands of products, stores and warehouses in one account</li>
+        <li>Unlimited users, with admin, manager and viewer roles</li>
+        <li>Nothing to install: it runs in the browser on desktop and phone</li>
+        <li>One clear price for the whole company</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <dl class="kv">
+        <dt>Forecast horizon</dt><dd>Next 3 months</dd>
+        <dt>Levels</dt><dd>Product, store or warehouse, region, total</dd>
+        <dt>History needed</dt><dd>6 months minimum; 12 to 24 months works best</dd>
+        <dt>Refresh</dt><dd>Every night with a connection</dd>
+        <dt>Users</dt><dd>Unlimited</dd>
+        <dt>Price</dt><dd>$30,000 a year, or $2,500 a month on a one-year agreement</dd>
+      </dl>
+    </div>
+  </div>
+</section>
 
-    <!-- Account & settings -->
-    <section id="account" hidden>
-      <p><a class="link" href="#/">← Forecasts</a></p>
-      <div class="card notice" id="enroll-note" hidden><b>Your company requires two-factor sign-in.</b> Set it up below to continue.</div>
-      <div class="card auth-card" id="twofa-card">
-        <h2>Two-factor sign-in</h2>
-        <p class="hint" id="tf-status"></p>
-        <div id="tf-setup" hidden>
-          <p>Scan this with an authenticator app (Microsoft Authenticator, Google Authenticator, 1Password…), or type the key.</p>
-          <div id="tf-qr" class="qr"></div>
-          <p class="code topic" id="tf-secret"></p>
-          <p><a class="link" id="tf-uri">Open in my authenticator app</a></p>
-          <form id="tf-form" class="pay-row" novalidate><input id="tf-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code"><button class="primary small" type="submit">Turn on</button></form>
-          <p class="error" id="tf-error" role="alert" hidden></p>
-        </div>
-        <button type="button" class="primary small" id="tf-start" hidden>Set up two-factor sign-in</button>
-        <form id="tf-off" class="pay-row" novalidate hidden><input id="tf-off-pw" type="password" autocomplete="current-password" placeholder="Your password"><button class="link danger" type="submit">Turn off</button></form>
+<section class="band dark">
+  <div class="wrap">
+    <div class="sec-head center">
+      <span class="eyebrow">Try before you talk to anyone</span>
+      <h2>Test Draxly on your own sales, free</h2>
+      <p class="lead">Upload 21 months of sales and keep your last 3 real months to yourself. Draxly forecasts the next 3 months for every product, so you can compare its numbers with what really happened.</p>
+    </div>
+    <div class="cta-row" style="justify-content:center">
+      <a class="btn btn-light btn-lg" href="/free-demo">Start the free test demo</a>
+      <a class="btn btn-outline-light btn-lg" href="/pricing">See pricing</a>
+    </div>
+    <p class="fine center">No sign-up. No sample data. Your file is read in your browser and nothing is stored.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="cta-band">
+      <div>
+        <h2>Questions before you test?</h2>
+        <p>Write to us and we'll reply by email. No calls or meetings needed.</p>
       </div>
-      <div class="card auth-card">
-        <h2>Change password</h2>
-        <form id="pw-form" novalidate>
-          <label>Current password<input id="pw-current" type="password" autocomplete="current-password" maxlength="200"></label>
-          <label>New password<input id="pw-new" type="password" autocomplete="new-password" maxlength="200"></label>
-          <p class="hint">At least 8 characters. Your other devices will be signed out.</p>
-          <p class="error" id="pw-error" role="alert" hidden></p>
-          <button class="primary" type="submit">Change password</button>
-        </form>
-      </div>
-      <div class="card auth-card">
-        <h2>Recovery code</h2>
-        <p class="hint">Lost your recovery code? Make a new one — the old one stops working.</p>
-        <form id="rc-form" novalidate>
-          <label>Your password<input id="rc-password" type="password" autocomplete="current-password" maxlength="200"></label>
-          <p class="error" id="rc-error" role="alert" hidden></p>
-          <button class="secondary" type="submit">Make a new recovery code</button>
-        </form>
-      </div>
-      <div class="card auth-card" id="prefs-card">
-        <h2>Emails</h2>
-        <label class="switch"><input type="checkbox" id="pref-reports"> Weekly forecast report</label>
-        <label class="switch"><input type="checkbox" id="pref-low"> Low-stock alerts</label>
-        <p class="hint">Sent to admins and managers who have these on.</p>
-      </div>
-      <div class="card" id="company-card" data-min-role="admin">
-        <h2>Company security</h2>
-        <label class="switch"><input type="checkbox" id="cs-2fa"> Everyone must use two-factor sign-in (or single sign-on)</label>
-        <label class="switch" id="cs-sso-row"><input type="checkbox" id="cs-sso"> Everyone must sign in with Microsoft or Google (passwords off)</label>
-        <div class="grid3">
-          <label>Email domains that may join with single sign-on (as viewers)<input id="cs-domains" placeholder="example.com"></label>
-          <label>Time zone<select id="cs-tz"></select></label>
-          <label>&nbsp;<button type="button" class="secondary small" id="cs-save">Save</button></label>
-        </div>
-        <p class="hint" id="cs-msg"></p>
-        <button type="button" class="link danger" id="cs-signout">Sign everyone else out now</button>
-      </div>
-      <div class="card" id="report-card" data-min-role="admin" data-feature="reports">
-        <h2>Weekly forecast report</h2>
-        <label class="switch"><input type="checkbox" id="rp-on"> Email the weekly report</label>
-        <div class="grid3">
-          <label>Day<select id="rp-day"><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>
-          <label>Time<select id="rp-hour"></select></label>
-          <label>&nbsp;<span><button type="button" class="secondary small" id="rp-save">Save</button> <button type="button" class="link" id="rp-send">Send one now</button></span></label>
-        </div>
-        <p class="hint" id="rp-msg"></p>
-      </div>
-    </section>
-  </main>
-  <footer class="foot">Forecasts are estimates from your own past sales. They can't know about things that haven't happened before. <a href="/security">Security</a> · <a href="/pricing">Pricing</a> · <a href="/docs">API</a> · Contact us: <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></footer>
+      <div class="cta-row"><a class="btn btn-light btn-lg" href="/contact">Contact us</a></div>
+    </div>
+  </div>
+</section>
+</main>
+<footer class="foot-site" data-site-footer>
+  <div class="foot-in">
+    <div class="foot-brand">
+      <a class="logo" href="/"><img src="/icon.svg" alt="" width="26" height="26"><span>Draxly</span></a>
+      <p>Know what to stock before you need it.</p>
+      <p>Sales forecasting for US food and drink distributors and wholesalers.</p>
+      <p><a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+    </div>
+    <div class="foot-col">
+      <h2>Product</h2>
+      <a href="/how-it-works">How it works</a>
+      <a href="/integrations">Integrations</a>
+      <a href="/pricing">Pricing and contract</a>
+      <a href="/free-demo">Free test demo</a>
+      <a href="/docs">API guide</a>
+    </div>
+    <div class="foot-col">
+      <h2>Company</h2>
+      <a href="/about">About</a>
+      <a href="/security">Security and privacy</a>
+      <a href="/faq">FAQ</a>
+      <a href="/contact">Contact us</a>
+      <a href="/app">Customer sign-in</a>
+    </div>
+    <div class="foot-col">
+      <h2>Legal</h2>
+      <a href="/terms">Terms of Service</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/dpa">Data Processing Addendum</a>
+      <a href="/legal">All legal documents</a>
+    </div>
+  </div>
+  <div class="foot-base">
+    <p>© 2026 M. D. Williams Enterprise, trading as Draxly. All rights reserved.</p>
+    <p>Contact us: <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+  </div>
+</footer>
 </body>
 </html>
