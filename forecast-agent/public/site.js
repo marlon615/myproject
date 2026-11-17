@@ -13,6 +13,18 @@
   const here = location.pathname.replace(/\/$/, "").split("/")[1] || "";
   for (const a of document.querySelectorAll("[data-nav]")) if (a.dataset.nav === here) a.setAttribute("aria-current", "page");
 
+  // Free demo page: show today's cut-off (worked out by the server from today's date).
+  const rule = document.querySelector("[data-demo-rule]");
+  if (rule) {
+    const M = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const name = (ym) => `${M[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
+    fetch("/api/demo/rules").then((r) => (r.ok ? r.json() : null)).then((r) => {
+      if (!r?.latestMonth) return;
+      for (const [cls, ym] of [[".r-latest", r.latestMonth], [".r-f1", r.forecastMonths[0]], [".r-f3", r.forecastMonths[2]]]) rule.querySelectorAll(cls).forEach((e) => { e.textContent = name(ym); });
+      rule.querySelector(".r-today").hidden = false;
+    }).catch(() => {});
+  }
+
   const form = document.getElementById("contact-form");
   if (form) {
     const msg = document.getElementById("form-msg"), btn = form.querySelector("button[type=submit]");

@@ -13,6 +13,7 @@
  */
 import { Directory, FEATURES, ROLES, MIN_CONTRACT_CENTS } from "./directory.js";
 import { Company, MAX_SERIES, MAX_MONTHS } from "./company.js";
+import { demoRules, demoCurrentMonth, tooRecentMessage } from "./demo-rules.js";
 import { FILES, RULES } from "./assets.generated.js";
 import { MIN_FORECAST_MONTHS, MIN_BACKTEST_MONTHS, forecastSeries, explain, addMonths } from "./forecast.js";
 import { CONNECTORS, connectorList, QB, at } from "./connectors.js";
@@ -231,6 +232,9 @@ async function api(request, env, path, ctx) {
   }
 
   // The open demo (no sign-up): forecasts batches of products in memory and sends them back. Nothing is stored.
+  // The demo's fairness rule (worked out from today's date on every request): files may end no later than 4 months
+  // before the current month, so the 3 predicted months have always already finished. See demo-rules.js.
+  if (path === "/api/demo/rules" && method === "GET") return json(demoRules(demoCurrentMonth(env, request)));
   if (path === "/api/demo/start" && method === "POST") {
     const b = (await readJson(request, 5000)) || {};
     const cf = request.cf || {}, ref = String(b.referrer || "").slice(0, 200);
@@ -242,6 +246,8 @@ async function api(request, env, path, ctx) {
     const b = await readJson(request, 400_000);
     const months = Array.isArray(b?.months) ? b.months : null, list = Array.isArray(b?.series) ? b.series : null;
     if (!months || months.length < MIN_FORECAST_MONTHS || months.length > DEMO_MAX_MONTHS || !months.every((m) => typeof m === "string" && YM.test(m)) || !consecutive(months)) return json({ error: `Send between ${MIN_FORECAST_MONTHS} and ${DEMO_MAX_MONTHS} consecutive months.` }, 400);
+    const rules = demoRules(demoCurrentMonth(env, request));
+    if (months[months.length - 1] > rules.latestMonth) return json({ error: tooRecentMessage(rules), code: "too_recent", latestMonth: rules.latestMonth }, 400);
     if (!list || !list.length || list.length > DEMO_BATCH) return json({ error: `Send 1 to ${DEMO_BATCH} products at a time.` }, 400);
     if (!list.every((x) => Array.isArray(x?.values) && x.values.length === months.length && x.values.every((v) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) < 1e13))) return json({ error: "Every product needs one number per month." }, 400);
     if (!demoAllowed(ip)) return json({ error: "That's a lot of forecasting from one place — please wait a few minutes and try again." }, 429, { "Retry-After": "300" });
@@ -252,6 +258,9 @@ async function api(request, env, path, ctx) {
     const b = await readJson(request, 400_000);
     const months = Array.isArray(b?.months) ? b.months : null, products = Array.isArray(b?.products) ? b.products : null;
     if (!months || months.length < MIN_FORECAST_MONTHS || months.length > DEMO_MAX_MONTHS || !months.every((m) => YM.test(m)) || !products || products.length > 210 || !Array.isArray(b?.total?.history) || !Array.isArray(b?.total?.forecast)) return json({ error: "Bad summary request." }, 400);
+    const rules = demoRules(demoCurrentMonth(env, request));
+    if (!consecutive(months)) return json({ error: "Bad summary request." }, 400);
+    if (months[months.length - 1] > rules.latestMonth) return json({ error: tooRecentMessage(rules), code: "too_recent", latestMonth: rules.latestMonth }, 400);
     if (!demoAllowed(ip, 5)) return json({ error: "Please wait a few minutes and try again." }, 429);
     const num = (a, n) => (Array.isArray(a) && a.length === n && a.every((v) => typeof v === "number" && Number.isFinite(v)) ? a : null);
     const total = { history: num(b.total.history, months.length), forecast: num(b.total.forecast, 3) };

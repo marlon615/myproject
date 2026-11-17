@@ -18,6 +18,25 @@ const showErr = (id, msg) => { const e = $(id); e.textContent = msg || ""; e.hid
 const MAX_MONTHS = 60, PARALLEL = 4;
 let sheet = null, built = null, result = null, visit = null;
 
+// ── The fairness rule: the demo only predicts months that have already finished ────────────────────────────
+// The server works it out from today's date (and refuses anything later); this page asks it, so both always agree.
+const FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const monthName = (ym) => `${FULL[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
+const shiftMonth = (ym, n) => { const [y, m] = ym.split("-").map(Number); const t = y * 12 + m - 1 + n; return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`; };
+const localRules = () => { // only if the server can't be reached; the server still checks every request
+  const p = new Intl.DateTimeFormat("en-US", { timeZone: "Pacific/Honolulu", year: "numeric", month: "2-digit" }).formatToParts(new Date());
+  const cur = `${p.find((x) => x.type === "year").value}-${p.find((x) => x.type === "month").value}`, latestMonth = shiftMonth(cur, -4);
+  return { current: cur, latestMonth, forecastMonths: [1, 2, 3].map((k) => shiftMonth(latestMonth, k)) };
+};
+const tooRecent = (r) => `To keep the test fair, please remove your most recent months so your file ends in ${monthName(r.latestMonth)}. Draxly will predict the 3 months after that (${monthName(r.forecastMonths[0])} to ${monthName(r.forecastMonths[2])}), and you can compare them with your real sales.`;
+let rules = null;
+const rulesReady = fetch("/api/demo/rules").then((r) => (r.ok ? r.json() : localRules())).catch(localRules).then((r) => {
+  rules = r;
+  const put = (cls, ym) => document.querySelectorAll(cls).forEach((e) => { e.textContent = monthName(ym); });
+  put(".r-latest", r.latestMonth); put(".r-f1", r.forecastMonths[0]); put(".r-f3", r.forecastMonths[2]); put(".r-first", shiftMonth(r.latestMonth, -20));
+  return r;
+});
+
 async function post(path, body) {
   const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
@@ -30,6 +49,7 @@ $("d-file").onchange = async () => {
   showErr("d-file-error");
   if (!f) return;
   try {
+    await rulesReady;
     const rows = await readFile(f);
     if (rows.length < 2) throw new Error("That file has no rows of sales in it.");
     const { header, body } = headerAndBody(rows);
@@ -58,9 +78,10 @@ function preview() {
   $("d-preview").innerHTML = `<ul class="found">
     <li><b>${m.allMonths || n} months</b>: ${monthLabel(m.allMonths ? m.firstAll : m.months[0])} to ${monthLabel(last)}${m.allMonths ? ` (the latest ${n} will be used)` : ""}</li>
     <li><b>${m.products.toLocaleString("en-US")} product${m.products === 1 ? "" : "s"}</b>, ${m.used.toLocaleString("en-US")} rows used${m.skipped ? `, <b>${m.skipped.toLocaleString("en-US")} skipped</b> (no readable date or amount — check the columns)` : ""}</li>
-    <li>Draxly will forecast <b>${monthLabel(f1)} to ${monthLabel(f3)}</b> — these should be the 3 months you kept back.</li></ul>
+    ${rules && last > rules.latestMonth ? "" : `<li>Draxly will forecast <b>${monthLabel(f1)} to ${monthLabel(f3)}</b> — these should be the 3 months you kept back.</li>`}</ul>
     ${n !== 21 ? `<p class="warn">You've uploaded ${n} months; the demo is designed for 21 (24 months minus the 3 you keep back). ${n < 6 ? "At least 6 are needed." : "It will still work."}</p>` : ""}`;
-  if (n < 6) showErr("d-map-error", "At least 6 months are needed.");
+  if (rules && last > rules.latestMonth) showErr("d-map-error", tooRecent(rules)); // would predict months that aren't over yet
+  else if (n < 6) showErr("d-map-error", "At least 6 months are needed.");
   else built = { ...m, kind, forecastMonths: [f1, nextMonth(f1), f3] };
   gate();
 }
@@ -115,7 +136,7 @@ $("d-run").onclick = async () => {
 function showResult() {
   const r = result, k = r.kind;
   $("d-start").hidden = true; $("d-result").hidden = false; window.scrollTo(0, 0);
-  $("d-r-title").textContent = `Your forecast: ${monthLabel(r.forecastMonths[0])} to ${monthLabel(r.forecastMonths[2])}`;
+  $("d-r-title").textContent = `Draxly's prediction: ${monthLabel(r.forecastMonths[0])} to ${monthLabel(r.forecastMonths[2])}`;
   $("d-r-lead").innerHTML = `${r.products.length.toLocaleString("en-US")} product${r.products.length === 1 ? "" : "s"} forecast from ${r.months.length} months, ${r.seconds < 1 ? "in under a second" : `in ${r.seconds.toFixed(1)} seconds`}. Expected total: <b>${fmt(sum(r.total.forecast), k)}</b>. Compare it with the real numbers you kept back.`;
   $("d-summary").innerHTML = r.summary.map((s) => `<li>${esc(s)}</li>`).join("");
   $("d-pick").innerHTML = `<option value="">All products (total)</option>` + r.products.slice(0, 200).map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join("");
@@ -125,7 +146,7 @@ function showResult() {
 function draw() {
   const r = result, k = r.kind, i = $("d-pick").value, p = i === "" ? null : r.products[+i];
   const hist = (p ? p.history : r.total.history).slice(-24), f = p ? p.forecast : r.total.forecast;
-  lineChart($("d-chart"), { labels: [...r.months.slice(-24), ...r.forecastMonths].map(monthLabel), kind: k, format: (v) => fmt(v, k), caption: `${p ? p.name : "Total sales"}: your history and the next 3 months`,
+  lineChart($("d-chart"), { labels: [...r.months.slice(-24), ...r.forecastMonths].map(monthLabel), kind: k, format: (v) => fmt(v, k), caption: `${p ? p.name : "Total sales"}: your history and Draxly's prediction for the 3 months after it`,
     series: [{ name: `Your history${p ? ` — ${p.name}` : ""}`, color: 1, values: [...hist, null, null, null] }, { name: "Draxly forecast", color: 2, dashed: true, values: [...hist.map((_, j) => (j === hist.length - 1 ? hist[j] : null)), ...f] }] });
 }
 function table() {

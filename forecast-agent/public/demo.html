@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Draxly demo</title>
-  <meta name="description" content="Try Draxly on your own sales: upload 21 months, keep your last 3 months back, and see how close the forecast gets. No sign-up.">
+  <meta name="description" content="Try Draxly on your own sales: upload 21 months that end at least 4 months ago, and see how close Draxly gets to the 3 finished months after them. No sign-up.">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/site-chrome.css">
@@ -38,19 +38,24 @@
   <main>
     <section id="d-start">
       <h1>Test Draxly on your own sales</h1>
-      <p class="lead">No sign-up. Upload 21 months of sales, keep your most recent 3 months to yourself, and see how close Draxly's forecast gets to the real numbers you kept.</p>
+      <p class="lead">No sign-up. Upload 21 months of sales, keep the 3 finished months after them to yourself, and see how close Draxly's prediction gets to the real numbers you kept.</p>
+      <div class="card rule" id="d-rule">
+        <h2>Today's cut-off</h2>
+        <p>Your file must end in <b class="r-latest">the cut-off month</b> or earlier. Draxly will predict <b class="r-f1">the 3 months</b> to <b class="r-f3">after it</b>, which have already finished, so you can compare them with your real sales.</p>
+        <p class="hint">To keep the test fair, the demo only predicts months that are over. It never forecasts the future; that's what the full product is for. The cut-off moves forward by one month at the start of each month.</p>
+      </div>
       <div class="card">
         <h2>How it works</h2>
         <ol class="steps">
-          <li><b>Export 24 months of sales</b> as a spreadsheet (CSV or Excel), up to your most recent full month — one row per sale, day, week or month, with a <b>date</b>, a <b>product</b> and the <b>sales amount</b> (or quantity).</li>
-          <li><b>Keep your last 3 months back.</b> Remove them from the file and put them aside — don't upload them. What's left is the 21 months before.</li>
-          <li><b>Upload those 21 months below.</b> Check what Draxly found, then press “Forecast the next 3 months”.</li>
-          <li><b>Compare.</b> Draxly forecasts the next 3 months — the 3 months you kept — for every product and in total. Download the CSV and put your real numbers next to it.</li>
+          <li><b>Export 24 months of sales</b>, <span class="r-first">21 months before the cut-off</span> to <span class="r-f3">your last full month</span>, as a spreadsheet (CSV or Excel): one row per sale, day, week or month, with a <b>date</b>, a <b>product</b> and the <b>sales amount</b> (or quantity).</li>
+          <li><b>Keep the last 3 months back</b> (<span class="r-f1">the 3 months</span> to <span class="r-f3">after the cut-off</span>). Remove them from the file and put them aside; don't upload them.</li>
+          <li><b>Upload the 21 months</b>, <span class="r-first">21 months before the cut-off</span> to <span class="r-latest">the cut-off month</span>, below. Check what Draxly found, then press “Predict the 3 months after my file”.</li>
+          <li><b>Compare.</b> Draxly predicts <span class="r-f1">the 3 months</span> to <span class="r-f3">after the cut-off</span>, the 3 months you kept, for every product and in total. Download the CSV and put your real numbers next to it.</li>
         </ol>
         <p class="hint"><b>Private:</b> your file is read here in your browser. Only monthly totals are sent to Draxly, to be forecast and sent straight back — they're never stored, and no one else can see them. When you close this page or press “Start over”, they're gone.</p>
       </div>
       <div class="card">
-        <h2>Your sales file (21 months)</h2>
+        <h2>Your sales file (21 months, ending in <span class="r-latest">the cut-off month</span> or earlier)</h2>
         <label class="file-btn primary">Choose file<input type="file" id="d-file" accept=".csv,.txt,.tsv,.xlsx,.xls" hidden></label>
         <p class="error" id="d-file-error" role="alert" hidden></p>
         <div id="d-map" hidden>
@@ -67,14 +72,14 @@
           <h3>What Draxly found</h3>
           <div class="preview" id="d-preview" aria-live="polite"></div>
           <p class="error" id="d-map-error" role="alert" hidden></p>
-          <button type="button" class="primary" id="d-run" disabled>Forecast the next 3 months</button>
+          <button type="button" class="primary" id="d-run" disabled>Predict the 3 months after my file</button>
           <div class="progress" id="d-progress" hidden><div class="bar"><span id="d-bar"></span></div><p class="hint" id="d-progress-text"></p></div>
         </div>
       </div>
     </section>
 
     <section id="d-result" hidden>
-      <div class="row-between"><h1 id="d-r-title">Your next 3 months</h1><button type="button" class="secondary small" id="d-restart">Start over</button></div>
+      <div class="row-between"><h1 id="d-r-title">Draxly's prediction</h1><button type="button" class="secondary small" id="d-restart">Start over</button></div>
       <p class="lead" id="d-r-lead"></p>
       <div class="card">
         <ul class="summary" id="d-summary"></ul>

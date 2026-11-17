@@ -1,6 +1,6 @@
 <!--
 title: Free test demo · Draxly
-description: Test Draxly on your own sales, free, with no sign-up. Upload 21 months, keep your last 3 real months, and compare Draxly's forecast with what really happened.
+description: Test Draxly on your own sales, free, with no sign-up. Upload 21 months that end at least 4 months ago; Draxly predicts the 3 finished months after them, and you compare with your real sales.
 path: /free-demo
 -->
 <section class="page-head">
@@ -16,9 +16,14 @@ path: /free-demo
 <section class="band">
   <div class="wrap">
     <div class="sec-head"><h2>How the test works</h2></div>
+    <div class="note" data-demo-rule style="margin-bottom:24px">
+      <p><b>The cut-off rule.</b> To keep the test fair, the demo only predicts months that have already finished. Your file must end at least 4 months before the current month, and Draxly predicts the 3 months after it. For example, in November your file can go up to July at the latest, and Draxly predicts August, September and October.</p>
+      <p class="r-today" hidden>Today: your file must end in <b class="r-latest"></b> or earlier, and Draxly will predict <b class="r-f1"></b> to <b class="r-f3"></b>.</p>
+      <p>If your file includes later months, the demo asks you to remove them first. Nothing is sent until the file fits.</p>
+    </div>
     <div class="steps">
-      <div class="step"><h3>Export 24 months, upload 21</h3><p>Export your monthly sales by product from your system. Upload the first 21 months as a CSV or Excel file, and keep the last 3 real months to yourself.</p></div>
-      <div class="step"><h3>Get the next 3 months</h3><p>Draxly forecasts those 3 months for every product and in total, with a chart, a table by product and a CSV download.</p></div>
+      <div class="step"><h3>Export 24 months, upload 21</h3><p>Export 24 months of sales by product, ending with your last full month. Upload the first 21 months as a CSV or Excel file, and keep the last 3 months to yourself.</p></div>
+      <div class="step"><h3>Draxly predicts 3 finished months</h3><p>Draxly predicts the 3 months after your file, which have already finished, for every product and in total, with a chart, a table by product and a CSV download.</p></div>
       <div class="step"><h3>Compare with what happened</h3><p>Open the CSV next to the 3 months you kept back. The download has empty "Your actual" columns ready for your real numbers.</p></div>
     </div>
   </div>
@@ -40,7 +45,8 @@ path: /free-demo
       <h3>What your file needs</h3>
       <dl class="kv">
         <dt>Columns</dt><dd>A date or month, a product, and sales (dollars or units)</dd>
-        <dt>Months</dt><dd>21 consecutive months works best (6 to 60 accepted)</dd>
+        <dt>Months</dt><dd>21 months recommended (at least 6), ending at least 4 months before the current month</dd>
+        <dt>Predicted</dt><dd>The 3 months after your file, which have already finished</dd>
         <dt>File</dt><dd>CSV or Excel, up to 40 MB</dd>
         <dt>Products</dt><dd>Tested with up to 50,000 products</dd>
       </dl>
