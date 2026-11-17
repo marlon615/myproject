@@ -125,7 +125,7 @@ function startWorker(stateDir) {
     await card.locator(".reset-link").click();
     await card.locator(".reset-url").waitFor();
     const link = await card.locator(".reset-url").inputValue();
-    check(new RegExp(`^${BASE}/#/reset/[0-9a-f]{64}$`).test(link), "one click makes a one-time reset link to send", link.replace(/[0-9a-f]{56}$/, "…"));
+    check(new RegExp(`^${BASE}/app#/reset/[0-9a-f]{64}$`).test(link), "one click makes a one-time reset link to send", link.replace(/[0-9a-f]{56}$/, "…"));
     await O.screenshot({ path: path.join(OUT, "reset-2-owner-link-phone.png"), fullPage: true });
 
     // The customer opens it (a fresh phone, signed out).
