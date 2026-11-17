@@ -68,7 +68,7 @@ function companyFile() {
     P.on("pageerror", (e) => errors.push(e.message));
     await P.goto(`${w.base}/demo?utm_source=email`);
     check(await P.isVisible("#d-start") && !(await P.isVisible("#d-result")) && (await P.locator("table tr").count()) === 0 && (await P.locator("svg[role=img]").count()) === 0, "the page starts empty: instructions and an upload button, no data, no charts");
-    check(/Keep your last 3 months back/.test(await P.textContent(".steps")) && /never stored/.test(await P.textContent("#d-start")), "the steps say to keep the last 3 months back, and that nothing is stored");
+    check(/Keep the last 3 months back/.test(await P.textContent(".steps")) && /never stored/.test(await P.textContent("#d-start")), "the steps say to keep the last 3 months back, and that nothing is stored");
     await P.screenshot({ path: path.join(OUT, "open-1-empty-phone.png"), fullPage: true });
     await P.setInputFiles("#d-file", coFile);
     await P.waitForSelector("#d-map:not([hidden])");
