@@ -43,6 +43,29 @@ nobody ever sees anyone else's data. The owner's own app
   - Settings: business details, products and prices, backup and restore, printer, anonymous counts on or off.
 - **Offline:** works with no internet after the first open. Updates install by themselves.
 
+## Send for signature (buyer in another town)
+
+For online sellers (Instagram, WhatsApp, TikTok) whose buyer can't sign on the seller's phone.
+
+- **Seller:** makes the invoice as usual (buyer name, items, quantity, unit price), then taps **Send for signature**.
+  The server saves a frozen copy and makes a secret link (`/s/<64 hex characters>`, 256-bit random), and the phone's
+  share sheet opens (WhatsApp, Instagram, email, text). Where there's no share sheet, the link is copied instead.
+- **Buyer:** opens the link on their own phone, no app and no login. They see the whole invoice, read-only, and can
+  only type their name, sign, and tap **Sign and confirm**. Then: a green checkmark, "Signed by … on [date, time]",
+  and **Download PDF copy**. Opening the link again only shows the signed copy.
+- **The lock is on the server:** the buyer's page is drawn from the frozen copy; signing accepts only a name, a
+  signature and the copy's fingerprint (SHA-256), and refuses anything else or any other version. Nothing can change a
+  sent copy; a signed one can't be sent again or cancelled.
+- **Back to the seller:** the app checks every 20 seconds while it's open (and whenever it's opened). A signed copy
+  replaces the invoice on the phone with exactly what was signed, with a message, and the invoice is locked for good
+  (even against changes saved straight into the phone's storage). While a link is waiting, changing the invoice first
+  cancels the link ("Cancel and edit"). The phone can only notify while the app is open or running in the background.
+- **Statuses:** Sent, Opened, Signed (and Expired) on the invoice and in the dashboard history. Unsigned links expire
+  after 7 days; the seller can send a new one, and the old link then says a newer one was sent.
+- **Privacy:** only a hash of each link is stored; the invoice, the buyer's name and their signature are encrypted
+  (AES-256-GCM) with the `ENCRYPTION_KEY` secret (`wrangler secret put ENCRYPTION_KEY`; without it, sending is switched
+  off). A seller's phone can only see the links it sent itself. Limit: 200 links per phone per day.
+
 ## Team version
 
 When creating a buyer in the console, choose **Solo** (one business, as above) or **Team** (a company with one boss

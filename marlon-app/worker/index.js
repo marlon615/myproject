@@ -26,6 +26,7 @@
  */
 import { DurableObject } from "cloudflare:workers";
 import { FILES, RULES } from "./assets.generated.js";
+import { withTotals, normalizeUnit } from "../public/js/util.js";
 
 const KINDS = ["open", "setup", "invoice", "voice", "print", "pdf", "picture"];
 const BOSS_PLACES = 2; // boss phones per team (on iPhone, the browser and the Home Screen icon count as two)
@@ -34,6 +35,51 @@ const todayUTC = () => new Date().toISOString().slice(0, 10);
 const addDays = (iso, n) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const hex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
 const randomHex = (n) => hex(crypto.getRandomValues(new Uint8Array(n)));
+const sha256Hex = async (text) => hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+
+// ── Send for signature: limits, encryption at rest, and the invoice copy that gets frozen ──────────────────
+const SIGN_DAYS = 7, SIGN_DAILY_LIMIT = 200;
+const SIGN_KEY_OK = (env) => typeof env?.ENCRYPTION_KEY === "string" && /^[A-Za-z0-9+/]{43}=$/.test(env.ENCRYPTION_KEY); // 32 bytes, base64
+const b64 = (u8) => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+let aesKey = null;
+async function sealKey(env) {
+  if (!SIGN_KEY_OK(env)) throw new Error("ENCRYPTION_KEY is not set");
+  return (aesKey ||= await crypto.subtle.importKey("raw", Uint8Array.from(atob(env.ENCRYPTION_KEY), (c) => c.charCodeAt(0)), "AES-GCM", false, ["encrypt", "decrypt"]));
+}
+/** AES-256-GCM: "v1:" + base64(iv | ciphertext). */
+async function seal(env, text) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await sealKey(env), new TextEncoder().encode(String(text))));
+  const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12);
+  return "v1:" + b64(out);
+}
+async function unseal(env, stored) {
+  if (stored == null) return null;
+  const raw = Uint8Array.from(atob(String(stored).slice(3)), (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: raw.slice(0, 12) }, await sealKey(env), raw.slice(12)));
+}
+/**
+ * The invoice as it will be frozen and shown to the buyer: only these fields, in this order, with every line total
+ * and the grand total worked out here (whole cents) — never taken from the phone. → { inv } | { error }
+ */
+function cleanSignInvoice(raw) {
+  if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(raw.id)) return { error: "That invoice can't be sent." };
+  const txt = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  const items = Array.isArray(raw.items) ? raw.items.slice(0, 300) : [];
+  if (!items.length) return { error: "Add at least one item first." };
+  const bad = items.some((it) => !(typeof it?.qty === "number" && it.qty > 0 && it.qty < 1e6) || !(typeof it?.price === "number" && it.price >= 0 && it.price < 1e8) || !txt(it?.name, 80));
+  if (bad) return { error: "Every item needs a name, a quantity and a price before it can be sent." };
+  const store = txt(raw.store, 120);
+  if (!store) return { error: "Add the buyer's name first." };
+  const t = withTotals({ items: items.map((it) => ({ name: txt(it.name, 80), qty: it.qty, unit: normalizeUnit(it.unit), price: it.price })) });
+  return { inv: {
+    id: raw.id, number: Number.isInteger(raw.number) && raw.number > 0 && raw.number < 1e7 ? raw.number : null,
+    date: /^\d{4}-\d{2}-\d{2}$/.test(raw.date || "") ? raw.date : new Date().toISOString().slice(0, 10),
+    seller: txt(raw.seller, 120), sellerAddress: txt(raw.sellerAddress, 300), sellerPhone: txt(raw.sellerPhone, 60),
+    store, address: txt(raw.address, 300),
+    items: t.items.map((it) => ({ name: it.name, qty: it.qty, unit: it.unit, price: it.price, total: it.total })), total: t.total,
+  } };
+}
 
 /** Only the fields the boss dashboard shows, with sane sizes (a rep's phone sends these; nothing else is kept). */
 function cleanInvoice(inv) {
@@ -103,10 +149,116 @@ export class Stats extends DurableObject {
     addColumn("buyer_devices", "boss_name", "TEXT NOT NULL DEFAULT ''");  // the name the boss gave this rep (kept on old invoices)
     // Invoices the boss marked paid: a rep's phone can never undo that, and picks it up.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS boss_paid (buyer TEXT NOT NULL, id TEXT NOT NULL, paid_at TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
+    // "Send for signature": a frozen copy of the invoice behind a secret link. Only a SHA-256 hash of the link is kept,
+    // the invoice, the buyer's name and their signature are encrypted (AES-256-GCM), and nothing here can change the copy.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS sign_links (hash TEXT PRIMARY KEY, buyer TEXT NOT NULL, device TEXT NOT NULL, invoice_id TEXT NOT NULL,
+      data TEXT NOT NULL, digest TEXT NOT NULL, status TEXT NOT NULL, created TEXT NOT NULL, expires INTEGER NOT NULL,
+      opened_at TEXT, signed_at TEXT, signer TEXT, signature TEXT, delivered INTEGER NOT NULL DEFAULT 0)`);
+    this.sql.exec("CREATE INDEX IF NOT EXISTS sign_links_phone ON sign_links (buyer, device, invoice_id)");
   }
 
   #meta(k) { return this.sql.exec("SELECT v FROM meta WHERE k = ?", k).toArray()[0]?.v ?? null; }
   #setMeta(k, v) { this.sql.exec("INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", k, String(v)); }
+
+  // ── Send for signature ─────────────────────────────────────────────────────────────────────────────────
+  // Statuses: sent → opened → signed (final), or replaced / cancelled (a newer link, or the seller cancelled), or
+  // expired (worked out: not signed within 7 days). A signed copy can never be changed, replaced or cancelled.
+
+  /** An active phone of an active buyer (solo or team), or null. */
+  #activePhone(key, device) {
+    const { b } = this.#resolve(key);
+    if (!b || b.off) return null;
+    const d = b.phones.find((x) => x.device === device);
+    return d && !d.off ? b : null;
+  }
+  #signState(row, now = Date.now()) {
+    if (row.status === "signed" || row.status === "replaced" || row.status === "cancelled") return row.status;
+    return now > row.expires ? "expired" : row.status;
+  }
+
+  /** The seller sends a (cleaned) invoice: it's frozen, and a new secret link is made. Older unsigned links for it stop working. */
+  async signCreate(key, device, inv) {
+    const b = this.#activePhone(key, device);
+    if (!b) return { error: "off" };
+    if (!SIGN_KEY_OK(this.env)) return { error: "setup" };
+    const rows = this.sql.exec("SELECT status FROM sign_links WHERE buyer = ? AND device = ? AND invoice_id = ?", b.id, device, inv.id).toArray();
+    if (rows.some((r) => r.status === "signed")) return { error: "signed" };
+    const today = new Date().toISOString().slice(0, 10);
+    const sentToday = this.sql.exec("SELECT COUNT(*) AS n FROM sign_links WHERE buyer = ? AND device = ? AND created >= ?", b.id, device, today).one().n;
+    if (sentToday >= SIGN_DAILY_LIMIT) return { error: "limit" };
+    this.sql.exec("UPDATE sign_links SET status = 'replaced' WHERE buyer = ? AND device = ? AND invoice_id = ? AND status IN ('sent', 'opened')", b.id, device, inv.id);
+    const token = randomHex(32), hash = await sha256Hex(token), now = new Date();
+    const text = JSON.stringify(inv), digest = await sha256Hex(text), expires = now.getTime() + SIGN_DAYS * 86_400_000;
+    this.sql.exec("INSERT INTO sign_links (hash, buyer, device, invoice_id, data, digest, status, created, expires) VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, ?)",
+      hash, b.id, device, inv.id, await seal(this.env, text), digest, now.toISOString(), expires);
+    return { ok: true, token, expires: new Date(expires).toISOString(), digest };
+  }
+
+  async #signCopy(row) {
+    const text = await unseal(this.env, row.data);
+    if ((await sha256Hex(text)) !== row.digest) throw new Error("stored invoice doesn't match its fingerprint");
+    return { invoice: JSON.parse(text), digest: row.digest };
+  }
+  async #signedOut(row) {
+    return { ...(await this.#signCopy(row)), state: "signed", signedAt: row.signed_at, signer: await unseal(this.env, row.signer), signature: await unseal(this.env, row.signature) };
+  }
+
+  /** The buyer opens the link. The first open marks it "opened". */
+  async signView(token, now = Date.now()) {
+    const row = this.sql.exec("SELECT * FROM sign_links WHERE hash = ?", await sha256Hex(token)).toArray()[0];
+    if (!row) return { state: "unknown" };
+    const st = this.#signState(row, now);
+    if (st === "signed") return this.#signedOut(row);
+    const { invoice } = await this.#signCopy(row);
+    const seller = invoice.seller || "the seller";
+    if (st === "expired" || st === "replaced" || st === "cancelled") return { state: st, seller };
+    if (row.status === "sent") this.sql.exec("UPDATE sign_links SET status = 'opened', opened_at = ? WHERE hash = ?", new Date().toISOString(), row.hash);
+    return { state: "open", invoice, digest: row.digest, expires: new Date(row.expires).toISOString() };
+  }
+
+  /** The buyer signs. Only their name and signature are accepted, and only for the exact copy they were shown. */
+  async signSubmit(token, name, signature, digest, now = Date.now()) {
+    const row = this.sql.exec("SELECT * FROM sign_links WHERE hash = ?", await sha256Hex(token)).toArray()[0];
+    if (!row) return { state: "unknown" };
+    const st = this.#signState(row, now);
+    if (st === "signed") return { ...(await this.#signedOut(row)), already: true };
+    if (st !== "sent" && st !== "opened") return { state: st };
+    await this.#signCopy(row); // the stored copy must still match its fingerprint
+    if (digest !== row.digest) return { state: "changed" };
+    const at = new Date().toISOString();
+    this.sql.exec("UPDATE sign_links SET status = 'signed', signed_at = ?, signer = ?, signature = ?, opened_at = COALESCE(opened_at, ?) WHERE hash = ? AND status IN ('sent', 'opened')",
+      at, await seal(this.env, name), await seal(this.env, signature), at, row.hash);
+    return this.#signedOut(this.sql.exec("SELECT * FROM sign_links WHERE hash = ?", row.hash).one());
+  }
+
+  /** The seller's phone: the status of everything it sent (newest link per invoice), with signed copies it hasn't got yet. */
+  async signStatus(key, device, ack, now = Date.now()) {
+    const b = this.#activePhone(key, device);
+    if (!b) return { error: "off" };
+    for (const id of ack) this.sql.exec("UPDATE sign_links SET delivered = 1 WHERE buyer = ? AND device = ? AND invoice_id = ? AND status = 'signed'", b.id, device, id);
+    const rows = this.sql.exec(`SELECT * FROM sign_links WHERE buyer = ? AND device = ? AND status NOT IN ('replaced', 'cancelled')
+      AND (status = 'signed' OR created >= ?) ORDER BY created`, b.id, device, new Date(Date.now() - 60 * 86_400_000).toISOString()).toArray();
+    const latest = new Map();
+    for (const r of rows) if (r.status === "signed" || !latest.has(r.invoice_id) || latest.get(r.invoice_id).status !== "signed") latest.set(r.invoice_id, r);
+    const out = [];
+    for (const r of latest.values()) {
+      const st = this.#signState(r, now);
+      if (st === "signed" && r.delivered) continue; // already on the phone
+      const item = { invoiceId: r.invoice_id, state: st, sentAt: r.created, openedAt: r.opened_at, expires: new Date(r.expires).toISOString() };
+      if (st === "signed") Object.assign(item, await this.#signedOut(r));
+      out.push(item);
+    }
+    return { ok: true, links: out };
+  }
+
+  /** The seller cancels a link that hasn't been signed (to change the invoice). A signed one can't be cancelled. */
+  signCancel(key, device, invoiceId) {
+    const b = this.#activePhone(key, device);
+    if (!b) return { error: "off" };
+    if (this.sql.exec("SELECT 1 FROM sign_links WHERE buyer = ? AND device = ? AND invoice_id = ? AND status = 'signed'", b.id, device, invoiceId).toArray().length) return { error: "signed" };
+    this.sql.exec("UPDATE sign_links SET status = 'cancelled' WHERE buyer = ? AND device = ? AND invoice_id = ? AND status IN ('sent', 'opened')", b.id, device, invoiceId);
+    return { ok: true };
+  }
 
   /** Counts from one phone: grouped by day and kind first, so a batch costs a handful of writes, not one per event. */
   record(device, events) {
@@ -550,6 +702,60 @@ async function api(request, env, path) {
 
   // Teams.
   const hex32 = (v) => (typeof v === "string" && /^[0-9a-f]{32}$/.test(v) ? v : null);
+
+  // Send for signature. The seller's phone proves itself with its personal link key + phone id; the buyer has only the
+  // secret link. The buyer can send nothing but a name and a signature for the exact copy they saw.
+  if (path.startsWith("/api/sign/") && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, path === "/api/sign/submit" ? 300000 : 400000); } catch { return json({ error: "That request was too big or not readable." }, 400); }
+    const token = typeof body.token === "string" && /^[0-9a-f]{64}$/.test(body.token) ? body.token : null;
+    const sealed = (r) => (r.error === "setup" ? json({ error: "Sending for signature isn't set up on this server yet." }, 503) : null);
+    const gone = { unknown: [404, "This link doesn't exist. Check you have the whole link, or ask the seller to send it again."],
+      expired: [410, "This link has expired. Ask the seller to send it again."], replaced: [410, "The seller sent a newer link for this invoice. Use the newest one they sent you."],
+      cancelled: [410, "The seller cancelled this link. Ask them to send it again."], changed: [409, "This invoice isn't the one that was sent. Reload the page and try again."] };
+    // Tests only (ALLOW_TEST_CLOCK=1, never on the live site): "now" can be moved forward to check the 7-day expiry.
+    const testNow = env.ALLOW_TEST_CLOCK === "1" && /^\d{13}$/.test(request.headers.get("X-Test-Now") || "") ? Number(request.headers.get("X-Test-Now")) : undefined;
+    const answer = (r) => (gone[r.state] ? json({ state: r.state, error: gone[r.state][1], seller: r.seller || "" }, gone[r.state][0]) : json(r));
+    if (path === "/api/sign/create") {
+      const key = hex32(body.key), device = hex32(body.device);
+      if (!key || !device) return json({ error: "This phone isn't set up for sending." }, 400);
+      const c = cleanSignInvoice(body.invoice);
+      if (c.error) return json({ error: c.error }, 400);
+      const r = await stub.signCreate(key, device, c.inv);
+      if (r.error === "off") return json({ error: "This phone is switched off.", contact: await stub.contact() }, 403);
+      if (r.error === "signed") return json({ error: "This invoice is already signed, so it can't be sent again or changed." }, 409);
+      if (r.error === "limit") return json({ error: "That's a lot of links today. Please try again tomorrow." }, 429);
+      return sealed(r) || json({ ok: true, token: r.token, expires: r.expires, digest: r.digest, invoice: c.inv });
+    }
+    if (path === "/api/sign/view") {
+      if (!token) return answer({ state: "unknown" });
+      return answer(await stub.signView(token, testNow));
+    }
+    if (path === "/api/sign/submit") {
+      const extra = Object.keys(body).filter((k) => !["token", "name", "signature", "digest"].includes(k));
+      if (extra.length) return json({ error: "Only your name and signature can be sent. The invoice itself can't be changed." }, 400);
+      if (!token) return answer({ state: "unknown" });
+      const name = typeof body.name === "string" ? body.name.replace(/\s+/g, " ").trim() : "";
+      if (name.length < 2 || name.length > 80) return json({ error: "Please type your full name." }, 400);
+      const sig = typeof body.signature === "string" ? body.signature : "";
+      let png = false;
+      try { png = sig.length < 280000 && sig.startsWith("data:image/png;base64,") && atob(sig.slice(22, 54)).startsWith("\x89PNG"); } catch { png = false; }
+      if (!png) return json({ error: "Please sign in the box first." }, 400);
+      if (typeof body.digest !== "string" || !/^[0-9a-f]{64}$/.test(body.digest)) return answer({ state: "changed" });
+      return answer(await stub.signSubmit(token, name, sig, body.digest, testNow));
+    }
+    if (path === "/api/sign/status" || path === "/api/sign/cancel") {
+      const key = hex32(body.key), device = hex32(body.device);
+      if (!key || !device) return json({ error: "This phone isn't set up for sending." }, 400);
+      const id = (v) => (typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : null);
+      const r = path === "/api/sign/status" ? await stub.signStatus(key, device, (Array.isArray(body.ack) ? body.ack : []).slice(0, 200).map(id).filter(Boolean), testNow)
+        : await stub.signCancel(key, device, id(body.invoiceId) || "");
+      if (r.error === "off") return json({ error: "This phone is switched off." }, 403);
+      if (r.error === "signed") return json({ error: "This invoice is signed, so its link can't be cancelled." }, 409);
+      return json(r);
+    }
+    return json({ error: "Not found" }, 404);
+  }
   if (path === "/api/team/sync" && request.method === "POST") {
     let body;
     try { body = await readJson(request, 400000); } catch { return json({ error: "too big or not JSON" }, 400); }
@@ -731,6 +937,8 @@ export default {
       m.id = `/?k=${k}`; // each personal link installs as its own app (its own storage), never as another link's app
       return new Response(JSON.stringify(m), { headers: { "Content-Type": FILES[path].type, "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" } });
     }
+    // A buyer's signing link: "/s/<secret>" always opens the signing page (the page reads the secret from the address).
+    if (/^\/s\/[0-9a-f]{64}$/.test(path) && FILES["/sign.html"]) return respond(request, "/s/*", FILES["/sign.html"]);
     const key = path.endsWith("/") ? path + "index.html" : FILES[path] ? path : FILES[path + ".html"] ? path + ".html" : null;
     if (key && FILES[key]) return respond(request, path, FILES[key]);
     return respond(request, path, FILES["/404.html"], 404);

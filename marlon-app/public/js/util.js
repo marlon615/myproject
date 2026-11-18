@@ -141,6 +141,11 @@ export function qtyWithUnit(qty, unit) {
 /** 7 → "0007" */
 export const invoiceNo = (n) => (n ? String(n).padStart(4, "0") : "—");
 
+/** "Nov 18, 2026, 2:26 PM" in this phone's own time. */
+export const signedOnText = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }); };
+/** "Signed by Jada Brown on Nov 18, 2026, 2:26 PM" for an invoice signed through a link (else ""). */
+export const signedByText = (inv) => (inv?.signerName && inv?.signedAt ? `Signed by ${String(inv.signerName).trim()} on ${signedOnText(inv.signedAt)}` : "");
+
 /**
  * Returns a copy of an invoice with each item's `total` and the invoice `total` recomputed.
  * Items keep their order. Use this before saving, printing, sharing or encoding.

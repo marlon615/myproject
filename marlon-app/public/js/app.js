@@ -9,9 +9,10 @@ import { ensureAccess } from "./license.js";
 import { startTeamSync } from "./team.js";
 import {
   business, setBusiness, UNITS, UNIT_NAMES, debounce, defaultUnitFor, fillUsualPrice, h, invoiceNo, itemsMissingPrice, lineTotal, money,
-  normalizeUnit, parseAmount, priceInputText, qtyText, storeKey, sumTotals, todayISO, uid, withTotals,
+  normalizeUnit, parseAmount, priceInputText, qtyText, signedOnText, storeKey, sumTotals, todayISO, uid, withTotals,
 } from "./util.js";
-import { choiceSheet, confirmSheet, toast } from "./ui.js";
+import { alertSheet, choiceSheet, confirmSheet, toast } from "./ui.js";
+import { cancelLink, isRemoteSigned, isWaiting, remoteStatus, sendForSignature, shareLink, startRemoteWatch } from "./remote.js";
 import { SignaturePad } from "./signature.js";
 import { SignThanks, signatureArea } from "./sign-thanks.js";
 import { invoiceToText, invoiceToUrl } from "./codec.js";
@@ -33,6 +34,7 @@ const el = {
   grandTotal: $("grand-total"), grandCount: $("grand-count"), grandAmount: $("grand-amount"),
   signCard: $("sign-card"), signCanvas: $("sign-canvas"), signStatus: $("sign-status"), signTip: $("sign-tip"), signClear: $("sign-clear"),
   signDone: $("sign-done"), finish: $("finish-btn"), signPad: $("sign-pad"),
+  remoteStatus: $("remote-status"), sendSign: $("send-sign-btn"), remoteHint: $("remote-hint"),
   qrCard: $("qr-card"), qrBox: $("qr-box"), qrCaption: $("qr-caption"), qrToggle: $("qr-toggle"),
   print: $("print-btn"), sharePdf: $("share-pdf-btn"), receiptSize: $("receipt-size-btn"),
   newBtn: $("new-btn"), saveStatus: $("save-status"),
@@ -116,6 +118,7 @@ async function start() {
   refreshStores();
 
   wireEvents();
+  startRemoteWatch(); // invoices sent for signature: news comes in by itself (it stops when nothing is waiting)
   initDashboard(el.dash, hooks);
   window.addEventListener("hashchange", route);
   route();
@@ -170,7 +173,8 @@ async function newDraft(from = null) {
 
 async function loadInvoice(inv) {
   state.inv = { id: inv.id, number: inv.number, createdAt: inv.createdAt, signature: inv.signature || null, signedAt: inv.signedAt || null,
-    seller: inv.seller, sellerAddress: inv.sellerAddress, sellerPhone: inv.sellerPhone }; // the business as it was then
+    seller: inv.seller, sellerAddress: inv.sellerAddress, sellerPhone: inv.sellerPhone, // the business as it was then
+    remote: inv.remote || null, signerName: inv.signerName || null }; // sent for signature: its link and status
   state.paymentSet = Boolean(inv.payment);
   state.lines = new Map();
   state.extra = [];
@@ -438,6 +442,54 @@ function clearSignature() {
   changed();
 }
 
+/** Sent for signature and still waiting, or signed through the link: the invoice can't be changed here. */
+const remoteLocked = () => isWaiting(state.inv) || isRemoteSigned(state.inv);
+const needsAsk = () => Boolean(state.inv.signature) || remoteLocked();
+
+function renderRemote() {
+  const st = remoteStatus(state.inv), r = state.inv.remote;
+  const box = el.remoteStatus;
+  box.replaceChildren();
+  box.hidden = !st;
+  box.className = `remote-status is-${st || "none"}`;
+  pad.setDisabled(remoteLocked());
+  el.sendSign.hidden = st === "sent" || st === "opened" || st === "signed" || (Boolean(state.inv.signature) && !r);
+  el.sendSign.lastChild.textContent = st === "expired" ? " Send for signature again" : " Send for signature";
+  el.remoteHint.hidden = el.sendSign.hidden;
+  if (!st) return;
+  const when = (iso) => signedOnText(iso);
+  if (st === "signed") {
+    box.append(h("p", { class: "remote-title" }, `Signed by ${state.inv.signerName} on ${when(state.inv.signedAt)}`),
+      h("p", { class: "remote-sub" }, "Signed through the link on the buyer's phone. This invoice is locked and can't be changed."));
+    return;
+  }
+  if (st === "expired") {
+    box.append(h("p", { class: "remote-title" }, "Link expired, not signed"), h("p", { class: "remote-sub" }, `The link stopped working on ${when(r.expires)}. Send a new one below, or change the invoice first.`));
+    return;
+  }
+  box.append(h("p", { class: "remote-title" }, st === "opened" ? `Opened by the buyer${r.openedAt ? ` on ${when(r.openedAt)}` : ""}, waiting for their signature` : `Sent for signature, waiting for ${el.store.value.trim() || "the buyer"}`),
+    h("p", { class: "remote-sub" }, `The link works until ${when(r.expires)}. You'll get the signed copy here by itself.`),
+    h("div", { class: "remote-btns" },
+      h("button", { type: "button", class: "btn btn-small btn-primary", onclick: async () => { const how = await shareLink(state.inv); if (how === "copied") toast("Link copied. Paste it into WhatsApp, Instagram, email or a text."); if (how === "shown") alertSheet({ title: "The signing link", message: state.inv.remote.link }); } }, "Share link again"),
+      h("button", { type: "button", class: "btn btn-small", onclick: () => allowChange() }, "Cancel and edit")));
+}
+
+async function onSendForSignature() {
+  if (el.sendSign.getAttribute("aria-busy") === "true") return;
+  await flushSave();
+  const d = draft();
+  if (!state.inv.id) { toast("Add the buyer's name and items first."); return; }
+  el.sendSign.setAttribute("aria-busy", "true");
+  const r = await sendForSignature({ ...d, id: state.inv.id, number: state.inv.number, createdAt: state.inv.createdAt });
+  el.sendSign.removeAttribute("aria-busy");
+  if (r.error) { alertSheet({ title: "Can't send yet", message: r.error }); return; }
+  state.inv.remote = r.remote;
+  renderSignState();
+  if (r.how === "copied") toast("Link copied. Paste it into WhatsApp, Instagram, email or a text.");
+  else if (r.how === "shown") alertSheet({ title: "Send this link to your buyer", message: r.link });
+  else toast("Sent for signature. You'll see here when it's signed.");
+}
+
 function renderSignState() {
   const signed = Boolean(state.inv.signature);
   el.signCard.classList.toggle("is-signed", signed);
@@ -447,10 +499,33 @@ function renderSignState() {
   el.finish.hidden = !signed || state.paymentSet;
   el.signStatus.textContent = signed ? `Signed ✓${state.inv.signedAt ? " " + timeText(new Date(state.inv.signedAt)) : ""}` : "Not signed yet";
   el.signTip.textContent = signed ? "Signed. Changing the invoice will ask first." : "Ask the customer to sign here with a finger.";
+  if (isRemoteSigned(state.inv)) {
+    el.signClear.hidden = true;
+    el.signStatus.textContent = `Signed by ${state.inv.signerName} ✓`;
+    el.signTip.textContent = "Signed through the link. Locked.";
+  } else if (isWaiting(state.inv)) {
+    el.signTip.textContent = "Sent for signature: the buyer signs on their own phone.";
+    el.signStatus.textContent = "Waiting for the buyer";
+  }
+  renderRemote();
 }
 
 /** On a signed invoice, any change first asks; yes clears the signature. */
 async function allowChange() {
+  if (isRemoteSigned(state.inv)) {
+    await alertSheet({ title: "This invoice is signed", message: `Signed by ${state.inv.signerName} on ${signedOnText(state.inv.signedAt)}. A signed invoice can't be changed. Start a new invoice instead.` });
+    return false;
+  }
+  if (isWaiting(state.inv)) {
+    const ok = await confirmSheet({ title: "Sent for signature", message: "The buyer has a link to this invoice. To change it, the link is cancelled first, and you send them a new one afterwards.", okText: "Cancel link and edit", cancelText: "Keep it" });
+    if (!ok) return false;
+    const r = await cancelLink({ ...draft(), id: state.inv.id });
+    if (r.error) { await alertSheet({ title: "Couldn't cancel the link", message: r.error }); const fresh = await invoices.get(state.inv.id); if (fresh) await loadInvoice(fresh); return false; }
+    state.inv.remote = null;
+    renderSignState();
+    toast("Link cancelled. You can change the invoice now.");
+    return true;
+  }
   if (!state.inv.signature) return true;
   const ok = await confirmSheet({
     title: "Remove the signature?",
@@ -468,7 +543,7 @@ function wireEvents() {
   // Signed-invoice guard for typing: ask before the first keystroke can land.
   el.main.addEventListener("focusin", (e) => {
     const t = e.target;
-    if (!state.inv.signature || !t.matches("input, textarea, select") || t === el.addName) return; // adding is guarded on submit
+    if (!needsAsk() || !t.matches("input, textarea, select") || t === el.addName) return; // adding is guarded on submit
     if (t.closest(".sign-card")) return;
     t.blur();
     allowChange().then((ok) => { if (ok) t.focus(); });
@@ -481,7 +556,7 @@ function wireEvents() {
     if (!stepBtn && !check) return;
     const pid = e.target.closest(".prod-row")?.dataset.id;
     if (!pid) return;
-    if (state.inv.signature) {
+    if (needsAsk()) {
       // Stop the tick (or the label forwarding its click) until they confirm.
       e.preventDefault();
       allowChange().then((ok) => {
@@ -565,6 +640,18 @@ function wireEvents() {
 
   // Signature. Done: the customer's thank-you, then back to the invoice and its QR code.
   el.signClear.addEventListener("click", clearSignature);
+  el.sendSign.addEventListener("click", onSendForSignature);
+  // A buyer signed through a link (or opened it): show it straight away if that invoice is on screen.
+  document.addEventListener("remote:signed", async (e) => {
+    const inv = e.detail.inv;
+    toast(`${inv.signerName} signed invoice No. ${invoiceNo(inv.number)}`, { ms: 4200 });
+    if (inv.id === state.inv.id) { await loadInvoice(inv); }
+  });
+  document.addEventListener("remote:changed", async (e) => {
+    if (!e.detail.ids.includes(state.inv.id)) return;
+    const fresh = await invoices.get(state.inv.id);
+    if (fresh && !isRemoteSigned(fresh)) { state.inv.remote = fresh.remote || null; renderSignState(); }
+  });
   el.signDone.addEventListener("click", onDone);
   el.finish.addEventListener("click", () => finishInvoice());
 

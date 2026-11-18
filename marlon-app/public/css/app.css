@@ -470,3 +470,14 @@ dialog.review::backdrop { background: rgba(10, 12, 9, .5); }
 .gate-steps { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; color: var(--ink-2); }
 .gate-here { justify-self: start; text-align: left; }
 .is-blocked #invoice-screen, .is-blocked #dashboard, .is-blocked #setup, .is-blocked #update-banner { display: none !important; }
+
+/* ── Send for signature (buyer in another town) ── */
+.remote { display: grid; gap: 8px; margin-top: 12px; }
+.remote-hint { margin: 0; font-size: 14px; color: var(--muted); text-align: center; }
+.remote-status { border-radius: var(--radius-sm); padding: 12px 14px; background: var(--accent-soft); color: var(--ink); }
+.remote-status.is-opened { background: #e3edfb; }
+.remote-status.is-signed { background: var(--brand-soft); }
+.remote-status.is-expired { background: var(--danger-soft); }
+.remote-title { margin: 0; font-weight: 700; }
+.remote-sub { margin: 4px 0 0; font-size: 14px; color: var(--ink-2); }
+.remote-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }

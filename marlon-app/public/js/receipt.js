@@ -5,7 +5,7 @@
  */
 import { invoiceToUrl } from "./codec.js";
 import { makeQr } from "./qr.js";
-import { business, invoiceNo, loadImage, money, prettyDate, qtyWithUnit, thankYouText, tidy, withTotals } from "./util.js";
+import { business, invoiceNo, loadImage, money, prettyDate, qtyWithUnit, signedByText, thankYouText, tidy, withTotals } from "./util.js";
 
 /** Everything the receipt shows, as ready-to-print text. */
 export function receiptModel(inv) {
@@ -29,6 +29,7 @@ export function receiptModel(inv) {
     itemCount: t.items.length,
     signed: Boolean(t.signature) || t.signed === true, // customer copies carry the "signed" mark, not the drawing
     signature: t.signature || null,
+    signedBy: signedByText(t), // "Signed by … on …" when signed through a link
     qrUrl: invoiceToUrl(t),
     thanks: thankYouText(t.store),
   };
@@ -154,6 +155,7 @@ export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQ
   }
   ops.push({ kind: "line", x1: pad + inner * 0.1, x2: W - pad - inner * 0.1, y: Math.round(y) + 0.5 * s });
   gap(6);
+  if (m.signedBy) text(m.signedBy, font.small, { align: "center", color: SOFT });
 
   // QR code
   if (includeQr) {

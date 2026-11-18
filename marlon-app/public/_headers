@@ -7,3 +7,6 @@
   Cache-Control: no-cache
 /manifest.webmanifest
   Cache-Control: no-cache
+/s/*
+  X-Robots-Tag: noindex, nofollow
+  Cache-Control: no-store

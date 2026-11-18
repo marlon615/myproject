@@ -114,6 +114,7 @@ function layout(m, sig, k) {
   else text(m.signed ? "✓ Signed by the customer" : "Not signed", font.body, margin, y + font.body.px + px(8), "left", m.signed ? INK : SOFT);
   y += sigH;
   ops.push({ kind: "rule", x1: margin, x2: margin + sigW, y: y + px(4), w: px(0.8), color: "#888" });
+  if (m.signedBy) { y += px(6) + font.small.px; text(m.signedBy, font.small, margin, y + px(4), "left", SOFT); }
   ops.push({ kind: "qr", qr, x: W - margin - qrSize, y: blockTop, size: qrSize });
   text("Scan to see this invoice", font.small, W - margin - qrSize / 2, blockTop + qrSize + font.small.px + px(4), "center", SOFT);
   y = Math.max(y + px(10), blockTop + qrSize + font.small.px + px(10)) + px(22);

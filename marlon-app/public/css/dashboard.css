@@ -431,3 +431,9 @@
 #dashboard .dash-rename { display: grid; gap: 8px; }
 #dashboard .dash-usage { display: flex; align-items: center; gap: 10px; font-weight: 650; cursor: pointer; }
 #dashboard .dash-usage input { width: 22px; height: 22px; accent-color: var(--brand); }
+
+/* Sent for signature by link: Sent / Opened / Signed / Expired */
+#dashboard .dash-badge.is-remote.is-sent { color: #7a4b12; background: var(--accent-soft); }
+#dashboard .dash-badge.is-remote.is-opened { color: #1d4f91; background: #e3edfb; }
+#dashboard .dash-badge.is-remote.is-signed { padding-left: 6px; background: var(--brand-soft); color: var(--brand); }
+#dashboard .dash-badge.is-remote.is-expired { color: var(--danger); background: var(--danger-soft); }

@@ -3,7 +3,9 @@
  *
  * Stores:
  *   products  { id, name, order, custom, hidden, createdAt }   (prices live on invoices only)
- *   invoices  { id, number, seller, store, address, date, items[], total, signature, signedAt, createdAt, updatedAt, payment? }
+ *   invoices  { id, number, seller, store, address, date, items[], total, signature, signedAt, createdAt, updatedAt, payment?, remote?, signerName? }
+ *             remote (sent for signature): { state: "sent"|"opened"|"signed"|"expired", link, sentAt, openedAt, expires, signedAt }
+ *             Once remote.state is "signed", put() never changes the invoice again (only its payment).
  *             payment (owner only, never on the customer's copies):
  *             { status: "paid" | "unpaid", method: "cash" | "terms", termsDays: 0 | 7 | 14, dueDate: "YYYY-MM-DD" | null,
  *               recordedAt, paidAt: ISO | null }
@@ -183,9 +185,13 @@ export const invoices = {
     clean.createdAt = clean.createdAt || clean.updatedAt;
     if (!clean.id) clean.id = uid("inv_");
     return run(["invoices", "settings"], "readwrite", async (s) => {
-      if (!("payment" in inv)) {
-        const old = await done(s.invoices.get(clean.id));
-        if (old?.payment) clean.payment = old.payment;
+      const old = await done(s.invoices.get(clean.id));
+      if (!("payment" in inv) && old?.payment) clean.payment = old.payment;
+      // Signed by the buyer through a link: the invoice is locked for good. Only the private payment status may change.
+      if (old?.remote?.state === "signed") {
+        const locked = { ...old, payment: clean.payment ?? old.payment, updatedAt: clean.updatedAt };
+        await done(s.invoices.put(locked));
+        return locked;
       }
       if (!clean.number) {
         const row = await done(s.settings.get("nextNumber"));

@@ -10,7 +10,7 @@ import {
 } from "./db.js";
 import {
   UNITS, UNIT_NAMES, business, parseAmount, priceInputText, setBusiness, h, invoiceNo, money, monthLabel, normalizeUnit, parseISODate, prettyDate, qtyText, qtyWithUnit, storeKey, tidy, toCents, todayISO,
-  weekStartISO, withTotals,
+  weekStartISO, withTotals, signedByText,
 } from "./util.js";
 import { choiceSheet, confirmSheet, toast } from "./ui.js";
 import { qrCanvas } from "./qr.js";
@@ -18,6 +18,7 @@ import { invoiceToUrl } from "./codec.js";
 import { forgetPrinter, printInvoice, savedPrinterName } from "./printer.js";
 import { shareInvoicePdf } from "./share.js";
 import { byDueDate, dueText, markReceived, paymentPage, paymentState } from "./payment.js";
+import { remoteStatus, STATUS_WORDS } from "./remote.js";
 import { setUsageEnabled, usageEnabled } from "./usage.js";
 
 const UNLOCK_MS = 5 * 60 * 1000;       // stays unlocked this long after the last dashboard activity
@@ -903,7 +904,14 @@ function historyRow(inv) {
     h("span", { class: "dash-row-store" }, store),
     h("span", { class: "dash-row-badges" },
       showPay ? payChip(st) : null,
-      signed ? h("span", { class: "dash-badge is-signed" }, icon("check"), "Signed") : h("span", { class: "dash-badge is-unsigned" }, "Not signed"))));
+      remoteBadge(inv) || (signed ? h("span", { class: "dash-badge is-signed" }, icon("check"), "Signed") : h("span", { class: "dash-badge is-unsigned" }, "Not signed")))));
+}
+
+/** Sent for signature by link: Sent, Opened, Signed or Expired. */
+function remoteBadge(inv) {
+  const st = remoteStatus(inv);
+  if (!st) return null;
+  return h("span", { class: `dash-badge is-remote is-${st}`, title: "Sent for signature by link" }, st === "signed" ? icon("check") : null, STATUS_WORDS[st]);
 }
 
 // ── Invoice detail ───────────────────────────────────────────────────────
@@ -965,7 +973,7 @@ function detailView(inv) {
         h("div", { class: "card dash-card" }, signature
           ? h("figure", { class: "dash-signature" },
             h("img", { src: signature, alt: "Customer's signature" }),
-            h("figcaption", {}, inv.signedAt ? `Signed ${dateTimeText(inv.signedAt)}` : "Signed by the customer"))
+            h("figcaption", {}, signedByText(inv) || (inv.signedAt ? `Signed ${dateTimeText(inv.signedAt)}` : "Signed by the customer")))
           : h("p", { class: "dash-signature-none" }, inv.signature ? "Signed by the customer" : "Not signed"))),
       h("section", { class: "dash-section", "aria-labelledby": "dash-h-qr" },
         h("h3", { class: "section-title", id: "dash-h-qr" }, "QR code"),
