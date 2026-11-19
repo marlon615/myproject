@@ -21,6 +21,10 @@ export function buildEmail(r, night, st, site) {
   const ads = r.allJobAds || [], qn = ads.filter((x) => x.qualified).length, tot = r.jobAdsTotals;
   const jobHead = r.allJobAdsError ? r.allJobAdsError : r.allJobAds ? `JOB ADS FOUND (${ads.length}, ${qn} qualified${tot ? ` · ${tot.total} saved in all, ${tot.qualified} qualified` : ""})` : "";
   const jobsText = jobHead ? [jobHead, ...ads.map((x, i) => `${i + 1}. ${x.qualified ? "[QUALIFIED]" : "[not qualified]"} ${x.company || "Company not given"} — ${x.role || "role not given"} · ${x.url} · found ${x.firstFound}`), ...(ads.length ? ["Qualified = a word-for-word quote in the ad was kept as proof of paid repetitive work."] : []), ""] : [];
+  // Ideas already sent before that got new proof: a short section at the very bottom, never as new ideas.
+  const ups = r.updates || [];
+  const updText = ups.length ? ["UPDATE ON PAST IDEAS (already sent before; new proof tonight)", ...ups.flatMap((u) => [`- ${u.title} (first sent ${u.firstDate}): ${u.complaints.length} new proof${u.complaints.length === 1 ? "" : "s"}`,
+    ...u.complaints.slice(0, 2).map((c) => `   ${c.kind === "job" ? "[Job ad] " : ""}"${short(c.quote, 140)}" (${c.sources[0]?.url})`)]), ""] : [];
   const proofText = (c) => `${c.kind === "job" ? "[Job ad] " : ""}"${short(c.quote, 160)}" — ${who(c.who)} (${c.sources[0]?.url})`;
   const text = [`Night Agent — ${day}`, "", "OVERNIGHT", did, ...(r.sourcesNote || []), "",
     top.length ? "TOP IDEAS" : "No new ideas with proof tonight.",
@@ -28,7 +32,7 @@ export function buildEmail(r, night, st, site) {
       ...(p.competitors[0] ? [`   Competitor: ${p.competitors[0].name}${p.competitors[0].price ? `, ${p.competitors[0].price}` : ""}`] : []), `   Build it: ${site}/idea/${encodeURIComponent(`${r.id}-${p.key}`)}`, ""]),
     leads.length ? `LEADS (${leads.length}, public posts and job ads — not contacted)` : "No leads tonight.",
     ...leads.map((l, i) => `${i + 1}. ${l.kind === "job" ? "[Job ad] " : ""}${who(l.who)}: "${short(l.quote, 120)}" ${l.sources[0]?.url}${l.idea ? ` [${l.idea}]` : ""}`), "",
-    ...jobsText, `Full report and dashboard: ${site}/night/${r.id}`].join("\n");
+    ...jobsText, ...updText, `Full report and dashboard: ${site}/night/${r.id}`].join("\n");
   const a = (s) => `<a href="${esc(s.url)}" style="color:#1f4e8c">${esc(s.domain || "source")}</a>`;
   const html = `<div style="font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#1c1d1a;max-width:640px">
 <h2 style="margin:0 0 4px">Night Agent — ${esc(day)}</h2>
@@ -41,6 +45,7 @@ ${p.competitors[0] ? `<div style="margin-top:6px;color:#53584f">Competitor: ${es
 <h3 style="margin:16px 0 6px">Leads${leads.length ? ` (${leads.length})` : ""}</h3>
 ${leads.length ? `<p style="margin:0 0 6px;color:#53584f;font-size:13px">Public posts and job ads showing this need. Not contacted.</p><ol style="padding-left:20px;margin:0">${leads.map((l) => `<li style="margin-bottom:6px">${l.kind === "job" ? "<b>Job ad</b> · " : ""}${esc(who(l.who))}: “${esc(short(l.quote, 120))}” · ${l.sources.slice(0, 1).map(a).join("")}${l.idea ? ` <span style="color:#53584f">(${esc(l.idea)})</span>` : ""}</li>`).join("")}</ol>` : `<p>No leads tonight.</p>`}
 ${jobHead ? `<h3 style="margin:16px 0 6px">${r.allJobAds ? `Job ads found (${ads.length}, ${qn} qualified)` : "Job ads"}</h3><p style="margin:0 0 6px;color:#53584f;font-size:13px">${r.allJobAds ? `Every job ad found this night, saved for good.${tot ? ` ${tot.total} saved in all, ${tot.qualified} qualified.` : ""} Qualified = a word-for-word quote in the ad was kept as proof of paid repetitive work.` : esc(jobHead)}</p>${ads.length ? `<ol style="padding-left:20px;margin:0">${ads.map((x) => `<li style="margin-bottom:4px">${x.qualified ? `<b style="color:#17633f">✓ Qualified</b>` : `<span style="color:#8a8f86">Not qualified</span>`} · <b>${esc(x.company || "Company not given")}</b> — ${esc(x.role || "role not given")} · <a href="${esc(x.url)}" style="color:#1f4e8c">${esc(x.source || "job ad")}</a> · found ${esc(x.firstFound)}</li>`).join("")}</ol>` : r.allJobAds ? "<p>No job ads this night.</p>" : ""}` : ""}
+${ups.length ? `<h3 style="margin:16px 0 6px">Update on past ideas</h3><p style="margin:0 0 6px;color:#53584f;font-size:13px">Already sent on an earlier report; new proof tonight. Not new ideas.</p><ul style="padding-left:20px;margin:0">${ups.map((u) => `<li style="margin-bottom:6px"><b>${esc(u.title)}</b> <span style="color:#53584f">(first sent ${esc(u.firstDate)}, ${u.complaints.length} new proof${u.complaints.length === 1 ? "" : "s"})</span>${u.complaints.slice(0, 2).map((c) => `<div>“${esc(short(c.quote, 140))}” · ${c.sources.slice(0, 1).map(a).join("")}</div>`).join("")}</li>`).join("")}</ul>` : ""}
 <p style="margin-top:18px"><a href="${esc(site)}/night/${esc(r.id)}" style="color:#1f4e8c;font-weight:700">Open the full report and your dashboard</a></p>
 <p style="color:#8a8f86;font-size:12px">Every quote is copied word for word from the public page it links to. Nothing without proof is included.${(r.sourcesNote || []).map((n) => ` ${esc(n)}`).join("")}</p></div>`;
   return { subject, text, html };

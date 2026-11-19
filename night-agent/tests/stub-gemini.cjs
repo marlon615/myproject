@@ -7,7 +7,7 @@
  */
 const http = require("http");
 const PORT = Number(process.argv[2] || 8931);
-let calls = [], limitAfter = Infinity, retired = new Set(), zeroQuota = new Set();
+let calls = [], extra = false, limitAfter = Infinity, retired = new Set(), zeroQuota = new Set();
 const MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"];
 
 const HN = [
@@ -15,6 +15,11 @@ const HN = [
   { objectID: "1002", _tags: ["comment"], story_title: "Ask HN: Tools for small trades businesses?", comment_text: "Is there a tool that turns handwritten work orders into invoices? I&#x27;d happily pay $50 a month, retyping them every night is killing me." },
   { objectID: "1003", _tags: ["comment"], story_title: "Field service software", comment_text: "I hate my scheduling software, it double books my techs every single week and support never answers." },
   { objectID: "1004", _tags: ["comment"], story_title: "Off topic", comment_text: "Nice weather today, nothing about software here at all, just chatting with friends." },
+];
+// "extra" mode: a new post about an old idea (HVAC texts), and a post about a brand-new problem.
+const HN_EXTRA = [
+  { objectID: "1005", _tags: ["comment"], story_title: "Ask HN: Small business pain points", comment_text: "My customers keep calling to ask when my tech is on his way, an automatic text would save me an hour a day." },
+  { objectID: "1006", _tags: ["comment"], story_title: "Ask HN: Food truck software?", comment_text: "Does anyone know an app to track propane refills for my three food trucks? We run out mid-shift every month." },
 ];
 const HN_TOOLS = [
   { objectID: "2001", _tags: ["comment"], story_title: "Reminder texts", comment_text: "We tried Jobber for this, it costs $69/month and the reminders can&#x27;t be timed to the tech&#x27;s arrival." },
@@ -59,6 +64,8 @@ function analyze(prompt) {
     else if (/Type phone and email orders/.test(d.text)) items.push({ docId: d.id, quote: "Type phone and email orders from restaurants into our order system and confirm delivery dates by phone." });
     else if (/Answer inbound calls/.test(d.text)) items.push({ docId: d.id, quote: "Answer inbound calls from customers and book their service appointments in our calendar." });
     else if (/Enter vendor invoices/.test(d.text)) items.push({ docId: d.id, quote: "Enter vendor invoices into QuickBooks and match them against purchase orders every day." });
+    else if (/when my tech is on his way/.test(d.text)) items.push({ docId: d.id, quote: "My customers keep calling to ask when my tech is on his way, an automatic text would save me an hour a day." });
+    else if (/propane refills/.test(d.text)) items.push({ docId: d.id, quote: "Does anyone know an app to track propane refills for my three food trucks? We run out mid-shift every month." });
     else if (/Nice weather/.test(d.text)) items.push({ docId: d.id, quote: "I would pay anything for an AI receptionist that answers every call for my salon." }); // invented → must be dropped
   }
   return { items };
@@ -66,8 +73,11 @@ function analyze(prompt) {
 function group(prompt) {
   const ids = [...prompt.matchAll(/\[(c\d+)\] (?!JOB AD)/g)].map((m) => m[1]), jobIds = [...prompt.matchAll(/\[(c\d+)\] JOB AD/g)].map((m) => m[1]);
   const past = /Problems already reported[\s\S]*?\n- ([^\n]+)/.exec(prompt)?.[1] || "";
+  const idOf = (re) => [...prompt.matchAll(/\[(c\d+)\][^\n]*/g)].find((m) => re.test(m[0]))?.[1];
+  const onWay = idOf(/on his way/), propane = idOf(/propane/);
   return { problems: [
-    { title: "Automatic 'tech is on the way' texts for HVAC customers", summary: "HVAC owners want customers texted automatically before the tech arrives.", who: "Owners of small HVAC companies", complaintIds: ids.slice(0, 1), people: 7, pays: 8, anger: 6, buildSpeed: 9, why: "Owner already pays $300 a month for ServiceTitan and still lacks it." },
+    ...(propane ? [{ title: "Propane refill tracking for food trucks", summary: "Food truck owners run out of propane mid-shift.", who: "Food truck owners", complaintIds: [propane], people: 5, pays: 6, anger: 7, buildSpeed: 9, why: "Runs out every month." }] : []),
+    { title: onWay ? "Text customers automatically when the HVAC tech is close" : "Automatic 'tech is on the way' texts for HVAC customers", summary: "HVAC owners want customers texted automatically before the tech arrives.", who: "Owners of small HVAC companies", complaintIds: onWay ? [ids[0], onWay] : ids.slice(0, 1), people: 7, pays: 8, anger: 6, buildSpeed: 9, why: "Owner already pays $300 a month for ServiceTitan and still lacks it." },
     ...(jobIds.length ? [{ title: "Automatic invoice follow-up and order entry for distributors", summary: "Distributors pay staff to chase unpaid invoices and type orders by hand.", who: "Food and drink distributors", complaintIds: jobIds, people: 6, pays: 9, anger: 5, buildSpeed: 8, why: "Companies pay salaries for this work (job ads)." }] : []),
     { title: "Handwritten work orders into invoices", summary: "Trades businesses retype paper work orders into invoices every night.", who: "Small trades businesses", complaintIds: ids.slice(1, 2), people: 6, pays: 7, anger: 8, buildSpeed: 7, why: "Would pay $50/month; retyping every night." },
     { title: "Scheduling software double-booking technicians", summary: "Double bookings every week.", who: "Field service companies", complaintIds: ids.slice(2, 3), people: 5, pays: 6, anger: 9, buildSpeed: 4, why: "Weekly double bookings, no support.", repeatOf: past.includes("double") ? past : "" },
@@ -91,12 +101,12 @@ http.createServer((rq, rs) => {
   rq.on("data", (d) => (data += d));
   rq.on("end", () => {
     const send = (code, obj, type = "application/json") => { rs.writeHead(code, { "content-type": type }); rs.end(typeof obj === "string" ? obj : JSON.stringify(obj)); };
-    if (u.pathname === "/control") { const b = JSON.parse(data || "{}"); if ("limitAfter" in b) limitAfter = b.limitAfter ?? Infinity; if (b.retired) retired = new Set(b.retired); if (b.zeroQuota) zeroQuota = new Set(b.zeroQuota); if (b.reset) calls = []; if ("museRobots" in b) museRobots = b.museRobots; return send(200, { ok: true }); }
+    if (u.pathname === "/control") { const b = JSON.parse(data || "{}"); if ("limitAfter" in b) limitAfter = b.limitAfter ?? Infinity; if (b.retired) retired = new Set(b.retired); if (b.zeroQuota) zeroQuota = new Set(b.zeroQuota); if (b.reset) calls = []; if ("extra" in b) extra = b.extra; if ("museRobots" in b) museRobots = b.museRobots; return send(200, { ok: true }); }
     if (u.pathname === "/calls") return send(200, calls);
     calls.push({ path: u.pathname, query: u.search });
     if (u.pathname === "/robots.txt") return send(200, /^127\.0\.0\.1/.test(rq.headers.host || "") ? museRobots : "User-agent: *\nDisallow: /\n", "text/plain"); // 127.0.0.1 = The Muse; localhost = reddit.com (disallows all today)
     if (u.pathname === "/search.json") return send(200, { data: { children: [] } });
-    if (u.pathname === "/api/v1/search_by_date") { const q = u.searchParams.get("query") || ""; return send(200, { hits: / software$/.test(q) && !q.includes('"') ? HN_TOOLS : HN }); }
+    if (u.pathname === "/api/v1/search_by_date") { const q = u.searchParams.get("query") || ""; return send(200, { hits: / software$/.test(q) && !q.includes('"') ? HN_TOOLS : extra ? [...HN, ...HN_EXTRA] : HN }); }
     if (u.pathname === "/api/remote-jobs") return send(200, REMOTIVE);
     if (u.pathname === "/api/public/jobs") return send(200, MUSE);
     if (u.pathname === "/jobs/api/search" || u.pathname === "/jobs/api") return send(200, HIMALAYAS);

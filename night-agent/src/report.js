@@ -43,6 +43,7 @@ export function reportPage(r, { notice = "" } = {}) {
     ${problems || (r.grouped ? `<div class="card"><p>No new problems with proof tonight.</p></div>` : "")}${loose}
     ${leadsCard(r.leads || [], "Leads from this night")}
     ${jobAdsCard(r)}
+    ${updatesCard(r)}
     <details class="card"><summary>Night log</summary><ul class="muted">${r.log.map((l) => `<li>${esc(jamaicaTime(l.at))}: ${esc(l.msg)}</li>`).join("")}</ul></details>`);
 }
 
@@ -73,6 +74,14 @@ export function authPage(mode, err = "") {
 const QUALIFIED_NOTE = "Qualified = a word-for-word quote in the ad shows a company paying for repetitive work software could do, so the Scout kept it as proof.";
 const jobLine = (a, night) => `<li style="margin-bottom:8px">${a.qualified ? `<span class="tag ok">✓ Qualified</span>` : `<span class="tag nq">Not qualified</span>`} <b>${esc(a.company || "Company not given")}</b> — ${esc(a.role || "role not given")}
   <div class="src"><a href="${esc(a.url)}" rel="noopener noreferrer nofollow" target="_blank">${esc(a.source || "job ad")}</a>${a.pay ? ` · ${esc(a.pay)}` : ""} · found ${esc(a.firstFound)}${night && a.firstRun !== night ? " (first found then; seen again this night)" : ""}${a.timesSeen > 1 ? ` · seen on ${a.timesSeen} runs` : ""}</div></li>`;
+
+/** Ideas already reported on an earlier night that got new proof tonight (never shown as new ideas). */
+function updatesCard(r) {
+  if (!r.updates?.length) return "";
+  return `<section class="card"><h2>Update on past ideas</h2><p class="muted">Ideas already sent on an earlier report, with new proof found tonight. They're never listed again as new ideas.</p>
+    ${r.updates.map((u) => `<div style="margin:10px 0"><b>${esc(u.title)}</b> <span class="muted">· first sent ${esc(u.firstDate)} · ${u.complaints.length} new proof${u.complaints.length === 1 ? "" : "s"}</span>
+      ${u.complaints.map((c) => `<blockquote>“${esc(c.quote)}”<div class="muted">— ${esc(who(c.who))}</div><div class="src">${c.kind === "job" ? `<span class="tag warn">Job ad</span> ` : "Proof: "}${c.sources.map(link).join(" · ")}</div></blockquote>`).join("")}</div>`).join("")}</section>`;
+}
 
 /** Every job ad a night found, qualified or not (from the permanent database). */
 function jobAdsCard(r) {

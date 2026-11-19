@@ -22,14 +22,16 @@ const SOURCE_VARS = { HN_BASE: SB, REMOTIVE_BASE: SB, WWR_BASE: SB, REDDIT_BASE:
 
 /** The job-ad database for part A: the real SQL (src/jobstore.js) on Node's SQLite, called like the Durable Object
  *  (arguments copied, as RPC does). failing(true) makes every call throw, like an unreachable database. */
-function memoryJobs(JobAdsStore) {
+function memoryJobs(JobAdsStore, IdeasStore) {
   const { DatabaseSync } = require("node:sqlite");
   const db = new DatabaseSync(":memory:");
   const sql = { exec(q, ...b) { const rows = db.prepare(q).all(...b); return { toArray: () => rows, one: () => rows[0] }; } };
-  const store = new JobAdsStore(sql, (fn) => { db.exec("BEGIN"); try { const r = fn(); db.exec("COMMIT"); return r; } catch (e) { db.exec("ROLLBACK"); throw e; } });
-  let fail = false; const call = (name) => async (...a) => { if (fail) throw new Error("database unreachable (test)"); return structuredClone(store[name](...structuredClone(a))); };
-  const stub = { save: call("save"), qualify: call("qualify"), stats: call("stats"), list: call("list"), forRun: call("forRun") };
-  return { db, store, failing(v) { fail = v; }, idFromName: () => "all", get: () => stub };
+  const tx = (fn) => { db.exec("BEGIN"); try { const r = fn(); db.exec("COMMIT"); return r; } catch (e) { db.exec("ROLLBACK"); throw e; } };
+  const store = new JobAdsStore(sql, tx), ideas = new IdeasStore(sql, tx);
+  let fail = false; const call = (o, name) => async (...a) => { if (fail) throw new Error("database unreachable (test)"); return structuredClone(o[name](...structuredClone(a)) ?? null); };
+  const stub = { save: call(store, "save"), qualify: call(store, "qualify"), stats: call(store, "stats"), list: call(store, "list"), forRun: call(store, "forRun"),
+    ideasRecord: call(ideas, "record"), ideasUpdate: call(ideas, "update"), ideasList: call(ideas, "list"), ideasCount: call(ideas, "count"), ideasFlag: call(ideas, "getFlag"), ideasSetFlag: call(ideas, "setFlag") };
+  return { db, store, ideas, failing(v) { fail = v; }, idFromName: () => "all", get: () => stub };
 }
 
 function memoryKV() {
@@ -43,8 +45,9 @@ function memoryKV() {
   fs.mkdirSync(OUT, { recursive: true });
   const stub = spawn(process.execPath, [path.join(__dirname, "stub-gemini.cjs"), String(STUB)], { stdio: ["ignore", "pipe", "inherit"] });
   await new Promise((ok) => stub.stdout.once("data", ok));
-  const P = await import("../src/pipeline.js"), { JobAdsStore } = await import("../src/jobstore.js");
-  const JOBS = memoryJobs(JobAdsStore);
+  const P = await import("../src/pipeline.js"), { JobAdsStore } = await import("../src/jobstore.js"), { IdeasStore } = await import("../src/ideastore.js");
+  const newDb = () => memoryJobs(JobAdsStore, IdeasStore);
+  const JOBS = newDb();
   // Every address the agent asks for, and the CPU spent inside fetch (Cloudflare does that natively; it doesn't count).
   const fetched = []; const realFetch = globalThis.fetch; let inFetch = 0;
   globalThis.fetch = async (u, o) => { fetched.push(String(u?.url || u)); const c0 = process.cpuUsage(); const res = await realFetch(u, o); const buf = await res.arrayBuffer(); const c = process.cpuUsage(c0); inFetch += (c.user + c.system) / 1000; return new Response(buf, { status: res.status, headers: res.headers }); };
@@ -63,7 +66,7 @@ function memoryKV() {
     return { st, steps, report: await e.SCOUT.get(`report:${st.id}`, "json") };
   }
 
-  await night("2026-11-10", { e: { ...env, SCOUT: memoryKV(), JOBS: memoryJobs(JobAdsStore) } }); // warm-up night (first run compiles the code), not checked
+  await night("2026-11-10", { e: { ...env, SCOUT: memoryKV(), JOBS: newDb() } }); // warm-up night (first run compiles the code), not checked
   await ctl({ reset: true }); fetched.length = 0;
   // ── A1. A normal night ──────────────────────────────────────────────────────────────────────────────
   let n = await night("2026-11-20");
@@ -121,7 +124,7 @@ function memoryKV() {
   check(r.allJobAds?.length === 5 && r.allJobAds.filter((x) => x.qualified).length === 4 && r.jobAdsTotals?.total === 5, "the morning report lists every job ad the night found, qualified or not", `${r.allJobAds?.length} ads`);
 
   // Email and build prompt
-  const E = await import("../src/email.js"), PR = await import("../src/prompt.js");
+  const E = await import("../src/email.js"), PR = await import("../src/prompt.js"), REP = await import("../src/report.js");
   const mail = E.buildEmail(r, r.id, null, "https://night-agent.example");
   check(/^Night Agent: 3 ideas for Friday, November 20, 2026$/.test(mail.subject) && /OVERNIGHT\n11 public texts read \(Hacker News, job boards\) · 7 pieces of evidence with proof \(4 job ads\) · 4 new ideas · 3 Gemini calls/.test(mail.text), "the email says what the agent did overnight", mail.text.split("\n")[3]);
   check(/1\. Automatic 'tech is on the way' texts for HVAC customers — 7\.5\/10/.test(mail.text) && mail.text.includes("https://news.ycombinator.com/item?id=1001") && /Build it: https:\/\/night-agent\.example\/idea\/2026-11-20-p1/.test(mail.text) && /LEADS \(7, public posts and job ads — not contacted\)/.test(mail.text) && /Reddit's site rules/.test(mail.text) && /Reddit&#39;s site rules/.test(mail.html), "…the top 3 ideas with proof links, the leads, and why Reddit was skipped");
@@ -139,7 +142,7 @@ function memoryKV() {
   check(n.report.allJobAds?.length === 5 && n.report.allJobAds.every((x) => x.firstFound === "2026-11-20" && x.firstRun === "2026-11-20"), "night 2's report still lists the 5 ads it found (already read, so not analysed again), with their first-found date");
 
   // ── A3. Limits and models ──────────────────────────────────────────────────────────────────────────
-  const fresh = () => { kv = memoryKV(); return { ...env, SCOUT: kv }; };
+  const fresh = () => { kv = memoryKV(); return { ...env, SCOUT: kv, JOBS: newDb() }; };
   await ctl({ reset: true, limitAfter: 1 });
   n = await night("2026-11-22", { e: fresh() });
   check(n.report.status === "stopped" && /free daily limit was reached/.test(n.report.stopped.message) && (await callsSoFar()).filter((c) => c.model).length === 2 && n.report.complaints.length === 7 && !n.report.grouped, "at Gemini's limit (429) the night stops (no more calls) and the report keeps what was found, marked not grouped");
@@ -153,16 +156,17 @@ function memoryKV() {
   n = await night("2026-11-25", { e: { ...fresh(), GEMINI_API_KEY: "" } });
   check(n.report.status === "stopped" && /no working Gemini API key/.test(n.report.stopped.message), "with no Gemini key, the night stops and says to add GEMINI_API_KEY");
   // The database unreachable for a whole run: the ads are kept (KV "jobs-retry") and saved on the next run.
-  const J2 = memoryJobs(JobAdsStore); J2.failing(true); kv = memoryKV();
+  const J2 = newDb(); J2.failing(true); kv = memoryKV();
   n = await night("2026-11-27", { e: { ...env, SCOUT: kv, JOBS: J2 } });
   const retry = await kv.get("jobs-retry", "json");
   check(J2.store.stats().total === 0 && retry?.jobs?.length === 5 && retry.quals.length === 4 && /couldn't be read/.test(n.report.allJobAdsError || "") && n.report.log.some((l) => /couldn't be saved to the database yet/.test(l.msg)), "if the database can't be reached, no job ad is dropped: all 5 are kept for the next run, and the report says so", `${retry?.jobs?.length} kept`);
+  check(n.report.problems.length === 0 && !n.report.grouped && n.report.complaints.length === 7 && n.report.log.some((l) => /memory of past ideas couldn't be read/.test(l.msg)), "if the memory of past ideas can't be read, no ideas are sent that night (so nothing old is sent as new), and the evidence is still in the report");
   J2.failing(false);
   n = await night("2026-11-28", { e: { ...env, SCOUT: kv, JOBS: J2 } });
   const saved3 = J2.store.list({ limit: 500 }).rows;
   check(matchesExpected(saved3, "2026-11-27") && (await kv.get("jobs-retry", "json")).jobs.length === 0, "…and the next run saves them all, with the date they were really found and their qualified marks", saved3.map((x) => x.firstFound).join(", "));
   // Unreachable for part of a night only: saved in a later step of the same night.
-  const J3 = memoryJobs(JobAdsStore); J3.failing(true); kv = memoryKV();
+  const J3 = newDb(); J3.failing(true); kv = memoryKV();
   const e3 = { ...env, SCOUT: kv, JOBS: J3 }; let st3;
   for (let k = 0; k < 7; k++) st3 = await P.runStep(e3, { now: Date.parse("2026-11-29T06:00:00Z") + k * 300000 });
   const pendingMid = (await kv.get("night:2026-11-29", "json")).jobsPending.length;
@@ -170,6 +174,34 @@ function memoryKV() {
   check(pendingMid === 5 && matchesExpected(J3.store.list({ limit: 500 }).rows, "2026-11-29"), "if the database is down for a few steps, the ads wait in the night's state and are saved when it's back", `${pendingMid} waiting, then ${J3.store.stats().total} saved`);
   const srcText = fs.readdirSync(path.join(ROOT, "src")).map((f) => fs.readFileSync(path.join(ROOT, "src", f), "utf8")).join("\n");
   check(!/DELETE\s+FROM|DROP\s+TABLE|TRUNCATE|storage\.delete|deleteAll/i.test(srcText), "there is no code that deletes job ads (no DELETE, DROP or storage delete anywhere)");
+  // ── A5. Never repeat an idea that was already sent ─────────────────────────────────────────────────
+  const D = newDb(); kv = memoryKV();
+  let t; for (let k = 0; k < 48; k++) { t = await P.runStep({ ...env, SCOUT: kv, JOBS: D }, { now: Date.parse("2026-12-03T15:00:00Z") + k * 1000, manual: true }); if (t.status !== "running") break; }
+  const testRep = await kv.get("report:2026-12-03-test", "json");
+  check(testRep.problems.length === 4 && D.ideas.count() === 4, "a test run's ideas are remembered as sent, like a real night's", `${D.ideas.count()} remembered`);
+  kv = memoryKV(); n = await night("2026-12-04", { e: { ...env, SCOUT: kv, JOBS: D } });
+  check(n.report.problems.length === 0 && n.report.updates.length === 0 && D.ideas.count() === 4, "the next night, the same ideas are not sent again (not as new ideas, and no 'update' without new proof)", n.report.problems.map((p) => p.title).join(" | "));
+  await ctl({ reset: true, extra: true });
+  kv = memoryKV(); n = await night("2026-12-05", { e: { ...env, SCOUT: kv, JOBS: D } });
+  const up = n.report.updates || [];
+  check(n.report.problems.length === 1 && n.report.problems[0].title === "Propane refill tracking for food trucks", "top ideas are brand new: only the never-sent idea is a new idea", n.report.problems.map((p) => p.title).join(" | "));
+  check(up.length === 1 && up[0].title === "Automatic 'tech is on the way' texts for HVAC customers" && up[0].firstDate === "2026-12-03" && up[0].complaints.length === 1 && up[0].complaints[0].sources[0].url === "https://news.ycombinator.com/item?id=1005", "an old idea with new proof (even reworded as 'Text customers automatically when the HVAC tech is close') becomes an 'update on a past idea', with only the new proof", JSON.stringify(up.map((u) => [u.title, u.firstDate, u.complaints.length])));
+  check(D.ideas.count() === 5 && D.ideas.list().find((i) => i.title.startsWith("Automatic 'tech")).updates === 1, "the memory now has 5 ideas, and the old one is marked as updated");
+  const m5 = E.buildEmail(n.report, n.report.id, null, "https://night-agent.example");
+  const iTop = m5.text.indexOf("TOP IDEAS"), iUpd = m5.text.indexOf("UPDATE ON PAST IDEAS"), iLeads = m5.text.indexOf("LEADS"), iJobs = m5.text.indexOf("JOB ADS FOUND");
+  check(iUpd > iLeads && iUpd > iJobs && iUpd > iTop && !m5.text.slice(iTop, iLeads).includes("tech is on the way") && /- Automatic 'tech is on the way' texts for HVAC customers \(first sent 2026-12-03\): 1 new proof/.test(m5.text) && /Update on past ideas<\/h3>/.test(m5.html), "the email keeps the old idea out of the top ideas and puts it in a short 'Update on past ideas' section at the bottom");
+  check(/Update on past ideas<\/h2>[\s\S]*first sent 2026-12-03/.test(REP.reportPage(n.report)), "the report page has the same 'Update on past ideas' section");
+  kv = memoryKV(); n = await night("2026-12-06", { e: { ...env, SCOUT: kv, JOBS: D } });
+  check(n.report.problems.length === 0 && n.report.updates.length === 0, "a night later, neither the new idea nor the update is sent again");
+  await ctl({ reset: true, extra: false });
+  // Reports sent before this memory existed are loaded into it first (here: the idea that kept repeating).
+  const D2 = newDb(); kv = memoryKV();
+  await kv.put("seen", JSON.stringify({ nights: 1, problems: [{ title: "Manual Administrative and Data Entry Outsourcing", night: "2026-11-19" }], queries: [], docs: [] }));
+  await kv.put("index", JSON.stringify([{ id: "2026-11-18-test" }]));
+  await kv.put("report:2026-11-18-test", JSON.stringify({ id: "2026-11-18-test", problems: [{ title: "Automatic 'tech is on the way' texts for HVAC customers", complaints: [{ sources: [{ url: "https://news.ycombinator.com/item?id=1001" }] }] }] }));
+  n = await night("2026-12-07", { e: { ...env, SCOUT: kv, JOBS: D2 } });
+  check(!n.report.problems.some((p) => /tech is on the way/.test(p.title)) && n.report.problems.length === 3 && D2.ideas.list().some((i) => i.title === "Manual Administrative and Data Entry Outsourcing" && i.firstDate === "2026-11-19"), "ideas from reports sent before (including test runs) are loaded into the memory, so they're never sent again", n.report.problems.map((p) => p.title).join(" | "));
+
   // The Muse's rules say no → it's skipped and the night log says why.
   await ctl({ reset: true, museRobots: "User-agent: *\nDisallow: /api/\n" });
   n = await night("2026-11-30", { e: fresh() });

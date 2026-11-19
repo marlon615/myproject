@@ -14,7 +14,7 @@ export const prettyNight = (id) => new Date(`${id}T12:00:00Z`).toLocaleDateStrin
 
 /** Words that matter in a title, for "is this the same idea?" checks. */
 const STOP = new Set(["with", "that", "their", "from", "this", "have", "they", "into", "about", "software", "tool", "tools", "app", "apps", "small", "businesses", "business", "owners"]);
-export const keyWords = (s) => new Set(String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 3 && !STOP.has(w)).map((w) => w.replace(/(ies|es|s)$/, "")));
+export const keyWords = (s) => new Set(String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 3 && !STOP.has(w)).map((w) => { const x = w.replace(/(ings|ing|ed|ies|es|s)$/, ""); return x.length >= 3 ? x : w; }));
 export function similar(a, b) {
   const x = keyWords(a), y = keyWords(b);
   if (!x.size || !y.size) return 0;

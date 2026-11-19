@@ -17,6 +17,7 @@ import { ask, listModels, GeminiError } from "./gemini.js";
 import { hackerNews, remotive, weWorkRemotely, theMuse, himalayas, reddit } from "./sources.js";
 import { clusterPrompt, clusterSchema } from "./plan.js";
 import { jamaica, similar, getJSON, putJSON, domainOf } from "./util.js";
+import { ideaKey } from "./ideastore.js";
 
 const FETCH_PER_STEP = 3, BATCH = 30, STEP_MS = 3 * 60 * 1000, TOP = 5;
 const DEFAULT_MODELS = "gemini-flash-lite-latest,gemini-flash-latest,gemini-2.5-flash-lite,gemini-2.5-flash";
@@ -115,8 +116,20 @@ export async function runStep(env, { now = Date.now(), manual = false } = {}) {
     if (!st.stopped && st.analyzeQueue && !st.analyzeQueue.length && !st.problems && calls < 1 && timeLeft()) {
       if (!st.complaints.length) { st.problems = []; st.compDone = true; note(st, "No complaints or job ads with exact quotes were found tonight."); }
       else {
-        const r = await gem(clusterPrompt(st.complaints.map(({ id, quote, who, where, pays, kind }) => ({ id, quote, who, where, pays, kind })), (past.problems || []).slice(-150).map((p) => p.title)), { schema: clusterSchema, temperature: 0.1 });
-        if (r) { st.problems = cleanProblems(st, r.text, past); note(st, `Grouped into ${st.problems.length} new problem${st.problems.length === 1 ? "" : "s"}.`); if (!st.problems.length) st.compDone = true; }
+        let memory = null;
+        try { memory = await pastIdeas(env, kv, past); }
+        catch (e) {
+          st.problems = []; st.updates = []; st.compDone = true; st.memoryError = String(e?.message || e).slice(0, 120);
+          note(st, `The memory of past ideas couldn't be read (${st.memoryError}): ideas weren't grouped tonight, so nothing already sent is sent again. The evidence is in the report.`);
+        }
+        if (memory) {
+          const r = await gem(clusterPrompt(st.complaints.map(({ id, quote, who, where, pays, kind }) => ({ id, quote, who, where, pays, kind })), memory.slice(-300).map((m) => m.title)), { schema: clusterSchema, temperature: 0.1 });
+          if (r) {
+            const g = cleanProblems(st, r.text, memory); st.problems = g.problems; st.updates = g.updates;
+            note(st, `Grouped into ${st.problems.length} new problem${st.problems.length === 1 ? "" : "s"}${st.updates.length ? ` and ${st.updates.length} update${st.updates.length === 1 ? "" : "s"} on past ideas` : ""} (${memory.length} past idea${memory.length === 1 ? "" : "s"} remembered).`);
+            if (!st.problems.length) st.compDone = true;
+          }
+        }
       }
     }
     // 4. Competitors: fetch posts mentioning tools (no Gemini), then one Gemini call to name them.
@@ -273,21 +286,62 @@ function addCompetitors(st, raw) {
 }
 
 const clamp = (v) => Math.max(1, Math.min(10, Math.round(Number(v) || 1)));
-function cleanProblems(st, text, past) {
-  let data; try { data = JSON.parse(text); } catch { return []; }
-  const ids = new Set(st.complaints.map((c) => c.id)), pastTitles = (past.problems || []).map((p) => p.title), used = new Set();
-  const out = [];
+/** Turns Gemini's groups into tonight's NEW ideas. Anything matching an idea already reported (on any earlier report,
+ *  real or test) is never shown as new: if it brings new proof (a page not shown for that idea before), it becomes an
+ *  "update on a past idea"; otherwise it's left out. Same idea = Gemini says so (repeatOf), or the titles share most of
+ *  their key words, or the new proof links to a page already used as proof for that idea. */
+function cleanProblems(st, text, memory) {
+  let data; try { data = JSON.parse(text); } catch { return { problems: [], updates: [] }; }
+  const byId = new Map(st.complaints.map((c) => [c.id, c])), used = new Set(), out = [], upd = new Map();
+  const best = (t) => { let b = null, sc = 0; for (const m of memory) { const x = ideaKey(m.title) === ideaKey(t) ? 1 : similar(m.title, t); if (x > sc) { sc = x; b = m; } } return [b, sc]; };
   for (const p of data.problems || []) {
-    const cids = [...new Set((p.complaintIds || []).filter((x) => ids.has(x) && !used.has(x)))];
+    const cids = [...new Set((p.complaintIds || []).filter((x) => byId.has(x) && !used.has(x)))];
     if (!cids.length || !p.title) continue; // a problem needs real complaints behind it
-    if (p.repeatOf && String(p.repeatOf).trim()) continue; // shown on an earlier night
-    if (pastTitles.some((t) => similar(t, p.title) >= 0.5) || out.some((o) => similar(o.title, p.title) >= 0.6)) continue;
+    const srcs = cids.flatMap((id) => byId.get(id).sources);
+    let match = null;
+    const rep = String(p.repeatOf || "").trim();
+    if (rep) { const [m1, s1] = best(rep), [m2, s2] = best(p.title); match = s1 >= 0.3 ? m1 : s2 >= 0.2 ? m2 : "unknown"; }
+    if (!match) { const [m, sc] = best(p.title); if (sc >= 0.5) match = m; }
+    if (!match) match = memory.find((m) => m.sources.some((u) => srcs.includes(u))) || null;
+    if (!match && out.some((o) => similar(o.title, p.title) >= 0.6)) continue;
     cids.forEach((x) => used.add(x));
+    if (match === "unknown") continue; // Gemini says it was reported before → never shown as new
+    if (match) {
+      const fresh = cids.filter((id) => !byId.get(id).sources.some((u) => match.sources.includes(u)));
+      if (!fresh.length) continue; // nothing new to say about it
+      const u = upd.get(match.key) || { key: match.key, title: match.title, firstDate: match.firstDate, complaintIds: [] };
+      for (const x of fresh) if (!u.complaintIds.includes(x)) u.complaintIds.push(x);
+      upd.set(match.key, u);
+      continue;
+    }
     const s = { people: clamp(p.people), pays: clamp(p.pays), anger: clamp(p.anger), buildSpeed: clamp(p.buildSpeed) };
     out.push({ key: `p${out.length + 1}`, title: String(p.title).slice(0, 140), summary: String(p.summary || "").slice(0, 600), who: String(p.who || "").slice(0, 200), complaintIds: cids, scores: s,
       total: Math.round((s.people * 0.3 + s.pays * 0.3 + s.anger * 0.2 + s.buildSpeed * 0.2) * 10) / 10, why: String(p.why || "").slice(0, 600) });
   }
-  return out.sort((a, b) => b.total - a.total || b.complaintIds.length - a.complaintIds.length);
+  return { problems: out.sort((a, b) => b.total - a.total || b.complaintIds.length - a.complaintIds.length), updates: [...upd.values()].slice(0, 10) };
+}
+
+/** Every idea ever reported, from the permanent database. The first time, the ideas from reports sent before this memory
+ *  existed are loaded in (oldest first). Ideas a run couldn't save (database unreachable) are saved first. */
+async function pastIdeas(env, kv, past) {
+  const db = jobsDb(env);
+  if (!db) return (past.problems || []).map((p) => ({ key: ideaKey(p.title), title: p.title, firstDate: String(p.night || "").slice(0, 10), sources: [] }));
+  const retry = await getJSON(kv, "ideas-retry", []);
+  if (retry.length) {
+    for (const x of retry) { if (x.ideas?.length) await db.ideasRecord(x.ideas); if (x.updates?.length) await db.ideasUpdate(x.updates); }
+    await putJSON(kv, "ideas-retry", []);
+  }
+  if (!(await db.ideasFlag("seeded"))) {
+    const seed = (past.problems || []).map((p) => ({ title: p.title, run: p.night, date: String(p.night || "").slice(0, 10), sources: [] }));
+    for (const x of await getJSON(kv, "index", [])) {
+      const r = await getJSON(kv, `report:${x.id}`);
+      for (const p of r?.problems || []) seed.push({ title: p.title, run: r.id, date: r.id.slice(0, 10), sources: (p.complaints || []).flatMap((c) => (c.sources || []).map((s) => s.url || s)) });
+    }
+    seed.sort((a, b) => a.date.localeCompare(b.date));
+    await db.ideasRecord(seed);
+    await db.ideasSetFlag("seeded", new Date().toISOString());
+  }
+  return db.ideasList();
 }
 
 // ── Site rules (checked before Reddit) ────────────────────────────────────────────────────────────────
@@ -330,6 +384,13 @@ async function finish(env, st, past, cutShort) {
   st.status = st.stopped ? "stopped" : "done";
   st.finishedAt = new Date().toISOString();
   const report = buildReport(st, cutShort);
+  // Remember every idea this report sends (real or test run) and every update, so no idea is ever sent as new again.
+  const date = st.id.slice(0, 10), urlsOf = (cs) => cs.flatMap((c) => c.sources.map((s) => s.url));
+  const sent = { ideas: report.problems.map((p) => ({ title: p.title, run: st.id, date, sources: urlsOf(p.complaints) })), updates: report.updates.map((u) => ({ key: u.key, date, sources: urlsOf(u.complaints) })) };
+  if (jobsDb(env) && (sent.ideas.length || sent.updates.length)) {
+    try { if (sent.ideas.length) await jobsDb(env).ideasRecord(sent.ideas); if (sent.updates.length) await jobsDb(env).ideasUpdate(sent.updates); }
+    catch (e) { note(st, `Tonight's ideas couldn't be added to the memory yet (${String(e?.message || e).slice(0, 120)}): kept, and added on the next run.`); await putJSON(kv, "ideas-retry", [...await getJSON(kv, "ideas-retry", []), sent].slice(-200)); report.log = st.log; }
+  }
   // Every job ad this run found (qualified or not), straight from the permanent database, plus the all-time totals.
   const db = jobsDb(env);
   if (db) {
@@ -380,15 +441,17 @@ export function buildReport(st, cutShort = false) {
     competitors: (st.competitors[p.key] || []).map((c) => ({ ...c, sources: c.sources.map(src), priceSources: c.priceSources.map(src), dislikeSources: c.dislikeSources.map(src) })) }));
   const fetchedTotal = st.fetched.length + Object.keys(st.docs).length;
   return { id: st.id, status: st.status, stopped: st.stopped, cutShort, model: st.model, startedAt: st.startedAt, finishedAt: st.finishedAt, calls: st.calls, steps: st.steps,
-    texts: fetchedTotal, sourcesNote: st.notes, grouped: Boolean(st.problems), jobAds: st.complaints.filter((c) => c.kind === "job").length,
+    texts: fetchedTotal, sourcesNote: st.notes, grouped: Boolean(st.problems) && !st.memoryError,
+    updates: (st.updates || []).map((u) => ({ key: u.key, title: u.title, firstDate: u.firstDate, complaints: u.complaintIds.map((id) => st.complaints.find((c) => c.id === id)).filter(Boolean).map(complaint) })).filter((u) => u.complaints.length), jobAds: st.complaints.filter((c) => c.kind === "job").length,
     complaints: st.complaints.map(complaint), problems, leads: leadsOf(st, problems, complaint), log: st.log };
 }
 
 /** Up to 10 leads: public posts and job ads showing the need (never contacted), best first. */
 function leadsOf(st, problems, complaint) {
   const ideaOf = new Map(); for (const p of problems) for (const id of p.complaintIds) ideaOf.set(id, p);
+  for (const u of st.updates || []) for (const id of u.complaintIds) ideaOf.set(id, { title: `${u.title} (past idea)`, key: null, total: 5 });
   return st.complaints.map((c) => {
     const p = ideaOf.get(c.id), out = complaint(c);
-    return { ...out, idea: p ? p.title : null, ideaId: p ? `${st.id}-${p.key}` : null, rank: (p ? p.total : 3) + (c.pays !== "unknown" ? 2 : 0) };
+    return { ...out, idea: p ? p.title : null, ideaId: p?.key ? `${st.id}-${p.key}` : null, rank: (p ? p.total : 3) + (c.pays !== "unknown" ? 2 : 0) };
   }).sort((a, b) => b.rank - a.rank).slice(0, 10).map(({ rank, ...l }) => l);
 }

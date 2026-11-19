@@ -114,7 +114,7 @@ Score each problem from 1 to 10:
 - anger: how frustrated or urgent they are
 - buildSpeed: how fast one developer using an AI coding assistant (Claude Code) could build a good first version (10 = a weekend, 1 = years)
 Base every score on the complaints given, and say why in one or two sentences ("why"). Do not use outside knowledge to invent demand.
-Problems already reported on earlier nights (don't report these again; if a new problem is the same as one of them, set "repeatOf" to that title):
+Problems already reported on earlier nights. These must never be reported as new. If some complaints belong to one of these problems (the same underlying problem, even if you'd word it differently), still group them, but set "repeatOf" to that exact title:
 ${past.length ? past.map((t) => `- ${t}`).join("\n") : "- (none yet)"}
 
 Complaints and job ads:

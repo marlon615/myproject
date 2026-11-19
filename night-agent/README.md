@@ -44,6 +44,13 @@ grounding for this key): the Scout fetches public sources itself, and Gemini onl
 5. **Report** — usually done by about 3:00 a.m.; at 4:55 a.m. at the latest. Up to 10 leads (public posts and job ads,
    never contacted). Ideas and leads are saved for good.
 
+**Never the same idea twice.** Every idea in every finished report (real nights and test runs) is remembered for good in
+the same SQLite database (ideas reported before this memory existed were loaded in first). An idea is "the same" as one
+already sent when Gemini says so, when the titles share most of their key words, or when its proof links to a page already
+used as proof for it. Such an idea is never listed as a new or top idea again: if it has new proof (a page not shown for it
+before), it appears in a short **Update on past ideas** section at the bottom of the report and the email; otherwise it's
+left out. If the memory can't be read, that night's ideas aren't grouped at all (so nothing old is sent as new).
+
 **Job ads, saved for good.** Every job ad the Scout fetches (company, role, link, source, listed pay, date found) is
 written to a permanent SQLite database (a Cloudflare Durable Object, free plan, binding `JOBS`) in the same step it's
 fetched, before the night's working storage drops any text. Ads already read on an earlier night, or over the night's
