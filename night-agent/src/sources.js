@@ -104,6 +104,43 @@ export async function stackExchange(env, site, { pagesize = 100 } = {}) {
   }).filter((x) => /^https:\/\/[a-z.]*stackexchange\.com\/questions\/\d+/.test(x.url) && x.text.length > 40);
 }
 
+/** Stack Exchange search: questions matching a query on one site, since a date (with their text). */
+export async function stackSearch(env, site, q, { fromdate, pagesize = 50 } = {}) {
+  const u = new URL(`${base(env, "STACK_BASE", "https://api.stackexchange.com")}/2.3/search/advanced`);
+  for (const [k, v] of Object.entries({ order: "desc", sort: "creation", q, site, filter: "withbody", pagesize: String(pagesize), ...(fromdate ? { fromdate: String(Math.floor(fromdate / 1000)) } : {}) })) u.searchParams.set(k, v);
+  const d = await (await get(u.toString())).json();
+  const siteName = { softwarerecs: "Software Recommendations", webapps: "Web Applications", superuser: "Super User" }[site] || site;
+  return (d.items || []).map((x) => {
+    const author = clean(x.owner?.display_name).slice(0, 40);
+    return { kind: "post", src: "Stack Exchange", origin: `Stack Exchange (${siteName})`, label: author ? `${siteName} user ${author}` : `${siteName} question`, url: String(x.link || ""), title: clean(x.title).slice(0, 160), text: trim(clean(`${x.title || ""}. ${x.body || ""}`)) };
+  }).filter((x) => /^https:\/\/([a-z]+\.)?(stackexchange|superuser|stackoverflow)\.com\/questions\/\d+/.test(x.url) && x.text.length > 40);
+}
+
+// ── Apple App Store (public iTunes Search API and the public customer-reviews RSS feed) ─────────────────
+const itunes = (env) => base(env, "ITUNES_BASE", "https://itunes.apple.com");
+/** Business apps for one search term in the US store, most-rated first: [{ id, name, ratings }]. */
+export async function appSearch(env, term, { limit = 25 } = {}) {
+  const u = new URL(`${itunes(env)}/search`);
+  for (const [k, v] of Object.entries({ term, entity: "software", country: "us", limit: String(limit) })) u.searchParams.set(k, v);
+  const d = await (await get(u.toString())).json();
+  return (d.results || []).filter((a) => a.trackId && (a.primaryGenreName === "Business" || (a.genres || []).includes("Business")))
+    .map((a) => ({ id: String(a.trackId).replace(/\D/g, ""), name: clean(a.trackName).slice(0, 80), ratings: Number(a.userRatingCount) || 0 }))
+    .sort((a, b) => b.ratings - a.ratings);
+}
+const label = (v) => (v && typeof v === "object" ? (Array.isArray(v) ? v.map(label).find(Boolean) || "" : String(v.label ?? "")) : String(v ?? ""));
+/** The newest reviews of one app; only 1- and 2-star reviews since `since`. Apple has no page for a single review, so each
+ *  review links to the app's public reviews page, tagged with the review's id. */
+export async function appReviews(env, app, { since } = {}) {
+  const d = await (await get(`${itunes(env)}/us/rss/customerreviews/page=1/id=${encodeURIComponent(app.id)}/sortby=mostrecent/json`)).json();
+  const entries = [].concat(d.feed?.entry || []);
+  return entries.filter((e) => e && e["im:rating"]).map((e) => {
+    const stars = Number(label(e["im:rating"])), when = label(e.updated), id = label(e.id).replace(/\D/g, "").slice(0, 20), who = clean(label(e.author?.name)).slice(0, 40);
+    return { kind: "review", src: "App Store", origin: `App Store: ${app.name}`, app: app.name, appId: app.id, stars, date: when.slice(0, 10),
+      label: `App Store reviewer ${who || "(no name)"} (${stars}★ review of ${app.name}, ${when.slice(0, 10)})`,
+      url: `https://apps.apple.com/us/app/id${app.id}?see-all=reviews#review-${id}`, title: app.name, text: trim(clean(`${label(e.title)}. ${label(e.content)}`)), _t: Date.parse(when) };
+  }).filter((x) => x.stars >= 1 && x.stars <= 2 && /\d/.test(x.url.split("#review-")[1] || "") && x._t && (!since || x._t >= since) && x.text.length > 30).map(({ _t, ...x }) => x);
+}
+
 /** Remote OK public jobs API (the first item is their legal notice). Repetitive-work titles, US/anywhere only. */
 export async function remoteOk(env) {
   const d = await (await get(`${base(env, "REMOTEOK_BASE", "https://remoteok.com")}/api`)).json();

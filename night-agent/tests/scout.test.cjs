@@ -18,7 +18,7 @@ const check = (ok, name, extra = "") => { console.log(`${ok ? "PASS" : "FAIL"}  
 const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 const ctl = (b) => fetch(`${SB}/control`, { method: "POST", body: JSON.stringify(b) });
 const callsSoFar = async () => (await (await fetch(`${SB}/calls`)).json());
-const SOURCE_VARS = { HN_BASE: SB, REMOTIVE_BASE: SB, WWR_BASE: SB, REDDIT_BASE: SB, STACK_BASE: `http://127.0.0.1:${STUB}`, REMOTEOK_BASE: `http://127.0.0.1:${STUB}`, WN_BASE: `http://127.0.0.1:${STUB}`, HIMALAYAS_BASE: SB };
+const SOURCE_VARS = { HN_BASE: SB, REMOTIVE_BASE: SB, WWR_BASE: SB, REDDIT_BASE: SB, STACK_BASE: `http://127.0.0.1:${STUB}`, REMOTEOK_BASE: `http://127.0.0.1:${STUB}`, WN_BASE: `http://127.0.0.1:${STUB}`, ITUNES_BASE: `http://127.0.0.1:${STUB}`, HIMALAYAS_BASE: SB };
 
 /** The job-ad database for part A: the real SQL (src/jobstore.js) on Node's SQLite, called like the Durable Object
  *  (arguments copied, as RPC does). failing(true) makes every call throw, like an unreachable database. */
@@ -71,7 +71,7 @@ function memoryKV() {
   // ── A1. A normal night ──────────────────────────────────────────────────────────────────────────────
   let n = await night("2026-11-20");
   const r = n.report, calls1 = await callsSoFar();
-  check(r && r.status === "done" && n.steps.length <= 24, "a night runs in small steps and leaves a finished morning report", `${n.steps.length} steps`);
+  check(r && r.status === "done" && n.steps.length <= 34, "a night runs in small steps and leaves a finished morning report", `${n.steps.length} steps`);
   check(n.steps.every((s) => s.gemini <= 1) && calls1.filter((c) => c.model).length === 3, "at most 1 Gemini call per step, 3 in the whole night (read, group, competitors)", calls1.filter((c) => c.model).map((c) => c.kind).join(", "));
   check(calls1.filter((c) => c.model).every((c) => !c.search), "Gemini is never asked to search (no grounding): it only reads the fetched text");
   check(calls1.some((c) => c.path === "/api/v1/search_by_date") && calls1.some((c) => c.path === "/api/remote-jobs") && calls1.some((c) => /\.rss$/.test(c.path || "")), "public sources are fetched directly: Hacker News API, Remotive jobs API, We Work Remotely RSS");
@@ -83,6 +83,10 @@ function memoryKV() {
   check(n.report.log.some((l) => /aim: at least 150\): adding 8 more Hacker News searches/.test(l.msg)) && r.sourcesNote.some((x) => /^Only 14 new public texts were found tonight \(aim: at least 150\)/.test(x)), "if a night finds fewer than 150 new texts, it adds more searches, and the report says honestly how many it found");
   const jc = calls1.filter((c) => c.path === "/api/public/jobs" || c.path === "/api/v2/remote-jobs"), hc = calls1.filter((c) => /^\/jobs\/api/.test(c.path || "")), wc = calls1.filter((c) => /\.rss$/.test(c.path || ""));
   check(jc.length === 0 && hc.length === 6 && wc.length === 5 && calls1.some((c) => c.path === "/remote-jobs.rss"), "job feeds: Himalayas 6 searches (was 2), We Work Remotely 5 feeds (was 4); Jobicy and The Muse (both failed from Cloudflare) are not asked", `${jc.length}/${hc.length}/${wc.length}`);
+  const itS = calls1.filter((c) => c.path === "/search"), itR = calls1.filter((c) => /^\/us\/rss\/customerreviews\//.test(c.path || "")), ssq = calls1.filter((c) => c.path === "/2.3/search/advanced");
+  check(itS.length === 8 && itS.map((c) => new URLSearchParams(c.query).get("term")).join() === "invoice,appointment scheduling,CRM,delivery driver,inventory,field service,point of sale,payroll" && itS.every((c) => new URLSearchParams(c.query).get("country") === "us") && itR.length === 30 && itR.every((c) => /sortby=mostrecent\/json$/.test(c.path)) && !itR.some((c) => /id=99\d\d\//.test(c.path)), "App Store: 8 category searches pick the 30 most-rated US business apps (games left out), and each one's newest-reviews feed is read", `${itS.length} searches, ${itR.length} feeds`);
+  check((await kv.get("apps:list", "json")).apps.length === 30, "the list of 30 apps is saved, so the searches run once a week, not every night");
+  check(ssq.length === 4 && ssq.every((c) => /^\d+$/.test(new URLSearchParams(c.query).get("fromdate")) && new URLSearchParams(c.query).get("filter") === "withbody"), "Stack Exchange: 4 searches a night for manual or broken workflows, last 30 days", ssq.map((c) => `${new URLSearchParams(c.query).get("site")}: ${new URLSearchParams(c.query).get("q")}`).join(" | "));
   const sc = calls1.filter((c) => c.path === "/2.3/questions");
   check(sc.length === 2 && sc.map((c) => new URLSearchParams(c.query).get("site")).join() === "softwarerecs,webapps" && sc.every((c) => new URLSearchParams(c.query).get("filter") === "withbody") && calls1.filter((c) => c.path === "/api").length === 1 && calls1.filter((c) => c.path === "/api/exposed_jobs/").length === 1, "new free sources: Stack Exchange (Software Recommendations and Web Applications questions), Remote OK and Working Nomads, once each");
   check(calls1.filter((c) => c.path === "/robots.txt").length === 2, "the new sources' site rules (robots.txt) are checked before they're asked, once a night");
@@ -100,16 +104,18 @@ function memoryKV() {
   check(byWho(/Gulf Coast/).kind === "job" && byWho(/Gulf Coast/).who === "Gulf Coast Food Distributors is hiring an Accounts Receivable Clerk" && byWho(/Gulf Coast/).pays === "$18-$21/hour (job ad)" && byWho(/Acme/).who === "Acme Logistics is hiring an Order Entry Specialist" && byWho(/Acme/).pays === "pays a salary for this work (job ad)", "job ads: company, role and pay from the job board itself; the ad is the proof");
   const jj = r.complaints.find((c) => /Lone Star/.test(c.who)), hj = r.complaints.find((c) => /Fresh Fields/.test(c.who));
   check(jj && jj.who === "Lone Star HVAC Services is hiring a Customer Service Scheduler" && jj.pays === "$38,000-44,000 a year (job ad)" && jj.sources[0].url.startsWith("https://remoteok.com/remote-jobs/") && hj && hj.pays === "$40,000-46,000 a year (job ad)" && hj.sources[0].url.startsWith("https://himalayas.app/"), "Remote OK and Himalayas job ads come in with company, role, the ad's link, and the pay the board lists", jj?.pays);
-  check(r.problems.length === 2 && !JSON.stringify(r.problems).includes("made-up") && r.problems.map((p) => p.total).join() === "7.5,7.1", "grouped into problems, scored and ranked; a 'problem' with no real complaints is dropped", r.problems.map((p) => p.total).join(", "));
+  check(r.problems.length === 2 && !JSON.stringify(r.problems).includes("made-up") && r.problems.map((p) => p.total).join() === "8,7.5", "grouped into problems, scored and ranked; a 'problem' with no real complaints is dropped", r.problems.map((p) => p.total).join(", "));
+  const hv = r.problems.find((p) => /tech is on the way/.test(p.title)), jobIdea = r.problems.find((p) => /invoice follow-up/.test(p.title));
+  check(jobIdea.spread === 4 && jobIdea.spreadBonus === 0.9 && jobIdea.total === 8 && hv.spread === 1 && hv.total === 7.5 && r.problems[0] === jobIdea, "the same need seen on 4 different job boards ranks higher (+0.9) than one seen on a single site", `${jobIdea.origins.join(", ")}`);
   // ── Every idea: one buyer, the exact product, a suggested price, at least 3 leads with proof links ──────
   check(r.problems.every((p) => p.buyer && p.product && Number.isInteger(p.price) && new Set(p.complaints.flatMap((c) => c.sources.map((x) => x.url))).size >= 3 && p.complaints.every((c) => /^https:\/\//.test(c.sources[0].url))), "every idea names one buyer, the product to build, a suggested monthly price, and at least 3 leads (each from a different public page)", r.problems.map((p) => `${p.price}/${p.complaints.length}`).join(" "));
-  check(r.problems[0].buyer === "Owners of HVAC companies with 1–10 technicians" && /texts each customer automatically/.test(r.problems[0].product) && r.problems[0].price === 49 && r.problems[0].complaints.map((c) => c.who).join() === "Hacker News user threetruckhvac,Hacker News user hvac_dana,Hacker News user coolair_mike", "…for example: HVAC owners with 1–10 techs, an auto-text app, $49/month, and 3 named leads");
+  check(hv.buyer === "Owners of HVAC companies with 1–10 technicians" && /texts each customer automatically/.test(hv.product) && hv.price === 49 && hv.complaints.map((c) => c.who).join() === "Hacker News user threetruckhvac,Hacker News user hvac_dana,Hacker News user coolair_mike", "…for example: HVAC owners with 1–10 techs, an auto-text app, $49/month, and 3 named leads");
   const dropped = Object.fromEntries((r.dropped || []).map((d) => [d.title, d.why]));
   check(dropped["Rugged handheld scanner for HVAC techs"] === "hardware" && dropped["Admin work is tedious"] === "too broad" && dropped["Handwritten work orders into invoices"] === "only 1 lead (needs 3)" && dropped["Scheduling software double-booking technicians"] === "only 1 lead (needs 3)" && !r.problems.some((p) => /handheld|tedious|Handwritten|double-booking/.test(p.title)), "ideas that are hardware, too broad, or have fewer than 3 leads are dropped, and listed as 'left out' with the reason", JSON.stringify(dropped));
   const P2 = await import("../src/pipeline.js");
-  check(r.problems[0].priceWhy === "One owner already pays $300 a month for ServiceTitan and still lacks this." && r.problems[1].priceWhy === "Our estimate: no price was found in tonight's sources.", "the price reason may only quote dollar amounts that are in the evidence ($300 is; an invented '$250 a month' is replaced by 'our estimate')");
-  check(/invoice follow-up/.test(r.problems[1].title) && r.problems[1].complaints.every((c) => c.kind === "job"), "a job-ad idea makes the top 3 when it ranks");
-  const comp = r.problems[0].competitors;
+  check(hv.priceWhy === "One owner already pays $300 a month for ServiceTitan and still lacks this." && jobIdea.priceWhy === "Our estimate: no price was found in tonight's sources.", "the price reason may only quote dollar amounts that are in the evidence ($300 is; an invented '$250 a month' is replaced by 'our estimate')");
+  check(/invoice follow-up/.test(r.problems[0].title) && r.problems[0].complaints.every((c) => c.kind === "job"), "a job-ad idea makes the top 3 when it ranks");
+  const comp = hv.competitors;
   check(comp.length === 1 && comp[0].name === "Jobber" && comp[0].price === "$69/month" && comp[0].sources[0].url === "https://news.ycombinator.com/item?id=2001" && /can't be timed/.test(comp[0].dislikes), "competitors come from posts that mention them, with the quote and link; a price only when it's written there; an invented tool is dropped", JSON.stringify(comp.map((c) => [c.name, c.price])));
   check(r.leads.length === 9 && r.leads.every((l) => l.sources[0].url.startsWith("https://")) && r.leads.filter((l) => l.kind === "job").length === 4, "leads: up to 10 public posts and job ads with links (here 9 — never padded)");
   check(kv.writes <= 40, "few KV writes a night (free plan: 1,000 a day)", `${kv.writes} writes`);
@@ -117,9 +123,10 @@ function memoryKV() {
   console.log(`      CPU per step, own work (Node, this machine): max ${cpu[0].toFixed(1)} ms, median ${cpu[Math.floor(cpu.length / 2)].toFixed(1)} ms`);
   check(cpu.every((x) => x < 10), "each step's own work stays under 10 ms of CPU here (Cloudflare free plan: 10 ms per run)", cpu.map((x) => x.toFixed(1)).join(", "));
   const alert = (await callsSoFar()).find((c) => c.ntfy);
-  check(alert && /1\. Automatic 'tech is on the way' texts/.test(alert.body), "with phone alerts on, a notification with the top ideas is sent when the report is ready");
+  check(alert && /2\. Automatic 'tech is on the way' texts/.test(alert.body), "with phone alerts on, a notification with the top ideas is sent when the report is ready");
   const ideas1 = await kv.get("ideas:2026-11", "json"), leads1 = await kv.get("leads:2026-11", "json");
-  check(ideas1.length === 2 && leads1.length === 9 && ideas1[0].complaints[0].sources[0].url === "https://news.ycombinator.com/item?id=1001" && ideas1[0].buyer && ideas1[0].price === 49 && ideas1[0].complaints.length === 3, "ideas (with buyer, product, price and all their leads) and leads are saved for good with their proof");
+  const hvIdea = ideas1.find((x) => /tech is on the way/.test(x.title));
+  check(ideas1.length === 2 && leads1.length === 9 && hvIdea.complaints[0].sources[0].url === "https://news.ycombinator.com/item?id=1001" && hvIdea.buyer && hvIdea.price === 49 && hvIdea.complaints.length === 3 && ideas1[0].spread === 4, "ideas (with buyer, product, price and all their leads) and leads are saved for good with their proof");
 
   // ── Job ads: every one saved for good, before the night's storage is cleared ────────────────────────
   const EXPECTED_JOBS = { "https://remotive.com/remote-jobs/finance/accounts-receivable-clerk-1": ["Gulf Coast Food Distributors", "Accounts Receivable Clerk", true],
@@ -141,19 +148,21 @@ function memoryKV() {
   // Email and build prompt
   const E = await import("../src/email.js"), PR = await import("../src/prompt.js"), REP = await import("../src/report.js");
   const mail = E.buildEmail(r, r.id, null, "https://night-agent.example");
-  check(/^Night Agent: 2 ideas for Friday, November 20, 2026$/.test(mail.subject) && /OVERNIGHT\n16 public texts read \(Hacker News, job boards\) · 9 pieces of evidence with proof \(4 job ads\) · 2 new ideas · 3 Gemini calls/.test(mail.text), "the email says what the agent did overnight", mail.text.split("\n")[3]);
-  check(/1\. Automatic 'tech is on the way' texts for HVAC customers — 7\.5\/10/.test(mail.text) && mail.text.includes("https://news.ycombinator.com/item?id=1001") && /Build it: https:\/\/night-agent\.example\/idea\/2026-11-20-p1/.test(mail.text) && /LEADS \(9, public posts and job ads — not contacted\)/.test(mail.text) && /Reddit's site rules/.test(mail.text) && /Reddit&#39;s site rules/.test(mail.html), "…the top 3 ideas with proof links, the leads, and why Reddit was skipped");
+  check(/^Night Agent: 2 ideas for Friday, November 20, 2026$/.test(mail.subject) && /OVERNIGHT\n16 public texts read \(Hacker News, Stack Exchange, App Store reviews, job boards\) · 9 pieces of evidence with proof \(4 job ads\) · 2 new ideas · 3 Gemini calls/.test(mail.text), "the email says what the agent did overnight", mail.text.split("\n")[3]);
+  check(/2\. Automatic 'tech is on the way' texts for HVAC customers — 7\.5\/10/.test(mail.text) && /Seen across 4 apps\/sources: Remotive, Himalayas, We Work Remotely, Remote OK/.test(mail.text) && mail.text.includes("https://news.ycombinator.com/item?id=1001") && /Build it: https:\/\/night-agent\.example\/idea\/2026-11-20-p1/.test(mail.text) && /LEADS \(9, public posts and job ads — not contacted\)/.test(mail.text) && /Reddit's site rules/.test(mail.text) && /Reddit&#39;s site rules/.test(mail.html), "…the top 3 ideas with proof links, the leads, and why Reddit was skipped");
   check(/   Buyer: Owners of HVAC companies with 1–10 technicians\n   Build: A web app that texts each customer[^\n]*\n   Suggested price: \$49\/month \(suggested, not a quote: One owner already pays \$300 a month for ServiceTitan and still lacks this\.\)\n   Leads \(3\):\n   - "I wish there was[^\n]*— Hacker News user threetruckhvac \(https:\/\/news\.ycombinator\.com\/item\?id=1001\)/.test(mail.text) && /<b>Buyer:<\/b> Owners of HVAC companies/.test(mail.html) && /Leads \(3\):/.test(mail.html), "the email gives each idea's buyer, product, suggested price and its leads with proof links");
   check(/Left out 4 ideas that weren't good enough: Rugged handheld scanner for HVAC techs \(hardware\); Admin work is tedious \(too broad\)/.test(mail.text), "the email says which ideas were left out and why");
   check(/JOB ADS FOUND \(7, 4 qualified · 7 saved in all, 4 qualified\)/.test(mail.text) && (mail.text.match(/\[QUALIFIED\]/g) || []).length === 4 && /\[not qualified\] Bright Dental — Front Desk Receptionist · https:\/\/weworkremotely\.com\/remote-jobs\/bright-dental-front-desk-receptionist · found 2026-11-20/.test(mail.text) && (mail.html.match(/✓ Qualified/g) || []).length === 4 && /Not qualified<\/span> · <b>Bright Dental/.test(mail.html), "the morning email lists every job ad (company, role, link, date found) and marks which qualified");
-  const prompt = PR.buildPrompt(ideas1[0]);
+  const prompt = PR.buildPrompt(hvIdea);
   const money = [...prompt.matchAll(/\$\d[\d,.]*(?:\/\w+)?/g)].map((m) => m[0]);
-  check(prompt.includes(ideas1[0].complaints[0].quote) && prompt.includes("https://news.ycombinator.com/item?id=1001") && /Jobber: \$69\/month \(source: https:\/\/news\.ycombinator\.com\/item\?id=2001\)/.test(prompt) && /Who would buy it: Owners of HVAC companies/.test(prompt) && /Suggested price: \$49\/month \(a suggestion, not market data/.test(prompt) && money.every((m) => JSON.stringify(ideas1[0]).includes(m) || m === `$${ideas1[0].price}/month`), "'Yes, build this' prompt: real quotes, links, scores and competitors; no numbers of its own");
+  check(prompt.includes(hvIdea.complaints[0].quote) && prompt.includes("https://news.ycombinator.com/item?id=1001") && /Jobber: \$69\/month \(source: https:\/\/news\.ycombinator\.com\/item\?id=2001\)/.test(prompt) && /Who would buy it: Owners of HVAC companies/.test(prompt) && /Suggested price: \$49\/month \(a suggestion, not market data/.test(prompt) && money.every((m) => JSON.stringify(hvIdea).includes(m) || m === `$${hvIdea.price}/month`), "'Yes, build this' prompt: real quotes, links, scores and competitors; no numbers of its own");
 
   // ── A2. The next night: the same texts aren't read again, nothing repeated ──────────────────────
   await ctl({ reset: true });
   n = await night("2026-11-21");
   check(n.report.texts === 0 && (await callsSoFar()).filter((c) => c.model).length === 0 && n.report.problems.length === 0, "the next night, texts already read aren't read again (no Gemini calls wasted) and nothing is repeated");
+  const calls2 = await callsSoFar();
+  check(calls2.filter((c) => c.path === "/search").length === 0 && calls2.filter((c) => /customerreviews/.test(c.path || "")).length === 30, "the next night uses the saved app list (no searches) and reads the 30 apps' reviews again");
   const saved2 = allJobs();
   check(matchesExpected(saved2, "2026-11-20") && saved2.every((x) => x.timesSeen === 2 && x.lastSeen === "2026-11-21"), "between runs nothing is lost or doubled: the same 7 ads, first-found date kept, seen again on night 2, still qualified", saved2.map((x) => `${x.timesSeen}×/${x.lastSeen}`).join(", "));
   check(n.report.allJobAds?.length === NJ && n.report.allJobAds.every((x) => x.firstFound === "2026-11-20" && x.firstRun === "2026-11-20"), "night 2's report still lists the 7 ads it found (already read, so not analysed again), with their first-found date");
@@ -185,9 +194,10 @@ function memoryKV() {
   // Unreachable for part of a night only: saved in a later step of the same night.
   const J3 = newDb(); J3.failing(true); kv = memoryKV();
   const e3 = { ...env, SCOUT: kv, JOBS: J3 }; let st3;
-  for (let k = 0; k < 14; k++) st3 = await P.runStep(e3, { now: Date.parse("2026-11-29T06:00:00Z") + k * 300000 });
+  let k3 = 0; // until the job boards have been fetched (database down the whole time)
+  for (; k3 < 40; k3++) { st3 = await P.runStep(e3, { now: Date.parse("2026-11-29T06:00:00Z") + k3 * 300000 }); if (!st3.fetchQueue.some((t) => ["remotive", "himalayas", "wwr", "remoteok", "wn"].includes(t.type))) { k3++; break; } }
   const pendingMid = (await kv.get("night:2026-11-29", "json")).jobsPending.length;
-  J3.failing(false); n = await night("2026-11-29", { from: 14, e: e3 });
+  J3.failing(false); n = await night("2026-11-29", { from: k3, e: e3 });
   check(pendingMid === NJ && matchesExpected(J3.store.list({ limit: 500 }).rows, "2026-11-29"), "if the database is down for a few steps, the ads wait in the night's state and are saved when it's back", `${pendingMid} waiting, then ${J3.store.stats().total} saved`);
   const srcText = fs.readdirSync(path.join(ROOT, "src")).map((f) => fs.readFileSync(path.join(ROOT, "src", f), "utf8")).join("\n");
   check(!/DELETE\s+FROM|DROP\s+TABLE|TRUNCATE|storage\.delete|deleteAll/i.test(srcText), "there is no code that deletes job ads (no DELETE, DROP or storage delete anywhere)");
@@ -220,10 +230,25 @@ function memoryKV() {
   check(!n.report.problems.some((p) => /tech is on the way/.test(p.title)) && n.report.problems.length === 1 && D2.ideas.list().some((i) => i.title === "Manual Administrative and Data Entry Outsourcing" && i.firstDate === "2026-11-19"), "ideas from reports sent before (including test runs) are loaded into the memory, so they're never sent again", n.report.problems.map((p) => p.title).join(" | "));
 
   // A site's rules say no → it's skipped and the night log says why.
-  await ctl({ reset: true, gatedRobots: "User-agent: *\nDisallow: /api\n" });
+  await ctl({ reset: true, gatedRobots: "User-agent: *\nDisallow: /api\nDisallow: /search\nDisallow: /us/rss\n" });
   n = await night("2026-11-30", { e: fresh() });
-  check(!(await callsSoFar()).some((c) => c.path === "/api" || c.path === "/api/exposed_jobs/") && (await callsSoFar()).some((c) => c.path === "/2.3/questions") && n.report.log.some((l) => /Remote OK jobs .* skipped: its site rules/.test(l.msg)) && n.report.log.some((l) => /Working Nomads jobs .* skipped: its site rules/.test(l.msg)), "if a site's rules (robots.txt) disallow it, it isn't asked, and the log says so");
+  check(!(await callsSoFar()).some((c) => c.path === "/api" || c.path === "/api/exposed_jobs/") && (await callsSoFar()).some((c) => c.path === "/2.3/questions") && n.report.log.some((l) => /Remote OK jobs .* skipped: its site rules/.test(l.msg)) && n.report.log.some((l) => /Working Nomads jobs .* skipped: its site rules/.test(l.msg)) && n.report.log.some((l) => /App Store skipped: Apple's site rules/.test(l.msg)) && !(await callsSoFar()).some((c) => c.path === "/search" || /customerreviews/.test(c.path || "")), "if a site's rules (robots.txt) disallow it (Remote OK, Working Nomads, Apple), it isn't asked, and the log says so");
   await ctl({ gatedRobots: "User-agent: *\nAllow: /\n" });
+  // ── App Store reviews and Stack Exchange searches ──────────────────────────────────────────────────
+  await ctl({ reset: true, apple: "2026-12-10" });
+  n = await night("2026-12-10", { e: fresh() });
+  const ar = n.report, revs = ar.complaints.filter((c) => c.kind === "review");
+  check(revs.length === 6 && revs.every((c) => /^App Store reviewer \w+ \([12]★ review of [^,]+, 2026-12-09\)$/.test(c.who) && /^https:\/\/apps\.apple\.com\/us\/app\/id\d+\?see-all=reviews#review-\d+$/.test(c.sources[0].url)), "App Store: 1- and 2-star reviews become evidence, each with reviewer, stars, app and date, linked to the app's public reviews page", revs.map((c) => c.who).slice(0, 2).join(" | "));
+  check(!/Great app, does everything|colours are a bit dull|old review about crashing/.test(JSON.stringify(ar)), "3–5 star reviews and reviews older than 30 days are never read");
+  const qbIdea = ar.problems.find((p) => /QuickBooks/.test(p.title)), scanIdea = ar.problems.find((p) => /barcode/i.test(p.title));
+  check(qbIdea && qbIdea.spread === 3 && qbIdea.origins.join() === "App Store: InvoiceFast,App Store: BillRight,App Store: QuickInvoice Pro" && qbIdea.complaints.length === 3, "the same complaint in reviews of 3 different apps becomes one idea, with 3 leads", qbIdea && qbIdea.origins.join(", "));
+  check(scanIdea && scanIdea.spread === 1 && qbIdea.total === 6.6 && scanIdea.total === 6 && ar.problems.indexOf(qbIdea) < ar.problems.indexOf(scanIdea), "…and ranks higher (6.6) than an equally scored complaint repeated in just one app (6.0)", `${qbIdea?.total} vs ${scanIdea?.total}`);
+  const ops = ar.complaints.find((c) => /copy every order from our email/.test(c.quote));
+  check(ops && ops.sources[0].url === "https://superuser.com/questions/777/stop-copying-orders-from-email-into-a-spreadsheet" && ops.who === "Super User user ops_olga", "Stack Exchange search finds an operations person's manual-workflow question, with its link");
+  const am = E.buildEmail(ar, ar.id, null, "https://night-agent.example");
+  check(/Seen across 3 apps\/sources: App Store: InvoiceFast, App Store: BillRight, App Store: QuickInvoice Pro/.test(am.text) && /App Store reviewer inv_irene \(1★ review of InvoiceFast, 2026-12-09\)/.test(am.text) && /App Store review<\/span>/.test(REP.reportPage(ar)), "the email and report show which apps the complaint was seen in, and each review lead");
+  await ctl({ reset: true, apple: null });
+
   // ── A big night: hundreds of new posts of real size ─────────────────────────────────────────────────
   await ctl({ reset: true, big: true });
   n = await night("2026-12-08", { e: fresh() });
@@ -283,7 +308,7 @@ function memoryKV() {
     await pg.goto(BASE);
     const dash = (await pg.innerText("main")).replace(/\s+/g, " ");
     check(/1 night · 2 ideas saved · 9 leads saved/.test(dash) && /Email: Sent/.test(dash) && /Buyer: Owners of HVAC companies/.test(dash) && /Suggested price: \$49\/month/.test(dash) && await pg.locator("main form[action$='/build'] button").count() === 2, "the dashboard shows last night, totals, the email, and the top 3 with 'Yes, build this'", dash.slice(0, 160));
-    await pg.locator("main form[action$='/build'] button").first().click();
+    await pg.locator("main form[action$='/build'] button").nth(1).click();
     await pg.waitForSelector("#prompt");
     check(/^Build a new app for this problem/.test(await pg.inputValue("#prompt")) && (await pg.inputValue("#prompt")).includes("https://news.ycombinator.com/item?id=1001"), "'Yes, build this' opens the ready-to-paste Claude Code prompt");
     await pg.goto(`${BASE}/ideas`);

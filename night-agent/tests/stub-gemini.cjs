@@ -44,7 +44,30 @@ const REMOTEOK = [{ legal: "API terms: link back to Remote OK and mention it as 
   { id: 7002, url: "https://remoteok.com/remote-jobs/7002-senior-golang-engineer", position: "Senior Golang Engineer", company: "Infra Co", location: "Worldwide", description: "<p>Build high-throughput services in Go for our infrastructure platform team.</p>" }];
 const WN = [{ url: "https://www.workingnomads.com/jobs/dispatcher-metro-freight", title: "Dispatcher", company_name: "Metro Freight", location: "USA", description: "<p>Assign loads to drivers by phone and update the load board spreadsheet all day long.</p>" },
   { url: "https://www.workingnomads.com/jobs/order-clerk-eu", title: "Order Entry Clerk", company_name: "EU Foods", location: "Germany", description: "<p>Enter orders for our German stores into SAP every single day of the week.</p>" }];
-let big = false;
+let big = false, apple = null; // apple = "YYYY-MM-DD": App Store reviews and Stack Exchange search results dated around that day
+// iTunes Search API: 6 Business apps (most-rated first) + 1 game per search term.
+const TERMS = ["invoice", "appointment scheduling", "CRM", "delivery driver", "inventory", "field service", "point of sale", "payroll"];
+const searchApps = (term) => { const c = Math.max(0, TERMS.indexOf(term)); return [
+  ...Array.from({ length: 6 }, (_, i) => ({ trackId: 9000 + c * 10 + i, trackName: c === 0 ? ["InvoiceFast", "BillRight", "QuickInvoice Pro", "Invoicely", "PaidUp", "BillBox"][i] : c === 3 ? (i === 0 ? "RouteDash Driver" : `Delivery App ${i}`) : `${term} app ${i}`,
+    primaryGenreName: "Business", genres: ["Business"], userRatingCount: 50000 - i * 1000 })),
+  { trackId: 9900 + c, trackName: `${term} game`, primaryGenreName: "Games", genres: ["Games"], userRatingCount: 999999 }]; };
+const daysBefore = (day, n) => new Date(Date.parse(`${day}T12:00:00Z`) - n * 86400000).toISOString().replace(".000Z", "-07:00");
+const review = (id, who, stars, title, text, when) => ({ id: { label: String(id) }, author: { name: { label: who } }, "im:rating": { label: String(stars) }, title: { label: title }, content: { label: text, attributes: { type: "text" } }, updated: { label: when } });
+function reviewsFor(appId) {
+  const info = { "im:name": { label: "app info" }, id: { label: "https://apps.apple.com/us/app/id" + appId } }; // the first entry can be app info: skipped
+  if (!apple) return { feed: { entry: [info] } };
+  const d1 = daysBefore(apple, 1), old = daysBefore(apple, 40);
+  const qb = { 9000: ["inv_irene", "QuickBooks sync keeps failing and every invoice has to be retyped into QuickBooks by hand."], 9001: ["bill_bob", "Invoices never sync to QuickBooks, so I export and re-enter them manually every Friday."],
+    9002: ["qi_quinn", "The QuickBooks sync breaks every week and my bookkeeper retypes all the invoices."] };
+  const entries = [info];
+  if (qb[appId]) entries.push(review(appId * 10 + 1, qb[appId][0], 1, "Sync broken", qb[appId][1], d1), review(appId * 10 + 2, "happy_hal", 5, "Love it", "Great app, does everything I need for my small shop.", d1),
+    review(appId * 10 + 3, "meh_mo", 3, "Okay", "It is fine but the colours are a bit dull for my taste honestly.", d1), review(appId * 10 + 4, "old_olive", 1, "Old complaint", "This old review about crashing on login every morning should be ignored now.", old));
+  if (appId === 9030) entries.push(review(90301, "driver_dee", 1, "Crashes", "The app crashes every time I scan a package barcode at the door.", d1), review(90302, "driver_dan", 2, "Scanner", "Scanning a barcode freezes the app and I lose the delivery photo.", d1),
+    review(90303, "driver_ann", 1, "Freezes", "Barcode scanning makes the whole app freeze on my route every day.", d1));
+  return { feed: { entry: entries } };
+}
+const stackSearchResult = () => (apple ? { items: [{ question_id: 777, title: "Stop copying orders from email into a spreadsheet?", body: "<p>Every morning we copy every order from our email into a spreadsheet by hand, then into our shipping tool. Is there a way to automate this?</p>",
+  link: "https://superuser.com/questions/777/stop-copying-orders-from-email-into-a-spreadsheet", owner: { display_name: "ops_olga" } }] } : { items: [] });
 const LOREM = "We run a small company and every week someone spends hours copying numbers between the website, the spreadsheet and the accounting tool, then checking it twice because mistakes cost us money and customers notice. ";
 const bigHits = (q) => { let h = 7; for (const ch of q) h = (h * 31 + ch.charCodeAt(0)) % 9973; return Array.from({ length: 50 }, (_, i) => ({ objectID: String(500000 + h * 50 + i), _tags: ["comment"], author: `user${h}_${i}`, story_title: `Thread ${h}`, comment_text: `<p>Post ${h}-${i}. ${LOREM.repeat(4)}</p>` })); };
 let gatedRobots = "User-agent: *\nAllow: /\n";
@@ -71,6 +94,14 @@ function analyze(prompt) {
     else if (/Answer inbound calls/.test(d.text)) items.push({ docId: d.id, quote: "Answer inbound calls from customers and book their service appointments in our calendar." });
     else if (/Enter vendor invoices/.test(d.text)) items.push({ docId: d.id, quote: "Enter vendor invoices into QuickBooks and match them against purchase orders every day." });
     else if (/when my tech is on his way/.test(d.text)) items.push({ docId: d.id, quote: "My customers keep calling to ask when my tech is on his way, an automatic text would save me an hour a day." });
+    else if (/QuickBooks sync keeps failing/.test(d.text)) items.push({ docId: d.id, quote: "QuickBooks sync keeps failing and every invoice has to be retyped into QuickBooks by hand." });
+    else if (/Invoices never sync to QuickBooks/.test(d.text)) items.push({ docId: d.id, quote: "Invoices never sync to QuickBooks, so I export and re-enter them manually every Friday." });
+    else if (/QuickBooks sync breaks every week/.test(d.text)) items.push({ docId: d.id, quote: "The QuickBooks sync breaks every week and my bookkeeper retypes all the invoices." });
+    else if (/scan a package barcode/.test(d.text)) items.push({ docId: d.id, quote: "The app crashes every time I scan a package barcode at the door." });
+    else if (/Scanning a barcode freezes/.test(d.text)) items.push({ docId: d.id, quote: "Scanning a barcode freezes the app and I lose the delivery photo." });
+    else if (/Barcode scanning makes the whole app freeze/.test(d.text)) items.push({ docId: d.id, quote: "Barcode scanning makes the whole app freeze on my route every day." });
+    else if (/copy every order from our email/.test(d.text)) items.push({ docId: d.id, quote: "Every morning we copy every order from our email into a spreadsheet by hand, then into our shipping tool." });
+    else if (/old review about crashing|Great app, does everything|colours are a bit dull/.test(d.text)) items.push({ docId: d.id, quote: d.text.slice(0, 60) }); // must never get here: these reviews are filtered out
     else if (/ETA text before the tech/.test(d.text)) items.push({ docId: d.id, quote: "Our HVAC customers want an ETA text before the tech shows up and we still call each one by hand from the office." });
     else if (/four hour arrival window/.test(d.text)) items.push({ docId: d.id, quote: "Customers hate a four hour arrival window, I want them texted automatically when my technician is close." });
     else if (/whiteboard/.test(d.text)) items.push({ docId: d.id, quote: "Same here, we track propane refills on a whiteboard and it never works when the truck is on the road." });
@@ -91,6 +122,12 @@ function group(prompt) {
   return { problems: [
     { ...sw, category: "hardware", title: "Rugged handheld scanner for HVAC techs", summary: "A tough device for the field.", who: "HVAC technicians", buyer: "HVAC technicians", product: "A rugged handheld scanner device.", price: 300, priceWhy: "Estimate.", complaintIds: hvac, people: 5, pays: 5, anger: 5, buildSpeed: 2, why: "Hardware." },
     { ...sw, tooBroad: true, title: "Admin work is tedious", summary: "Lots of admin work.", who: "Small businesses", buyer: "small businesses", product: "An all-in-one admin tool for everything.", price: 99, priceWhy: "Estimate.", complaintIds: [...hvac, ...jobIds], people: 9, pays: 9, anger: 9, buildSpeed: 9, why: "Everyone has admin work." },
+    ...(idsOf(/App Store review[^\n]*QuickBooks/).length ? [{ ...sw, title: "Invoice apps whose QuickBooks sync keeps breaking", summary: "Invoicing apps fail to sync to QuickBooks, so invoices get retyped.", who: "Small businesses invoicing from an app",
+      buyer: "Owners of service businesses that invoice from their phone and keep books in QuickBooks", product: "A sync service that copies every invoice from the invoicing app into QuickBooks reliably and flags any that fail.", price: 29, priceWhy: "Estimate for a single-purpose add-on.",
+      complaintIds: idsOf(/App Store review[^\n]*QuickBooks/), people: 6, pays: 6, anger: 6, buildSpeed: 6, why: "Three different apps, same failure." }] : []),
+    ...(idsOf(/barcode/i).length ? [{ ...sw, title: "Delivery app freezes when scanning barcodes", summary: "Drivers' app freezes on barcode scans.", who: "Delivery drivers",
+      buyer: "Courier companies with 10–50 drivers", product: "A fast, offline barcode-scan and proof-of-delivery app for drivers.", price: 15, priceWhy: "Estimate per driver.",
+      complaintIds: idsOf(/barcode/i), people: 6, pays: 6, anger: 6, buildSpeed: 6, why: "Same app, repeated." }] : []),
     ...(propane.length ? [{ ...sw, title: "Propane refill tracking for food trucks", summary: "Food truck owners run out of propane mid-shift.", who: "Food truck owners", buyer: "Owners of food truck fleets with 2–10 trucks", product: "A phone app that logs each propane refill per truck and warns before a tank runs low.", price: 19, priceWhy: "Small fleets run out monthly; a low price fits.", complaintIds: propane, people: 5, pays: 6, anger: 7, buildSpeed: 9, why: "Runs out every month." }] : []),
     { ...sw, title: onWay ? "Text customers automatically when the HVAC tech is close" : "Automatic 'tech is on the way' texts for HVAC customers", summary: "HVAC owners want customers texted automatically before the tech arrives.", who: "Owners of small HVAC companies",
       buyer: "Owners of HVAC companies with 1–10 technicians", product: "A web app that texts each customer automatically when their technician is 20 minutes away, using the tech's phone location.", price: 49, priceWhy: "One owner already pays $300 a month for ServiceTitan and still lacks this.",
@@ -120,7 +157,7 @@ http.createServer((rq, rs) => {
   rq.on("data", (d) => (data += d));
   rq.on("end", () => {
     const send = (code, obj, type = "application/json") => { rs.writeHead(code, { "content-type": type }); rs.end(typeof obj === "string" ? obj : JSON.stringify(obj)); };
-    if (u.pathname === "/control") { const b = JSON.parse(data || "{}"); if ("limitAfter" in b) limitAfter = b.limitAfter ?? Infinity; if (b.retired) retired = new Set(b.retired); if (b.zeroQuota) zeroQuota = new Set(b.zeroQuota); if (b.reset) calls = []; if ("extra" in b) extra = b.extra; if ("big" in b) big = b.big; if ("gatedRobots" in b) gatedRobots = b.gatedRobots; return send(200, { ok: true }); }
+    if (u.pathname === "/control") { const b = JSON.parse(data || "{}"); if ("limitAfter" in b) limitAfter = b.limitAfter ?? Infinity; if (b.retired) retired = new Set(b.retired); if (b.zeroQuota) zeroQuota = new Set(b.zeroQuota); if (b.reset) calls = []; if ("extra" in b) extra = b.extra; if ("big" in b) big = b.big; if ("apple" in b) apple = b.apple; if ("gatedRobots" in b) gatedRobots = b.gatedRobots; return send(200, { ok: true }); }
     if (u.pathname === "/calls") return send(200, calls);
     calls.push({ path: u.pathname, query: u.search });
     if (u.pathname === "/robots.txt") return send(200, /^127\.0\.0\.1/.test(rq.headers.host || "") ? gatedRobots : "User-agent: *\nDisallow: /\n", "text/plain"); // 127.0.0.1 = Stack Exchange, Remote OK, Working Nomads; localhost = reddit.com (disallows all today)
@@ -128,6 +165,10 @@ http.createServer((rq, rs) => {
     if (u.pathname === "/api/v1/search_by_date") { const q = u.searchParams.get("query") || ""; return send(200, { hits: / software$/.test(q) && !q.includes('"') ? HN_TOOLS : big ? bigHits(q) : extra ? [...HN, ...HN_EXTRA] : HN }); }
     if (u.pathname === "/api/remote-jobs") return send(200, REMOTIVE);
     if (u.pathname === "/2.3/questions") return send(200, STACK);
+    if (u.pathname === "/2.3/search/advanced") return send(200, stackSearchResult());
+    if (u.pathname === "/search") return send(200, { resultCount: 7, results: searchApps(u.searchParams.get("term") || "") });
+    const rv = /^\/us\/rss\/customerreviews\/page=1\/id=(\d+)\/sortby=mostrecent\/json$/.exec(u.pathname);
+    if (rv) return send(200, reviewsFor(Number(rv[1])));
     if (u.pathname === "/api") return send(200, REMOTEOK);
     if (u.pathname === "/api/exposed_jobs/") return send(200, WN);
     if (u.pathname === "/remote-jobs.rss") return send(200, RSS, "application/rss+xml");

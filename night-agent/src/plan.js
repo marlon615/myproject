@@ -107,8 +107,9 @@ export const clusterSchema = {
   },
   required: ["problems"],
 };
-export const clusterPrompt = (complaints, past) => `Here are complaints and wishes about software that real people posted, and public job ads where companies pay people to do repetitive work by hand (each has an id).
+export const clusterPrompt = (complaints, past) => `Here are complaints and wishes about software that real people posted (including App Store reviews), and public job ads where companies pay people to do repetitive work by hand (each has an id).
 Job ads (marked JOB AD) are proof of a paid need: the company already spends a salary on this work, so count them as strong evidence for "pays".
+Some are 1–2 star App Store reviews of business apps. The same complaint about different apps, or from different sources, is the same problem: group those together (that's strong evidence of a real need).
 Group them into distinct PROBLEMS that a solo developer could build SOFTWARE for. Put a complaint in a problem only if it shows that exact problem. Aim for problems that at least 3 complaints from different sources show.
 For each problem give:
 - buyer: ONE specific type of buyer who would pay (for example "owners of HVAC companies with 1–10 technicians", never a vague group like "small businesses", "companies" or "people")

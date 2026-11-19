@@ -14,12 +14,12 @@
  * At most one Gemini call per step (up to ~13 a night). A limit stops the night, and the report says so.
  */
 import { ask, listModels, GeminiError } from "./gemini.js";
-import { hackerNews, remotive, weWorkRemotely, himalayas, reddit, stackExchange, remoteOk, workingNomads } from "./sources.js";
+import { hackerNews, remotive, weWorkRemotely, himalayas, reddit, stackExchange, stackSearch, remoteOk, workingNomads, appSearch, appReviews } from "./sources.js";
 import { clusterPrompt, clusterSchema } from "./plan.js";
 import { jamaica, similar, getJSON, putJSON, domainOf } from "./util.js";
 import { ideaKey } from "./ideastore.js";
 
-const FETCH_PER_STEP = 3, STEP_DOCS = 80, BATCH = 30, STEP_MS = 3 * 60 * 1000, TOP = 5;
+const FETCH_PER_STEP = 3, STEP_DOCS = 80, BATCH = 40, MAX_DOCS = 400, STEP_MS = 3 * 60 * 1000, TOP = 5;
 const DEFAULT_MODELS = "gemini-flash-lite-latest,gemini-flash-latest,gemini-2.5-flash-lite,gemini-2.5-flash";
 export const LAST_SLOT = { hour: 4, minute: 55 };
 
@@ -36,6 +36,16 @@ export const HN_BROAD = ["small business software frustrating", "spreadsheet man
 export const HN_PER_NIGHT = 12, HN_BROAD_PER_NIGHT = 8, HN_HITS = 40, HN_DAYS = 90, HN_BROAD_DAYS = 3, MIN_TEXTS = 150, TOPUP_MAX = 8, MIN_LEADS = 3;
 export const JOB_SEARCHES = ["data entry", "customer service", "scheduling", "accounts receivable", "bookkeeping", "dispatcher", "virtual assistant", "order processing"];
 export const STACK_SITES = ["softwarerecs", "webapps"];
+// Stack Exchange searches: small business owners and operations staff describing manual, repetitive or broken workflows.
+export const STACK_SEARCHES = [["superuser", "manually every day spreadsheet"], ["softwarerecs", "small business"], ["webapps", "automate manually"], ["superuser", "repetitive data entry"],
+  ["softwarerecs", "invoices manually"], ["webapps", "copy data between"], ["softwarerecs", "scheduling appointments"], ["superuser", "copy paste every week"],
+  ["softwarerecs", "inventory tracking"], ["webapps", "orders spreadsheet"], ["softwarerecs", "track customers"], ["superuser", "automate report excel"]];
+export const STACK_SEARCH_PER_NIGHT = 4, STACK_SEARCH_DAYS = 30;
+// Apple App Store: the 30 most-rated US business apps across these categories (chosen once a week), and each one's
+// newest reviews every night, keeping only 1- and 2-star reviews from the last 30 days.
+export const APP_CATEGORIES = [["invoicing", "invoice"], ["scheduling", "appointment scheduling"], ["CRM", "CRM"], ["delivery", "delivery driver"], ["inventory", "inventory"],
+  ["field service", "field service"], ["POS", "point of sale"], ["payroll", "payroll"]];
+export const APPS_TOP = 30, APP_DAYS = 30, APP_LIST_DAYS = 7;
 export const HIMALAYAS_SEARCHES = ["data entry", "customer support", "administrative assistant", "bookkeeper", "scheduler", "billing specialist", "order entry", "dispatcher"];
 export const WWR_FEEDS = ["remote-customer-support-jobs", "all-other-remote-jobs", "remote-sales-and-marketing-jobs", "remote-management-and-finance-jobs", "all"]; // "all" = every new job
 
@@ -43,8 +53,9 @@ const STOP_WORDS = { limit: "Gemini's free daily limit was reached", "no-free-qu
   location: "Gemini refused requests from this server's location", key: "There's no working Gemini API key", model: "No usable Gemini model was available", errors: "Gemini kept failing" };
 
 /**
- * Tonight's fetches (38): Reddit (rules check), 12 + 8 Hacker News searches (40 results each), 2 Remotive searches (they
- * ask for ≤4 a day), 6 Himalayas searches, 5 We Work Remotely feeds, 2 Stack Exchange sites, Remote OK, Working Nomads. If they bring fewer than MIN_TEXTS new texts, up to TOPUP_MAX more Hacker News searches are added.
+ * Tonight's fetches (73): Reddit (rules check), 12 + 8 Hacker News searches (40 results each), 2 Remotive searches (they
+ * ask for ≤4 a day), 6 Himalayas searches, 5 We Work Remotely feeds, 2 Stack Exchange sites + 4 Stack Exchange searches,
+ * Remote OK, Working Nomads, and the App Store reviews of 30 business apps. If they bring fewer than MIN_TEXTS new texts, up to TOPUP_MAX more Hacker News searches are added.
  */
 const pick = (list, nightNo, n) => Array.from({ length: n }, (_, k) => list[(nightNo * n + k) % list.length]);
 function fetchPlan(nightNo) {
@@ -55,6 +66,8 @@ function fetchPlan(nightNo) {
     ...pick(HIMALAYAS_SEARCHES, nightNo, 6).map((q) => ({ type: "himalayas", q })),
     ...WWR_FEEDS.map((q) => ({ type: "wwr", q })),
     ...STACK_SITES.map((q) => ({ type: "stack", q })),
+    ...pick(STACK_SEARCHES, nightNo, STACK_SEARCH_PER_NIGHT).map(([site, q]) => ({ type: "stacksearch", site, q })),
+    { type: "applist", q: `top ${APPS_TOP} business apps` }, // adds one "appreviews" fetch per app
     { type: "remoteok", q: "newest jobs" }, { type: "wn", q: "newest jobs" }];
 }
 const topUps = (nightNo) => pick(HN_BROAD, nightNo + 1, TOPUP_MAX).map((q) => ({ type: "hn", q, days: 7, topUp: true }));
@@ -101,7 +114,10 @@ export async function runStep(env, { now = Date.now(), manual = false } = {}) {
     if (st.fetchQueue.length) {
       const seenDocs = new Set((past.docs || []).map(seenKey));
       // Up to 3 sources a step, but stop early once ~80 texts came in (keeps each step under the free plan's 10 ms of CPU).
-      for (let taken = 0, got = 0; st.fetchQueue.length && taken < FETCH_PER_STEP && got < STEP_DOCS; taken++) got += (await fetchTask(env, st, st.fetchQueue.shift(), seenDocs, now, jm.date)) || 0;
+      for (let taken = 0, got = 0; st.fetchQueue.length && taken < FETCH_PER_STEP && got < STEP_DOCS;) {
+        const task = st.fetchQueue.shift(); taken += task.type === "appreviews" ? 0.5 : 1; // review feeds are small: 6 a step
+        got += (await fetchTask(env, st, task, seenDocs, now, jm.date)) || 0;
+      }
     }
     if (!st.fetchQueue.length && !st.analyzeQueue && !st.toppedUp && !manual && Object.keys(st.docs).length < MIN_TEXTS) {
       st.toppedUp = true; st.fetchQueue.push(...topUps(st.nightNo || 0));
@@ -111,7 +127,6 @@ export async function runStep(env, { now = Date.now(), manual = false } = {}) {
       const ids = Object.keys(st.docs);
       if (!manual && ids.length < MIN_TEXTS) st.notes.push(`Only ${ids.length} new public texts were found tonight (aim: at least ${MIN_TEXTS}): the sources had nothing more that hadn't been read before.`);
       st.analyzeQueue = []; for (let i = 0; i < ids.length; i += BATCH) st.analyzeQueue.push(ids.slice(i, i + BATCH));
-      if (manual) st.analyzeQueue = st.analyzeQueue.slice(0, 2);
       note(st, `Fetched ${ids.length} new public texts (${ids.filter((d) => st.docs[d].kind === "job").length} job ads).`);
     }
     // Gemini model (only once there's something to read).
@@ -208,7 +223,13 @@ async function fetchTask(env, st, task, seenDocs, now, date) {
     else if (GATED[task.type]) { // asked only if the site's robots.txt allows it
       const [key, real, p] = GATED[task.type], u = `${env.ALLOW_TEST === "1" && env[key] ? env[key] : real}${p}`;
       if (!(await robotsAllow(st, u))) { note(st, `${sourceName(task)} “${task.q}” skipped: its site rules (robots.txt) don't allow it, or couldn't be read.`); return; }
-      docs = task.type === "stack" ? await stackExchange(env, task.q) : task.type === "remoteok" ? await remoteOk(env) : await workingNomads(env);
+      docs = task.type === "stack" ? await stackExchange(env, task.q) : task.type === "stacksearch" ? await stackSearch(env, task.site, task.q, { fromdate: now - STACK_SEARCH_DAYS * 86400000 })
+        : task.type === "remoteok" ? await remoteOk(env) : await workingNomads(env);
+    }
+    else if (task.type === "applist") return await appList(env, st, now);
+    else if (task.type === "appreviews") {
+      if (!(await robotsAllow(st, `${itunesRoot(env)}/us/rss/customerreviews/page=1/id=${task.app.id}/sortby=mostrecent/json`))) { note(st, `App Store reviews of ${task.q} skipped: Apple's site rules (robots.txt) don't allow it, or couldn't be read.`); return 0; }
+      docs = await appReviews(env, task.app, { since: now - APP_DAYS * 86400000 });
     }
     else if (task.type === "himalayas") docs = await himalayas(env, task.q);
     else if (task.type === "remotive") docs = await remotive(env, task.q);
@@ -222,24 +243,45 @@ async function fetchTask(env, st, task, seenDocs, now, date) {
     let n = 0;
     const idx = docIndex(st);
     for (const d of docs) if (!idx.has(d.url) && !seenDocs.has(urlKey(d.url)) && addDoc(st, d)) n++;
-    note(st, `${sourceName(task)} “${task.q}${task.page ? ` (page ${task.page + 1})` : ""}”${task.topUp ? " (extra)" : ""}: ${n} new text${n === 1 ? "" : "s"}.`);
+    note(st, `${sourceName(task)} “${task.q}${task.site && task.type === "stacksearch" ? ` on ${task.site}` : ""}”${task.topUp ? " (extra)" : ""}: ${n} new text${n === 1 ? "" : "s"}${task.type === "appreviews" ? " (1–2 star, last 30 days)" : ""}.`);
     return docs.length;
   } catch (e) { note(st, `${sourceName(task)} “${task.q}” failed: ${String(e?.message || e).slice(0, 120)}`); return 0; }
 }
-const sourceName = (t) => ({ hn: "Hacker News", remotive: "Remotive jobs", stack: "Stack Exchange", remoteok: "Remote OK jobs", wn: "Working Nomads jobs", himalayas: "Himalayas jobs", wwr: "We Work Remotely", reddit: "Reddit" })[t.type];
-const GATED = { stack: ["STACK_BASE", "https://api.stackexchange.com", "/2.3/questions"],
+const sourceName = (t) => ({ hn: "Hacker News", remotive: "Remotive jobs", stack: "Stack Exchange", stacksearch: "Stack Exchange search", applist: "App Store", appreviews: "App Store reviews", remoteok: "Remote OK jobs", wn: "Working Nomads jobs", himalayas: "Himalayas jobs", wwr: "We Work Remotely", reddit: "Reddit" })[t.type];
+const GATED = { stacksearch: ["STACK_BASE", "https://api.stackexchange.com", "/2.3/search/advanced"], stack: ["STACK_BASE", "https://api.stackexchange.com", "/2.3/questions"],
   remoteok: ["REMOTEOK_BASE", "https://remoteok.com", "/api"], wn: ["WN_BASE", "https://www.workingnomads.com", "/api/exposed_jobs/"] };
 /** A short key for "already read" (kept for the last ~12,000 texts): h:<id> for Hacker News, else a hash of the link. */
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16).padStart(8, "0"); };
 const urlKey = (u) => { const x = String(u).replace(/^https?:\/\/(www\.)?/, ""); const hn = /^news\.ycombinator\.com\/item\?id=(\d+)$/.exec(x); return hn ? `h:${hn[1]}` : fnv(x.slice(0, 300)); };
 const seenKey = (k) => (/^h:\d+$|^[0-9a-f]{8}$/.test(k) ? k : urlKey(`https://${k}`)); // older entries were the link itself
+const itunesRoot = (env) => (env.ALLOW_TEST === "1" && env.ITUNES_BASE ? env.ITUNES_BASE : "https://itunes.apple.com");
+/** The 30 most-rated US business apps across APP_CATEGORIES (iTunes Search API, refreshed once a week, saved in KV), then
+ *  one review fetch per app is queued next. Asked only if Apple's robots.txt allows it. */
+async function appList(env, st, now) {
+  const root = itunesRoot(env);
+  let list = await getJSON(env.SCOUT, "apps:list");
+  if (!list?.apps?.length || now - Date.parse(list.at) > APP_LIST_DAYS * 86400000) {
+    if (!(await robotsAllow(st, `${root}/search?term=invoice`))) { note(st, "App Store skipped: Apple's site rules (robots.txt) don't allow its search, or couldn't be read."); return 0; }
+    const per = [];
+    for (const [cat, term] of APP_CATEGORIES) {
+      try { per.push((await appSearch(env, term)).map((a) => ({ ...a, category: cat }))); } catch (e) { per.push([]); note(st, `App Store search “${term}” failed: ${String(e?.message || e).slice(0, 100)}`); }
+    }
+    const apps = [], ids = new Set(); // round robin: the most-rated app of each category, then the next…
+    for (let r = 0; r < 25 && apps.length < APPS_TOP; r++) for (const l of per) if (l[r] && !ids.has(l[r].id) && apps.length < APPS_TOP) { ids.add(l[r].id); apps.push(l[r]); }
+    if (apps.length) { list = { at: new Date(now).toISOString(), apps }; await putJSON(env.SCOUT, "apps:list", list); note(st, `Chose the ${apps.length} most-rated US business apps (${APP_CATEGORIES.map(([c]) => c).join(", ")}).`); }
+  }
+  if (!list?.apps?.length) { note(st, "No App Store business apps were found, so no reviews were read."); return 0; }
+  st.fetchQueue.unshift(...list.apps.map((a) => ({ type: "appreviews", q: a.name, app: a })));
+  return 0;
+}
+
 /** Link → doc id for tonight's texts (built once per step, kept up to date), so each new text is checked in one look-up. */
 const docIndexes = new WeakMap();
 const docIndex = (st) => { let m = docIndexes.get(st); if (!m) { m = new Map(Object.entries(st.docs).map(([k, v]) => [v.url, k])); docIndexes.set(st, m); } return m; };
 function addDoc(st, d) {
   const idx = docIndex(st), existing = idx.get(d.url);
   if (existing) return existing;
-  if (idx.size >= 300) return null; // at most 10 reading batches (Gemini calls) a night
+  if (idx.size >= MAX_DOCS) return null; // at most 10 reading batches (Gemini calls) a night
   const id = `d${st.nextDoc++}`; st.docs[id] = d; idx.set(d.url, id); return id;
 }
 const keyTerms = (title) => String(title).replace(/[^A-Za-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 3 && !/^(with|that|their|from|this|have|automatic|automated|software|tool|tools|small|businesses|business)$/i.test(w)).slice(0, 3).join(" ");
@@ -258,12 +300,13 @@ export const analyzeSchema = { type: "OBJECT", properties: { items: { type: "ARR
   docId: { type: "STRING" }, quote: { type: "STRING" }, paysQuote: { type: "STRING" } }, required: ["docId", "quote"] } } }, required: ["items"] };
 export const analyzePrompt = (docs) => `Below are public texts: posts and comments (POST) and job ads (JOB). Find:
 - POST: a person complaining about software they use, or wishing for software that doesn't exist or doesn't work well — especially business owners and teams that pay for software.
+- REVIEW: a customer's 1–2 star App Store review of a business app: the specific thing that's broken, missing or too hard (that a better product could fix).
 - JOB: a company paying someone to do repetitive work by hand that software could do (data entry, chasing invoices, answering calls, scheduling, taking orders, making reports, copying data between systems).
 For each one, return the text's id and a QUOTE: one or two sentences copied EXACTLY, character for character, from that text. Never change, shorten inside, merge or invent words.
 If the text says what they pay or would pay, copy those exact words as paysQuote; otherwise leave it empty.
 Skip texts that aren't one of these. Return at most one item per text.
 
-${docs.map((d) => `[${d.id}] ${d.kind === "job" ? `JOB — ${d.company || "company"}: ${d.role}${d.pay ? ` (${d.pay})` : ""}` : "POST"}\n${d.text}`).join("\n\n")}`;
+${docs.map((d) => `[${d.id}] ${d.kind === "job" ? `JOB — ${d.company || "company"}: ${d.role}${d.pay ? ` (${d.pay})` : ""}` : d.kind === "review" ? `REVIEW — ${d.stars}★ App Store review of ${d.app}` : "POST"}\n${d.text}`).join("\n\n")}`;
 
 const norm = (s) => String(s || "").toLowerCase().replace(/[‘’ʼ]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "").replace(/\s+/g, " ").trim();
 /** True only if `quote` appears word for word in `text` (ignoring case, spacing and curly quotes). */
@@ -282,7 +325,8 @@ function addEvidence(st, raw) {
     const pays = job ? (d.pay ? `${d.pay} (job ad)` : "pays a salary for this work (job ad)") : paysQuote ? `“${paysQuote}”` : "unknown";
     const who = job ? `${d.company || "A company (name not given)"} is hiring ${/^[aeiou]/i.test(d.role) ? "an" : "a"} ${d.role}` : d.label;
     st.sources[d.url] = { url: d.url, domain: domainOf(d.url), verified: true, src: d.src };
-    st.complaints.push({ id: `c${st.complaints.length + 1}`, docId, kind: job ? "job" : "post", quote, who, where: d.src + (d.title && !job ? `: ${d.title}` : ""), pays, sources: [d.url] });
+    const where = d.kind === "review" ? `App Store review of ${d.app}` : d.src + (d.title && !job ? `: ${d.title}` : "");
+    st.complaints.push({ id: `c${st.complaints.length + 1}`, docId, kind: job ? "job" : d.kind === "review" ? "review" : "post", quote, who, where, origin: d.origin || d.src, pays, sources: [d.url] });
     if (job) (st.qualPending ||= []).push({ url: d.url, quote, date: st.id.slice(0, 10) }); // this ad qualified
     n++;
   }
@@ -345,7 +389,7 @@ function cleanProblems(st, text, memory) {
     if (!match) { const [m, sc] = best(p.title); if (sc >= 0.5) match = m; }
     if (!match) match = memory.find((m) => m.sources.some((u) => srcs.includes(u))) || null;
     if (!match && out.some((o) => similar(o.title, p.title) >= 0.6)) continue;
-    cids.forEach((x) => used.add(x));
+    if (match) cids.forEach((x) => used.add(x)); // evidence for a past idea
     if (match === "unknown") continue; // Gemini says it was reported before → never shown as new
     if (match) {
       const fresh = cids.filter((id) => !byId.get(id).sources.some((u) => match.sources.includes(u)));
@@ -357,14 +401,18 @@ function cleanProblems(st, text, memory) {
     }
     const leadUrls = new Set(srcs);
     if (leadUrls.size < MIN_LEADS) { dropped.push({ title: String(p.title).slice(0, 140), why: `only ${leadUrls.size} lead${leadUrls.size === 1 ? "" : "s"} (needs ${MIN_LEADS})` }); continue; }
+    cids.forEach((x) => used.add(x)); // only an idea that's kept claims its evidence (a dropped one leaves it for others)
     // The suggested price is an estimate; its reason may only mention dollar amounts written in the evidence.
     const evidence = cids.map((id) => `${byId.get(id).quote} ${byId.get(id).pays}`).join(" ");
     let priceWhy = String(p.priceWhy || "").slice(0, 300);
     if (!priceWhy || (priceWhy.match(/\$\s?\d[\d,.]*/g) || []).some((m) => !evidence.includes(m.replace(/\s/g, "")))) priceWhy = "Our estimate: no price was found in tonight's sources.";
     const s = { people: clamp(p.people), pays: clamp(p.pays), anger: clamp(p.anger), buildSpeed: clamp(p.buildSpeed) };
-    out.push({ key: `p${out.length + 1}`, title: String(p.title).slice(0, 140), summary: String(p.summary || "").slice(0, 600), who: String(p.buyer || p.who || "").slice(0, 200), complaintIds: cids, scores: s,
+    // The same complaint across several apps or sources ranks higher: +0.3 for each extra one (at most +1.5).
+    const origins = [...new Set(cids.map((id) => byId.get(id).origin || byId.get(id).where || "?"))];
+    const base = s.people * 0.3 + s.pays * 0.3 + s.anger * 0.2 + s.buildSpeed * 0.2, bonus = Math.min(1.5, 0.3 * (origins.length - 1));
+    out.push({ key: `p${out.length + 1}`, spread: origins.length, origins: origins.slice(0, 10), spreadBonus: Math.round(bonus * 10) / 10, title: String(p.title).slice(0, 140), summary: String(p.summary || "").slice(0, 600), who: String(p.buyer || p.who || "").slice(0, 200), complaintIds: cids, scores: s,
       buyer: String(p.buyer).trim().slice(0, 160), product: String(p.product).trim().slice(0, 300), price: p.price, priceWhy,
-      total: Math.round((s.people * 0.3 + s.pays * 0.3 + s.anger * 0.2 + s.buildSpeed * 0.2) * 10) / 10, why: String(p.why || "").slice(0, 600) });
+      total: Math.min(10, Math.round((base + bonus) * 10) / 10), why: String(p.why || "").slice(0, 600) });
   }
   return { problems: out.sort((a, b) => b.total - a.total || b.complaintIds.length - a.complaintIds.length), updates: [...upd.values()].slice(0, 10), dropped: dropped.slice(0, 20) };
 }
@@ -458,7 +506,7 @@ async function finish(env, st, past, cutShort) {
   if (report.problems.length) {
     const bucket = await getJSON(kv, `ideas:${month}`, []);
     const ideas = report.problems.map((p) => ({ id: `${st.id}-${p.key}`, night: st.id, title: p.title, summary: p.summary, who: p.who, total: p.total, scores: p.scores, why: p.why,
-      buyer: p.buyer, product: p.product, price: p.price, priceWhy: p.priceWhy,
+      buyer: p.buyer, product: p.product, price: p.price, priceWhy: p.priceWhy, spread: p.spread, origins: p.origins,
       complaints: p.complaints.slice(0, 12).map((c) => ({ kind: c.kind, quote: c.quote, who: c.who, pays: c.pays, sources: c.sources.slice(0, 2) })),
       competitors: p.competitors.map((c) => ({ name: c.name, price: c.price, priceSources: c.priceSources, dislikes: c.dislikes, dislikeSources: c.dislikeSources, sources: c.sources })), saved: now }));
     await putJSON(kv, `ideas:${month}`, [...bucket.filter((x) => x.night !== st.id), ...ideas]);

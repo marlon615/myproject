@@ -15,21 +15,27 @@ A Cron Trigger fires every 5 minutes (`*/5 6-9 * * *` UTC = 1:00–4:55 a.m. in 
 one small step and saves progress in KV, so it fits the free plan. **Gemini never searches** (Google refused free search
 grounding for this key): the Scout fetches public sources itself, and Gemini only reads that text.
 
-1. **Fetch** (no Gemini) — official public sources only, 38 fetches a night (twice the old 20), free tiers only:
+1. **Fetch** (no Gemini) — official public sources only, about 73 fetches a night, free tiers only:
    - **Hacker News** (official Algolia HN Search API): 12 phrase searches from the last 90 days ("I wish there was…",
      "is there a tool…", "manual data entry"…) plus 8 broad searches from the last 3 days ("invoice manual work",
      "appointment reminders"…), 40 results each, rotating every night.
+   - **Apple App Store** (public iTunes Search API + public customer-reviews RSS feed): the 30 most-rated US business
+     apps across invoicing, scheduling, CRM, delivery, inventory, field service, POS and payroll (chosen once a week:
+     8 searches), then each app's newest reviews every night (30 feeds), keeping **only 1- and 2-star reviews from the
+     last 30 days**. Apple has no page for a single review, so a review's proof link opens the app's public reviews
+     page (tagged with the review's id), and the lead names the reviewer, the stars, the app and the date.
    - **Stack Exchange** (public API, no key: 300 requests a day): the newest 100 questions on Software Recommendations
-     and on Web Applications, where people ask for software. 2 requests a night.
+     and on Web Applications, plus 4 searches a night (last 30 days) for small business and operations questions about
+     manual, repetitive or broken workflows ("manually every day spreadsheet", "copy data between"…). 6 requests a night.
    - **Remotive** jobs API: 2 searches a night (they ask for at most ~4 a day). **Himalayas** jobs API: 6 searches.
      **We Work Remotely** RSS: 5 feeds. **Remote OK** jobs API (their terms: link back and name Remote OK; we do) and
      **Working Nomads** jobs API: 1 each. Job boards: US/anywhere jobs whose title looks like repetitive work only
      (developers, writers and other unrelated jobs are left out and not saved).
-   - Stack Exchange, Remote OK and Working Nomads are asked only if their robots.txt allows it (checked each night).
+   - Apple, Stack Exchange, Remote OK and Working Nomads are asked only if their robots.txt allows it (checked each night).
    - **Reddit**: robots.txt checked every night; today it disallows automated access, so it's skipped and the report
      says so. (Jobicy and The Muse were tried and removed: both refused requests from Cloudflare.)
    **At least 150 texts a night:** if the fetches bring fewer than 150 new texts, up to 8 more Hacker News searches run;
-   if it's still under 150, the report says how many were found. At most 300 a night (10 Gemini reading calls). Texts
+   if it's still under 150, the report says how many were found. At most 400 a night (read 40 at a time: at most 10 Gemini reading calls). Texts
    already read on an earlier night aren't read again (the last ~12,000 are remembered). Each step takes at most 3
    sources and stops at ~80 texts, so it stays under the free plan's 10 ms of CPU (worst case measured: ~7 ms).
 2. **Read** — Gemini (no search) reads the texts in batches of ~30 and picks complaints, wishes for software, and job
@@ -43,7 +49,8 @@ grounding for this key): the Scout fetches public sources itself, and Gemini onl
      mention dollar amounts written in the evidence, otherwise it says "our estimate"), and
    - **at least 3 leads**: public posts or job ads from 3 different pages showing that exact problem, each with its link.
    Anything else is left out (the report and email say what and why). Scored 1–10 (people, already paying, anger, build
-   speed); total = 30/30/20/20. Ideas sent on any earlier report are never new again (see below).
+   speed); total = 30/30/20/20, **plus 0.3 for each extra app or source where the same complaint shows up** (at most
+   +1.5; e.g. the same complaint in reviews of 3 different apps = +0.6). Each idea shows where it was seen. Ideas sent on any earlier report are never new again (see below).
 4. **Competitors** — for the top 5, Hacker News posts about tools for that problem are fetched, and Gemini names the
    tools they mention, again only with a word-for-word quote. A price is shown only if it's written in that post.
 5. **Report** — usually done by about 3:30 a.m.; at 4:55 a.m. at the latest. Each idea shows its buyer, the product, the
