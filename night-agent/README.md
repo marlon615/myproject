@@ -20,8 +20,8 @@ grounding for this key): the Scout fetches public sources itself, and Gemini onl
      posts from the last 90 days, rotating through 30 phrases ("I wish there was…", "is there a tool…", "manual data
      entry", "we still use spreadsheets", "copy and paste between", "chasing invoices"…).
    - **Remotive** public jobs API: 2 searches a night (they ask for at most ~4 requests a day), US/anywhere jobs only.
-   - **Jobicy** public jobs API: 2 tag searches a night (data entry, customer support, bookkeeping, billing…), US jobs only
-     (they ask for at most about 1 request an hour). Pay comes from the job board's own salary field.
+   - **Jobicy** public jobs API: 1 tag search a night (data entry, customer support, bookkeeping, billing…), US jobs only
+     (they ask for at most about 1 request an hour; two in a row were refused). Pay comes from the job board's own salary field.
    - **Himalayas** public jobs API: 2 searches a night (data entry, administrative assistant, dispatcher…), only titles
      that look like repetitive work, US/anywhere only.
    - **We Work Remotely** public RSS feeds: 4 a night (customer support, sales & marketing, management & finance, all

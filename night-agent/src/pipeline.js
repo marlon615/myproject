@@ -38,15 +38,15 @@ const STOP_WORDS = { limit: "Gemini's free daily limit was reached", "no-free-qu
   location: "Gemini refused requests from this server's location", key: "There's no working Gemini API key", model: "No usable Gemini model was available", errors: "Gemini kept failing" };
 
 /**
- * Tonight's fetches (21): Reddit (rules check), 10 Hacker News searches (30 results each, last 90 days), 2 Remotive
- * searches (they ask for ≤4 a day), 2 Jobicy searches (≤1 an hour), 2 Himalayas searches, 4 We Work Remotely feeds.
+ * Tonight's fetches (20): Reddit (rules check), 10 Hacker News searches (30 results each, last 90 days), 2 Remotive
+ * searches (they ask for ≤4 a day), 1 Jobicy search (they ask for ≤1 an hour; 2 in a row were refused with 429), 2 Himalayas searches, 4 We Work Remotely feeds.
  */
 const pick = (list, nightNo, n) => Array.from({ length: n }, (_, k) => list[(nightNo * n + k) % list.length]);
 function fetchPlan(nightNo) {
   return [{ type: "reddit", q: "\"is there an app\" OR \"I wish there was\" small business" },
     ...pick(HN_PHRASES, nightNo, HN_PER_NIGHT).map((q) => ({ type: "hn", q })),
     ...pick(JOB_SEARCHES, nightNo, 2).map((q) => ({ type: "remotive", q })),
-    ...pick(JOBICY_TAGS, nightNo, 2).map((q) => ({ type: "jobicy", q })),
+    ...pick(JOBICY_TAGS, nightNo, 1).map((q) => ({ type: "jobicy", q })),
     ...pick(HIMALAYAS_SEARCHES, nightNo, 2).map((q) => ({ type: "himalayas", q })),
     ...WWR_FEEDS.map((q) => ({ type: "wwr", q }))];
 }
