@@ -16,7 +16,7 @@ id = "87c18e78a88a473fb1d3320c6bba6422"
 
 [vars]
 # Models tried in order (the first one this key can use with Google Search grounding on the free tier).
-GEMINI_MODELS = "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-flash-latest"
+GEMINI_MODELS = "gemini-flash-latest,gemini-flash-lite-latest,gemini-2.5-flash,gemini-2.5-flash-lite"
 # Raise this and redeploy to choose a new report passcode (forgotten passcode). Reports are kept.
 RESET_GENERATION = "1"
 # The morning report email (sent with Resend's free plan from its starter address, which can only email the address the

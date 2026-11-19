@@ -9,7 +9,7 @@
  */
 const http = require("http");
 const PORT = Number(process.argv[2] || 8930), B = `http://localhost:${PORT}`;
-let calls = [], limitAfter = Infinity, noGrounding = new Set();
+let calls = [], limitAfter = Infinity, noGrounding = new Set(), retired = new Set(), zeroQuota = new Set();
 const QUOTES = [
   "I wish there was an app that texted my HVAC customers automatically when the tech is 20 minutes out, we pay for ServiceTitan and it still can't do it right",
   "Is there a tool that turns my handwritten work orders into invoices? I'd happily pay $50 a month, retyping them every night is killing me",
@@ -58,7 +58,7 @@ http.createServer((rq, rs) => {
   rq.on("data", (d) => (data += d));
   rq.on("end", () => {
     const send = (code, obj, type = "application/json") => { rs.writeHead(code, { "content-type": type }); rs.end(typeof obj === "string" ? obj : JSON.stringify(obj)); };
-    if (u.pathname === "/control") { const b = JSON.parse(data || "{}"); if ("limitAfter" in b) limitAfter = b.limitAfter ?? Infinity; if (b.noGrounding) noGrounding = new Set(b.noGrounding); if (b.reset) calls = []; return send(200, { ok: true }); }
+    if (u.pathname === "/control") { const b = JSON.parse(data || "{}"); if ("limitAfter" in b) limitAfter = b.limitAfter ?? Infinity; if (b.noGrounding) noGrounding = new Set(b.noGrounding); if (b.retired) retired = new Set(b.retired); if (b.zeroQuota) zeroQuota = new Set(b.zeroQuota); if (b.reset) calls = []; return send(200, { ok: true }); }
     if (u.pathname === "/calls") return send(200, calls);
     if (u.pathname.startsWith("/r/")) { rs.writeHead(302, { location: `${B}/page/${u.pathname.slice(3)}` }); return rs.end(); }
     if (u.pathname === "/robots.txt") return send(200, "User-agent: *\nDisallow: /page/3\n", "text/plain");
@@ -72,6 +72,8 @@ http.createServer((rq, rs) => {
       const body = JSON.parse(data || "{}"), prompt = body.contents?.[0]?.parts?.[0]?.text || "";
       calls.push({ model: m[1], search: Boolean(body.tools), kind: body.generationConfig?.responseSchema ? "group" : /COMPETITOR/.test(prompt) ? "compete" : /Write each ad exactly like this/.test(prompt) ? "jobs" : "search", prompt: body.generationConfig?.responseSchema ? prompt.slice(0, 4000) : undefined });
       if (calls.filter((c) => c.model).length > limitAfter) return send(429, { error: { code: 429, message: "You exceeded your current quota, please check your plan and billing details.", status: "RESOURCE_EXHAUSTED" } });
+      if (retired.has(m[1])) return send(404, { error: { code: 404, message: `This model models/${m[1]} is no longer available to new users. Please update your code to use models/gemini-3.8-flash.`, status: "NOT_FOUND" } });
+      if (body.tools && zeroQuota.has(m[1])) return send(429, { error: { code: 429, message: "You exceeded your current quota, please check your plan and billing details.", status: "RESOURCE_EXHAUSTED" } });
       if (body.tools && noGrounding.has(m[1])) return send(400, { error: { code: 400, message: "Search Grounding is not supported for this model on the free tier.", status: "INVALID_ARGUMENT" } });
       return send(200, answer(prompt, body));
     }

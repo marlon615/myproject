@@ -125,6 +125,17 @@ function memoryKV() {
   check(n.report.status === "done" && n.report.model === "gemini-2.5-flash-lite", "if a model has no free Google Search grounding, the next model on the list is used", n.report.model);
   await ctl({ noGrounding: [] });
 
+  // ── A4b. A model retired for new users (404): the next one is used ────────────────────────────────
+  await ctl({ reset: true, retired: ["gemini-2.5-flash"] });
+  n = await night("2026-11-27");
+  check(n.report.status === "done" && n.report.model === "gemini-2.5-flash-lite", "if Google says a model is no longer available to new users, the next model is used (not a stop)", n.report.model);
+  // ── A4c. Every model refuses the first grounded request (no free quota): stop with a clear reason ───
+  await ctl({ reset: true, retired: [], zeroQuota: ["gemini-2.5-flash", "gemini-2.5-flash-lite"] });
+  n = await night("2026-11-28");
+  const tried = (await callsSoFar()).filter((c) => c.model).map((c) => c.model);
+  check(n.report.status === "stopped" && n.report.stopped.kind === "no-free-quota" && /seems to have no free quota for this key/.test(n.report.stopped.message) && tried.join() === "gemini-2.5-flash,gemini-2.5-flash-lite", "if every model refuses the very first search ('quota exceeded'), each is tried once, then the night stops and says grounding seems to have no free quota", tried.join(", "));
+  await ctl({ zeroQuota: [] });
+
   // ── A5. No key / wrong key ─────────────────────────────────────────────────────────────────────────
   const noKey = await P.runStep({ ...env, GEMINI_API_KEY: "" }, { now: Date.parse("2026-11-24T06:00:00Z") });
   check(noKey.status === "stopped" && /no working Gemini API key/.test(noKey.stopped.message), "with no Gemini key, the night stops at once and the report says to add GEMINI_API_KEY", noKey.stopped?.message);

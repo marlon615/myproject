@@ -17,10 +17,10 @@ import { nightQueries, nightJobQueries, searchPrompt, jobPrompt, competitorPromp
 import { jamaica, similar, getJSON, putJSON, domainOf } from "./util.js";
 
 const MAX_CALLS_PER_STEP = 1, RESOLVE_PER_STEP = 10, VERIFY_PER_STEP = 2, STEP_MS = 3 * 60 * 1000, TOP = 5;
-const DEFAULT_MODELS = "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-flash-latest";
+const DEFAULT_MODELS = "gemini-flash-latest,gemini-flash-lite-latest,gemini-2.5-flash,gemini-2.5-flash-lite";
 export const LAST_SLOT = { hour: 4, minute: 55 }; // the night's last run (Jamaica time): the report is finished then, whatever happens
 
-const STOP_WORDS = { limit: "Gemini's free daily limit was reached", location: "Gemini refused requests from this server's location", key: "There's no working Gemini API key", model: "No usable Gemini model was available", "no-grounding": "Google Search grounding isn't available on the free tier for the available models", errors: "Gemini kept failing" };
+const STOP_WORDS = { limit: "Gemini's free daily limit was reached", "no-free-quota": "Gemini refused the very first search request on every model (\"quota exceeded\"): Google Search grounding seems to have no free quota for this key", location: "Gemini refused requests from this server's location", key: "There's no working Gemini API key", model: "No usable Gemini model was available", "no-grounding": "Google Search grounding isn't available on the free tier for the available models", errors: "Gemini kept failing" };
 
 /** 12 complaint searches with 4 job-ad searches mixed in (one job search after every 3 complaint searches). */
 const mix = (qs, jobs) => qs.flatMap((q, i) => [{ q, done: false }, ...(i % 3 === 2 && jobs[(i - 2) / 3] ? [{ q: jobs[(i - 2) / 3], done: false, kind: "job" }] : [])]);
@@ -51,10 +51,18 @@ export async function runStep(env, { now = Date.now(), manual = false } = {}) {
   // Gemini call with the night's rules: a limit or a missing key stops the night; no grounding → try the next model.
   const gem = async (prompt, opts) => {
     for (;;) {
-      try { calls++; st.calls++; const r = await ask(env, st.model, prompt, opts); st.errorsInRow = 0; return r; }
+      try { calls++; st.calls++; const r = await ask(env, st.model, prompt, opts); st.errorsInRow = 0; st.okCalls = (st.okCalls || 0) + 1; return r; }
       catch (e) {
         if (!(e instanceof GeminiError)) throw e;
-        if (e.kind === "no-grounding" && opts.search && await nextModel(env, st)) continue;
+        // This model can't be used (retired for new users, or no free grounding): try the next one on the list.
+        if ((e.kind === "model" || (e.kind === "no-grounding" && opts.search)) && await nextModel(env, st)) continue;
+        // Refused before anything worked tonight: that model may have no free quota at all, so try the next one once.
+        if (e.kind === "limit" && !st.okCalls) {
+          st.refused = [...(st.refused || []), st.model];
+          if (await nextModel(env, st)) continue;
+          stop(st, "no-free-quota", `models tried: ${st.refused.join(", ")}`);
+          return null;
+        }
         if (["limit", "location", "key", "no-grounding", "model"].includes(e.kind)) { stop(st, e.kind, e.message); return null; }
         st.errorsInRow++; note(st, `Gemini error: ${e.message.slice(0, 160)}`);
         if (st.errorsInRow >= 4) stop(st, "errors", e.message);

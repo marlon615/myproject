@@ -22,7 +22,7 @@ function classify(status, body) {
   if (/location is not supported|not available in your country|region/i.test(msg)) return new GeminiError("location", msg, status);
   if (status === 401 || /API key not valid|API_KEY_INVALID|PERMISSION_DENIED.*key|missing.*key/i.test(msg)) return new GeminiError("key", msg, status);
   if (/google_search|grounding|search tool|tool.*not supported|free tier/i.test(msg)) return new GeminiError("no-grounding", msg, status);
-  if (status === 404) return new GeminiError("model", msg, status);
+  if (status === 404 || /no longer available|not found for API version|is not supported for generateContent/i.test(msg)) return new GeminiError("model", msg, status);
   return new GeminiError("other", msg, status);
 }
 
