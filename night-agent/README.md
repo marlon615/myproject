@@ -42,6 +42,16 @@ grounding for this key): the Scout fetches public sources itself, and Gemini onl
 5. **Report** — usually done by about 3:00 a.m.; at 4:55 a.m. at the latest. Up to 10 leads (public posts and job ads,
    never contacted). Ideas and leads are saved for good.
 
+**Job ads, saved for good.** Every job ad the Scout fetches (company, role, link, source, listed pay, date found) is
+written to a permanent SQLite database (a Cloudflare Durable Object, free plan, binding `JOBS`) in the same step it's
+fetched, before the night's working storage drops any text. Ads already read on an earlier night, or over the night's
+reading limit, are saved too. An ad is saved once (its link is the key) and keeps its first-found date; later runs add a
+sighting. It's marked **qualified** when Gemini finds a word-for-word quote in it showing paid repetitive work and the Scout
+keeps it as proof; once qualified it stays qualified. There is no delete anywhere in the code. If the database can't be
+reached, the ads wait in the night's state (and, at the end of a run, in KV `jobs-retry`) and are saved on the next try.
+All ads are on the dashboard's **Job ads** page (`/jobs`, newest first, "qualified only" filter); each night's report and
+the 6 a.m. email list every ad that night found, qualified or not, with the all-time totals.
+
 **Limits.** At most one Gemini call per step, at most 12 a night (10 reading batches, 1 grouping, 1 competitors). If Gemini refuses (limit, no free quota, retired model,
 missing key), the Scout tries the next model where that makes sense, otherwise stops for the night and says why.
 About 30 KV writes a night (free: 1,000 a day). Each step's own work measured 1–2 ms of CPU in tests (free: 10 ms).

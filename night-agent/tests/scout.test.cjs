@@ -20,6 +20,18 @@ const ctl = (b) => fetch(`${SB}/control`, { method: "POST", body: JSON.stringify
 const callsSoFar = async () => (await (await fetch(`${SB}/calls`)).json());
 const SOURCE_VARS = { HN_BASE: SB, REMOTIVE_BASE: SB, WWR_BASE: SB, REDDIT_BASE: SB, JOBICY_BASE: SB, HIMALAYAS_BASE: SB };
 
+/** The job-ad database for part A: the real SQL (src/jobstore.js) on Node's SQLite, called like the Durable Object
+ *  (arguments copied, as RPC does). failing(true) makes every call throw, like an unreachable database. */
+function memoryJobs(JobAdsStore) {
+  const { DatabaseSync } = require("node:sqlite");
+  const db = new DatabaseSync(":memory:");
+  const sql = { exec(q, ...b) { const rows = db.prepare(q).all(...b); return { toArray: () => rows, one: () => rows[0] }; } };
+  const store = new JobAdsStore(sql, (fn) => { db.exec("BEGIN"); try { const r = fn(); db.exec("COMMIT"); return r; } catch (e) { db.exec("ROLLBACK"); throw e; } });
+  let fail = false; const call = (name) => async (...a) => { if (fail) throw new Error("database unreachable (test)"); return structuredClone(store[name](...structuredClone(a))); };
+  const stub = { save: call("save"), qualify: call("qualify"), stats: call("stats"), list: call("list"), forRun: call("forRun") };
+  return { db, store, failing(v) { fail = v; }, idFromName: () => "all", get: () => stub };
+}
+
 function memoryKV() {
   const m = new Map(); let writes = 0;
   return { m, get writes() { return writes; }, resetWrites() { writes = 0; },
@@ -31,12 +43,13 @@ function memoryKV() {
   fs.mkdirSync(OUT, { recursive: true });
   const stub = spawn(process.execPath, [path.join(__dirname, "stub-gemini.cjs"), String(STUB)], { stdio: ["ignore", "pipe", "inherit"] });
   await new Promise((ok) => stub.stdout.once("data", ok));
-  const P = await import("../src/pipeline.js");
+  const P = await import("../src/pipeline.js"), { JobAdsStore } = await import("../src/jobstore.js");
+  const JOBS = memoryJobs(JobAdsStore);
   // Every address the agent asks for, and the CPU spent inside fetch (Cloudflare does that natively; it doesn't count).
   const fetched = []; const realFetch = globalThis.fetch; let inFetch = 0;
   globalThis.fetch = async (u, o) => { fetched.push(String(u?.url || u)); const c0 = process.cpuUsage(); const res = await realFetch(u, o); const buf = await res.arrayBuffer(); const c = process.cpuUsage(c0); inFetch += (c.user + c.system) / 1000; return new Response(buf, { status: res.status, headers: res.headers }); };
   let kv = memoryKV();
-  const env = { SCOUT: kv, GEMINI_API_KEY: "test-key", ALLOW_TEST: "1", GEMINI_BASE: SB, NTFY_BASE: `${SB}/ntfy`, ...SOURCE_VARS };
+  const env = { SCOUT: kv, JOBS, GEMINI_API_KEY: "test-key", ALLOW_TEST: "1", GEMINI_BASE: SB, NTFY_BASE: `${SB}/ntfy`, ...SOURCE_VARS };
   await kv.put("settings", JSON.stringify({ ntfyTopic: "night-agent-test" })); kv.resetWrites();
 
   async function night(day, { from = 0, e = env } = {}) {
@@ -50,7 +63,7 @@ function memoryKV() {
     return { st, steps, report: await e.SCOUT.get(`report:${st.id}`, "json") };
   }
 
-  await night("2026-11-10", { e: { ...env, SCOUT: memoryKV() } }); // warm-up night (first run compiles the code), not checked
+  await night("2026-11-10", { e: { ...env, SCOUT: memoryKV(), JOBS: memoryJobs(JobAdsStore) } }); // warm-up night (first run compiles the code), not checked
   await ctl({ reset: true }); fetched.length = 0;
   // ── A1. A normal night ──────────────────────────────────────────────────────────────────────────────
   let n = await night("2026-11-20");
@@ -66,7 +79,7 @@ function memoryKV() {
   check(jc.length === 1 && jc.every((c) => new URLSearchParams(c.query).get("geo") === "usa") && hc.length === 2 && wc.length === 4, "more job feeds: Jobicy (1 US search a night; they ask for ≤1 an hour), Himalayas (2 searches) and 4 We Work Remotely feeds", `${jc.length}/${hc.length}/${wc.length}`);
   check(calls1.some((c) => c.path === "/robots.txt") && !calls1.some((c) => c.path === "/search.json") && r.sourcesNote.some((s) => /Reddit's site rules/.test(s)), "Reddit: its rules (robots.txt) are checked first; they don't allow it, so Reddit isn't fetched and the report says so", r.sourcesNote[0]);
   check(fetched.every((u) => new URL(u).hostname === "localhost"), "every request went to the stand-ins only (nothing else was contacted)", `${fetched.length} requests`);
-  check(r.texts === 10, "it read 10 public texts: 8 posts and job ads, plus 2 posts about tools (non-US and non-repetitive job ads left out)", String(r.texts));
+  check(r.texts === 11, "it read 11 public texts: 9 posts and job ads, plus 2 posts about tools (non-US and non-repetitive job ads left out)", String(r.texts));
   check(!JSON.stringify(r).includes("Machine Learning") && !JSON.stringify(r).includes("Berlin"), "job ads that aren't repetitive work, or aren't open to the US, are left out");
   check(!JSON.stringify(r).includes("AI receptionist") && !JSON.stringify(r).includes("$999"), "a quote or a price that isn't word for word in the fetched text is left out (nothing made up)");
   const cs = Object.fromEntries(r.complaints.map((c) => [c.id, c]));
@@ -90,11 +103,26 @@ function memoryKV() {
   const ideas1 = await kv.get("ideas:2026-11", "json"), leads1 = await kv.get("leads:2026-11", "json");
   check(ideas1.length === 4 && leads1.length === 7 && ideas1[0].complaints[0].sources[0].url === "https://news.ycombinator.com/item?id=1001", "ideas and leads are saved for good with their proof");
 
+  // ── Job ads: every one saved for good, before the night's storage is cleared ────────────────────────
+  const EXPECTED_JOBS = { "https://remotive.com/remote-jobs/finance/accounts-receivable-clerk-1": ["Gulf Coast Food Distributors", "Accounts Receivable Clerk", true],
+    "https://jobicy.com/jobs/11-customer-service-scheduler": ["Lone Star HVAC Services", "Customer Service Scheduler", true],
+    "https://himalayas.app/companies/fresh-fields/jobs/accounts-payable-clerk": ["Fresh Fields Grocers", "Accounts Payable Clerk", true],
+    "https://weworkremotely.com/remote-jobs/acme-logistics-order-entry-specialist": ["Acme Logistics", "Order Entry Specialist", true],
+    "https://weworkremotely.com/remote-jobs/bright-dental-front-desk-receptionist": ["Bright Dental", "Front Desk Receptionist", false] };
+  const allJobs = () => JOBS.store.list({ limit: 500 }).rows;
+  const matchesExpected = (rows, date) => rows.length === 5 && rows.every((x) => EXPECTED_JOBS[x.url] && EXPECTED_JOBS[x.url][0] === x.company && EXPECTED_JOBS[x.url][1] === x.role && EXPECTED_JOBS[x.url][2] === x.qualified && x.firstFound === date);
+  const saved1 = allJobs(), state1 = await kv.get("night:2026-11-20", "json");
+  check(matchesExpected(saved1, "2026-11-20"), "every job ad found is saved in the database with company, role, link and date found (5 of 5, none missing)", saved1.map((x) => `${x.company}/${x.firstFound}`).join(", "));
+  check(Object.keys(state1.docs).length === 0 && (state1.jobsPending || []).length === 0 && saved1.length === 5, "the night's working storage was cleared, and every job ad was already in the database");
+  check(saved1.filter((x) => x.qualified).length === 4 && saved1.find((x) => x.company === "Bright Dental")?.qualified === false && saved1.filter((x) => x.qualified).every((x) => x.quote && r.complaints.some((c) => c.quote === x.quote)), "ads kept as proof are marked qualified (with their quote); an ad that didn't qualify is still saved, marked not qualified");
+  check(r.allJobAds?.length === 5 && r.allJobAds.filter((x) => x.qualified).length === 4 && r.jobAdsTotals?.total === 5, "the morning report lists every job ad the night found, qualified or not", `${r.allJobAds?.length} ads`);
+
   // Email and build prompt
   const E = await import("../src/email.js"), PR = await import("../src/prompt.js");
   const mail = E.buildEmail(r, r.id, null, "https://night-agent.example");
-  check(/^Night Agent: 3 ideas for Friday, November 20, 2026$/.test(mail.subject) && /OVERNIGHT\n10 public texts read \(Hacker News, job boards\) · 7 pieces of evidence with proof \(4 job ads\) · 4 new ideas · 3 Gemini calls/.test(mail.text), "the email says what the agent did overnight", mail.text.split("\n")[3]);
+  check(/^Night Agent: 3 ideas for Friday, November 20, 2026$/.test(mail.subject) && /OVERNIGHT\n11 public texts read \(Hacker News, job boards\) · 7 pieces of evidence with proof \(4 job ads\) · 4 new ideas · 3 Gemini calls/.test(mail.text), "the email says what the agent did overnight", mail.text.split("\n")[3]);
   check(/1\. Automatic 'tech is on the way' texts for HVAC customers — 7\.5\/10/.test(mail.text) && mail.text.includes("https://news.ycombinator.com/item?id=1001") && /Build it: https:\/\/night-agent\.example\/idea\/2026-11-20-p1/.test(mail.text) && /LEADS \(7, public posts and job ads — not contacted\)/.test(mail.text) && /Reddit's site rules/.test(mail.text) && /Reddit&#39;s site rules/.test(mail.html), "…the top 3 ideas with proof links, the leads, and why Reddit was skipped");
+  check(/JOB ADS FOUND \(5, 4 qualified · 5 saved in all, 4 qualified\)/.test(mail.text) && (mail.text.match(/\[QUALIFIED\]/g) || []).length === 4 && /\[not qualified\] Bright Dental — Front Desk Receptionist · https:\/\/weworkremotely\.com\/remote-jobs\/bright-dental-front-desk-receptionist · found 2026-11-20/.test(mail.text) && (mail.html.match(/✓ Qualified/g) || []).length === 4 && /Not qualified<\/span> · <b>Bright Dental/.test(mail.html), "the morning email lists every job ad (company, role, link, date found) and marks which qualified");
   const prompt = PR.buildPrompt(ideas1[0]);
   const money = [...prompt.matchAll(/\$\d[\d,.]*(?:\/\w+)?/g)].map((m) => m[0]);
   check(prompt.includes(ideas1[0].complaints[0].quote) && prompt.includes("https://news.ycombinator.com/item?id=1001") && /Jobber: \$69\/month \(source: https:\/\/news\.ycombinator\.com\/item\?id=2001\)/.test(prompt) && money.every((m) => JSON.stringify(ideas1[0]).includes(m)), "'Yes, build this' prompt: real quotes, links, scores and competitors; no numbers of its own");
@@ -103,6 +131,9 @@ function memoryKV() {
   await ctl({ reset: true });
   n = await night("2026-11-21");
   check(n.report.texts === 0 && (await callsSoFar()).filter((c) => c.model).length === 0 && n.report.problems.length === 0, "the next night, texts already read aren't read again (no Gemini calls wasted) and nothing is repeated");
+  const saved2 = allJobs();
+  check(matchesExpected(saved2, "2026-11-20") && saved2.every((x) => x.timesSeen === 2 && x.lastSeen === "2026-11-21"), "between runs nothing is lost or doubled: the same 5 ads, first-found date kept, seen again on night 2, still qualified", saved2.map((x) => `${x.timesSeen}×/${x.lastSeen}`).join(", "));
+  check(n.report.allJobAds?.length === 5 && n.report.allJobAds.every((x) => x.firstFound === "2026-11-20" && x.firstRun === "2026-11-20"), "night 2's report still lists the 5 ads it found (already read, so not analysed again), with their first-found date");
 
   // ── A3. Limits and models ──────────────────────────────────────────────────────────────────────────
   const fresh = () => { kv = memoryKV(); return { ...env, SCOUT: kv }; };
@@ -118,6 +149,24 @@ function memoryKV() {
   await ctl({ reset: true, zeroQuota: [] });
   n = await night("2026-11-25", { e: { ...fresh(), GEMINI_API_KEY: "" } });
   check(n.report.status === "stopped" && /no working Gemini API key/.test(n.report.stopped.message), "with no Gemini key, the night stops and says to add GEMINI_API_KEY");
+  // The database unreachable for a whole run: the ads are kept (KV "jobs-retry") and saved on the next run.
+  const J2 = memoryJobs(JobAdsStore); J2.failing(true); kv = memoryKV();
+  n = await night("2026-11-27", { e: { ...env, SCOUT: kv, JOBS: J2 } });
+  const retry = await kv.get("jobs-retry", "json");
+  check(J2.store.stats().total === 0 && retry?.jobs?.length === 5 && retry.quals.length === 4 && /couldn't be read/.test(n.report.allJobAdsError || "") && n.report.log.some((l) => /couldn't be saved to the database yet/.test(l.msg)), "if the database can't be reached, no job ad is dropped: all 5 are kept for the next run, and the report says so", `${retry?.jobs?.length} kept`);
+  J2.failing(false);
+  n = await night("2026-11-28", { e: { ...env, SCOUT: kv, JOBS: J2 } });
+  const saved3 = J2.store.list({ limit: 500 }).rows;
+  check(matchesExpected(saved3, "2026-11-27") && (await kv.get("jobs-retry", "json")).jobs.length === 0, "…and the next run saves them all, with the date they were really found and their qualified marks", saved3.map((x) => x.firstFound).join(", "));
+  // Unreachable for part of a night only: saved in a later step of the same night.
+  const J3 = memoryJobs(JobAdsStore); J3.failing(true); kv = memoryKV();
+  const e3 = { ...env, SCOUT: kv, JOBS: J3 }; let st3;
+  for (let k = 0; k < 7; k++) st3 = await P.runStep(e3, { now: Date.parse("2026-11-29T06:00:00Z") + k * 300000 });
+  const pendingMid = (await kv.get("night:2026-11-29", "json")).jobsPending.length;
+  J3.failing(false); n = await night("2026-11-29", { from: 7, e: e3 });
+  check(pendingMid === 5 && matchesExpected(J3.store.list({ limit: 500 }).rows, "2026-11-29"), "if the database is down for a few steps, the ads wait in the night's state and are saved when it's back", `${pendingMid} waiting, then ${J3.store.stats().total} saved`);
+  const srcText = fs.readdirSync(path.join(ROOT, "src")).map((f) => fs.readFileSync(path.join(ROOT, "src", f), "utf8")).join("\n");
+  check(!/DELETE\s+FROM|DROP\s+TABLE|TRUNCATE|storage\.delete|deleteAll/i.test(srcText), "there is no code that deletes job ads (no DELETE, DROP or storage delete anywhere)");
   n = await night("2026-11-26", { from: 47, e: fresh() });
   if (!(n.report.cutShort === true && n.steps.length === 1)) console.log("DEBUG cut", n.steps.length, n.report.cutShort, n.report.status, n.st.log.map((l) => l.msg).slice(-3).join(" / "));
   check(n.report.cutShort === true && n.steps.length === 1, "at 4:55 a.m. the report is finished with whatever was done (marked as cut short)");
@@ -131,9 +180,10 @@ function memoryKV() {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "night-agent-"));
   const log = [];
   const vars = { ALLOW_TEST: "1", GEMINI_BASE: SB, GEMINI_API_KEY: "test-key", NTFY_BASE: `${SB}/ntfy`, RESEND_API_KEY: "re_test", RESEND_BASE: SB, ...SOURCE_VARS };
-  const w = spawn(WRANGLER, ["dev", "--port", String(PORT), "--persist-to", stateDir, "--test-scheduled", "--show-interactive-dev-session=false", "--log-level", "warn", ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`])],
+  const startWorker = () => spawn(WRANGLER, ["dev", "--port", String(PORT), "--persist-to", stateDir, "--test-scheduled", "--show-interactive-dev-session=false", "--log-level", "warn", ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`])],
     { cwd: ROOT, env: { ...process.env, WRANGLER_SEND_METRICS: "false", CLOUDFLARE_API_TOKEN: "placeholder-not-used-locally" }, stdio: ["ignore", "pipe", "pipe"] });
-  w.stdout.on("data", (d) => log.push(String(d))); w.stderr.on("data", (d) => log.push(String(d)));
+  const listen = (p) => { p.stdout.on("data", (d) => log.push(String(d))); p.stderr.on("data", (d) => log.push(String(d))); return p; };
+  let w = listen(startWorker());
   const browser = await chromium.launch();
   try {
     for (let i = 0; i < 120; i++) { try { await fetch(BASE); break; } catch { await sleep(500); } }
@@ -170,6 +220,27 @@ function memoryKV() {
     check(await pg.locator("main section.card").count() === 4 && /chosen to build/.test(await pg.innerText("main")), "the Ideas page lists every saved idea");
     await pg.goto(`${BASE}/leads`);
     check(await pg.locator("main blockquote").count() === 7 && await pg.locator("main .tag.warn", { hasText: "Job ad" }).count() === 4, "the Leads page lists every lead, job ads labeled");
+    // Job ads on the real Worker (a real SQLite Durable Object).
+    check(/5 job ads saved · 4 qualified/.test(dash), "the dashboard shows how many job ads are saved and how many qualified");
+    check(/All job ads found \(5, 4 qualified\)/.test(text) && /Bright Dental — Front Desk Receptionist/.test(text), "the night's report lists every job ad it found, qualified or not");
+    check(/JOB ADS FOUND \(5, 4 qualified/.test(sent[0].email.text) && /\[not qualified\] Bright Dental/.test(sent[0].email.text), "the 6 a.m. email lists every job ad with its qualified mark");
+    const jobsView = async () => { await pg.goto(`${BASE}/jobs`); return { text: (await pg.innerText("main")).replace(/\s+/g, " "), q: await pg.locator("main .tag.ok", { hasText: "Qualified" }).count(), nq: await pg.locator("main .tag", { hasText: "Not qualified" }).count(),
+      links: await pg.locator("main li a[href^='https://']").evaluateAll((as) => as.map((a) => a.href).sort()) }; };
+    const j1 = await jobsView();
+    check(/5 job ads saved · 4 qualified · 1 not qualified/.test(j1.text) && j1.q === 4 && j1.nq === 1 && j1.links.length === 5 && /Gulf Coast Food Distributors — Accounts Receivable Clerk/.test(j1.text) && /found 2026-12-01/.test(j1.text), "the Job ads page lists every saved ad: company, role, link, date found, qualified or not", j1.text.slice(0, 120));
+    await pg.screenshot({ path: path.join(OUT, "job-ads-phone.png"), fullPage: true });
+    await pg.goto(`${BASE}/jobs?qualified=1`);
+    check(await pg.locator("main li").count() === 4, "…and can show only the qualified ones");
+    // A second night: the same ads again → still 5, nothing doubled.
+    for (let k = 0; k < 48; k++) { const st = await (await fetch(`${BASE}/__test/tick?time=${Date.parse("2026-12-02T06:00:00Z") + k * 300000}`)).json(); await idle(); if (st.status && st.status !== "running") break; }
+    const j2 = await jobsView();
+    check(/5 job ads saved · 4 qualified/.test(j2.text) && JSON.stringify(j2.links) === JSON.stringify(j1.links) && /seen on 2 runs/.test(j2.text), "after a second night on the real Worker: the same 5 ads, none lost or doubled", j2.text.slice(0, 80));
+    // Restart the Worker (same saved data): nothing is lost.
+    w.kill("SIGTERM"); await new Promise((ok) => w.once("exit", ok)); await sleep(500);
+    w = listen(startWorker());
+    for (let i = 0; i < 120; i++) { try { await fetch(BASE); break; } catch { await sleep(500); } }
+    const j3 = await jobsView();
+    check(/5 job ads saved · 4 qualified/.test(j3.text) && JSON.stringify(j3.links) === JSON.stringify(j1.links), "after restarting the Worker, every job ad is still there", j3.text.slice(0, 80));
     const json401 = await fetch(`${BASE}/report/2026-12-01.json`);
     check(json401.status === 401, "without signing in, nothing can be read");
     check(errs.length === 0 && !log.join("").match(/night step failed|live test failed|Uncaught/), "no page or Worker errors", errs.join(" | ").slice(0, 200));

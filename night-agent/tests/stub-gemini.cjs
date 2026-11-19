@@ -34,6 +34,7 @@ const HIMALAYAS = { offset: 0, limit: 20, totalCount: 2, jobs: [
 ] };
 const RSS = `<?xml version="1.0"?><rss><channel>
 <item><title>Acme Logistics: Order Entry Specialist</title><region>USA Only</region><link>https://weworkremotely.com/remote-jobs/acme-logistics-order-entry-specialist</link><description><![CDATA[<p>Type phone and email orders from restaurants into our order system and confirm delivery dates by phone.</p>]]></description></item>
+<item><title>Bright Dental: Front Desk Receptionist</title><region>USA Only</region><link>https://weworkremotely.com/remote-jobs/bright-dental-front-desk-receptionist</link><description><![CDATA[<p>Greet patients warmly at our front desk and keep the waiting room tidy for every visitor.</p>]]></description></item>
 <item><title>Cool Startup: Senior Rust Engineer</title><region>Anywhere in the World</region><link>https://weworkremotely.com/remote-jobs/cool-startup-senior-rust-engineer</link><description><![CDATA[<p>Build distributed systems in Rust for our platform team.</p>]]></description></item>
 </channel></rss>`;
 

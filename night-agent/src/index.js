@@ -6,11 +6,13 @@
  * Pages (behind a passcode chosen on the first visit; sessions are cookies, 30 days):
  *   /             the latest morning report        /night/<id>   a past report      /history   every night
  *   /settings     Gemini key status, "Run one step now", phone alert (ntfy)        /report/<id>.json   raw data
- * Storage: Cloudflare KV (binding SCOUT), about 50 writes a night (free plan: 1,000 a day).
+ *   /jobs         every job ad ever found (qualified or not), from the permanent database
+ * Storage: Cloudflare KV (binding SCOUT), about 50 writes a night (free plan: 1,000 a day); job ads in a SQLite Durable
+ * Object (binding JOBS, jobdb.js), saved for good.
  * Secret: GEMINI_API_KEY (Google AI Studio, free tier). Nothing here ever turns on billing.
  */
-import { runStep } from "./pipeline.js";
-import { reportPage, historyPage, settingsPage, authPage, page, dashboardPage, ideasPage, ideaPage, promptPage, leadsPage } from "./report.js";
+import { runStep, jobsDb } from "./pipeline.js";
+import { reportPage, historyPage, settingsPage, authPage, page, dashboardPage, ideasPage, ideaPage, promptPage, leadsPage, jobsPage } from "./report.js";
 import { morningEmail, emailStatusText, testEmail, reportEmailNow } from "./email.js";
 import { buildPrompt } from "./prompt.js";
 import { getJSON, putJSON, randomHex, sha256, hex, jamaica, jamaicaTime } from "./util.js";
@@ -99,7 +101,8 @@ async function handle(req, env) {
   if (path === "/") {
     const index = await getJSON(kv, "index", []), totals = await getJSON(kv, "totals", { ideas: 0, leads: 0 }), built = await getJSON(kv, "built", {});
     const r = index[0] ? await getJSON(kv, `report:${index[0].id}`) : null;
-    return html(dashboardPage({ r, email: emailStatusText(await getJSON(kv, `email:${r && !r.id.endsWith("-test") ? r.id : jamaica().date}`)), totals: { nights: index.length, ideas: totals.ideas, leads: totals.leads, built: Object.keys(built).length } }));
+    let jobs = null; try { jobs = (await jobsDb(env)?.stats()) ?? null; } catch { jobs = null; }
+    return html(dashboardPage({ r, jobs, email: emailStatusText(await getJSON(kv, `email:${r && !r.id.endsWith("-test") ? r.id : jamaica().date}`)), totals: { nights: index.length, ideas: totals.ideas, leads: totals.leads, built: Object.keys(built).length } }));
   }
   if (path === "/ideas" || path === "/leads") {
     const months = await getJSON(kv, "months", []), month = monthParam(url, months);
@@ -112,6 +115,16 @@ async function handle(req, env) {
     if (!idea) return html(page("Not found", "<h1>That idea wasn't found</h1><p><a href='/ideas'>All ideas</a></p>"), 404);
     const built = (await getJSON(kv, "built", {}))[id];
     return html(ip[2] ? promptPage(idea, buildPrompt(idea)) : ideaPage(idea, built));
+  }
+  if (path === "/jobs") {
+    const qualifiedOnly = url.searchParams.get("qualified") === "1", per = 100;
+    let pg = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
+    const db = jobsDb(env);
+    if (!db) return html(page("Night Agent · job ads", "<h1>All job ads</h1><p>The job-ad database isn't connected.</p>"), 500);
+    let d; try { d = await db.list({ offset: (pg - 1) * per, limit: per, qualifiedOnly }); }
+    catch (e) { return html(page("Night Agent · job ads", `<h1>All job ads</h1>${"<p>The job-ad database couldn't be read just now. Nothing is lost: try again in a minute.</p>"}`), 503); }
+    const count = qualifiedOnly ? d.qualified : d.total;
+    return html(jobsPage({ ...d, page: pg, pages: Math.max(1, Math.ceil(count / per)), qualifiedOnly }));
   }
   if (path === "/history") return html(historyPage(await getJSON(kv, "index", [])));
   if (path === "/settings") return html(await settingsHtml(env, ""));
@@ -163,3 +176,5 @@ export default {
     else ctx.waitUntil(nightTick(env, event.scheduledTime));
   },
 };
+
+export { JobAdsDB } from "./jobdb.js";

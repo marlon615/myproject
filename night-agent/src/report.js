@@ -11,7 +11,7 @@ a{color:var(--brand)}.card{background:var(--card);border:1px solid var(--line);b
 .bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden}.bar i{display:block;height:100%;background:var(--brand)}
 blockquote{margin:8px 0;padding:8px 12px;border-left:3px solid var(--line);background:color-mix(in srgb,var(--line) 25%,transparent);border-radius:0 8px 8px 0}
 .src{font-size:.85rem}.tag{display:inline-block;font-size:.75rem;font-weight:700;border-radius:999px;padding:1px 8px;margin-left:4px}
-.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}.warn{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}.bad{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad)}
+.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}.warn{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}.bad{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad)}.nq{background:color-mix(in srgb,var(--ink2) 16%,transparent);color:var(--ink2)}
 .status{padding:12px 14px;border-radius:12px;font-weight:600}.status.done{background:color-mix(in srgb,var(--ok) 15%,transparent)}.status.stopped{background:color-mix(in srgb,var(--warn) 18%,transparent)}
 button,.btn{font:inherit;font-weight:700;border:0;border-radius:10px;padding:10px 16px;background:var(--brand);color:#fff;cursor:pointer;text-decoration:none;display:inline-block}
 .btn2{background:transparent;color:var(--ink);border:1px solid var(--line)}input{font:inherit;width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)}
@@ -20,7 +20,7 @@ details summary{cursor:pointer;font-weight:600}nav{display:flex;gap:10px;flex-wr
 export function page(title, body) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${esc(title)}</title><style>${CSS}</style></head><body><main>${body}</main></body></html>`;
 }
-export const nav = `<nav><a href="/">Dashboard</a><a href="/history">Reports</a><a href="/ideas">Ideas</a><a href="/leads">Leads</a><a href="/settings">Settings</a></nav>`;
+export const nav = `<nav><a href="/">Dashboard</a><a href="/history">Reports</a><a href="/ideas">Ideas</a><a href="/leads">Leads</a><a href="/jobs">Job ads</a><a href="/settings">Settings</a></nav>`;
 const who = (w) => w || "Poster (details not confirmed)";
 const buildBtn = (id) => `<form method="post" action="/idea/${esc(encodeURIComponent(id))}/build" style="margin-top:10px"><button>Yes, build this</button></form>`;
 const link = (s) => `<a href="${esc(s.url)}" rel="noopener noreferrer nofollow" target="_blank">${esc(s.domain || "source")}</a>${s.verified === true ? `<span class="tag ok" title="The quote's words were found on this page">quote found on page</span>` : ""}`;
@@ -42,6 +42,7 @@ export function reportPage(r, { notice = "" } = {}) {
     <p class="muted">Every quote below is copied word for word from the public page it links to (checked by the agent). Anything without proof was left out, and so were ideas from earlier reports.</p>${(r.sourcesNote || []).map((n) => `<p class="muted">ℹ️ ${esc(n)}</p>`).join("")}</div>
     ${problems || (r.grouped ? `<div class="card"><p>No new problems with proof tonight.</p></div>` : "")}${loose}
     ${leadsCard(r.leads || [], "Leads from this night")}
+    ${jobAdsCard(r)}
     <details class="card"><summary>Night log</summary><ul class="muted">${r.log.map((l) => `<li>${esc(jamaicaTime(l.at))}: ${esc(l.msg)}</li>`).join("")}</ul></details>`);
 }
 
@@ -69,14 +70,38 @@ export function authPage(mode, err = "") {
     ${err ? `<p class="status stopped">${esc(err)}</p>` : ""}<form method="post" action="/${mode === "setup" ? "setup" : "login"}"><input type="password" name="passcode" autocomplete="${mode === "setup" ? "new-password" : "current-password"}" minlength="8" required placeholder="Passcode"><p><button>${mode === "setup" ? "Save passcode" : "Sign in"}</button></p></form></div>`);
 }
 
+const QUALIFIED_NOTE = "Qualified = a word-for-word quote in the ad shows a company paying for repetitive work software could do, so the Scout kept it as proof.";
+const jobLine = (a, night) => `<li style="margin-bottom:8px">${a.qualified ? `<span class="tag ok">✓ Qualified</span>` : `<span class="tag nq">Not qualified</span>`} <b>${esc(a.company || "Company not given")}</b> — ${esc(a.role || "role not given")}
+  <div class="src"><a href="${esc(a.url)}" rel="noopener noreferrer nofollow" target="_blank">${esc(a.source || "job ad")}</a>${a.pay ? ` · ${esc(a.pay)}` : ""} · found ${esc(a.firstFound)}${night && a.firstRun !== night ? " (first found then; seen again this night)" : ""}${a.timesSeen > 1 ? ` · seen on ${a.timesSeen} runs` : ""}</div></li>`;
+
+/** Every job ad a night found, qualified or not (from the permanent database). */
+function jobAdsCard(r) {
+  if (r.allJobAdsError) return `<section class="card"><h2>Job ads found</h2><p class="status stopped">${esc(r.allJobAdsError)}</p></section>`;
+  if (!r.allJobAds) return "";
+  const ads = r.allJobAds, q = ads.filter((a) => a.qualified).length;
+  return `<section class="card"><h2>All job ads found (${ads.length}, ${q} qualified)</h2><p class="muted">Every job ad the Scout found this night, saved for good. ${QUALIFIED_NOTE}${r.jobAdsTotals ? ` In all: <b>${r.jobAdsTotals.total}</b> saved, ${r.jobAdsTotals.qualified} qualified (<a href="/jobs">see all</a>).` : ""}</p>
+    ${ads.length ? `<ul style="padding-left:18px">${ads.map((a) => jobLine(a, r.id)).join("")}</ul>` : "<p>No job ads this night.</p>"}</section>`;
+}
+
+/** Every job ad ever found, newest first, 100 a page. */
+export function jobsPage({ rows, total, qualified, page: pg, pages, qualifiedOnly }) {
+  const link = (p, q) => `/jobs?page=${p}${q ? "&qualified=1" : ""}`;
+  const pager = pages > 1 ? `<nav>${Array.from({ length: pages }, (_, i) => i + 1).map((p) => p === pg ? `<b>${p}</b>` : `<a href="${link(p, qualifiedOnly)}">${p}</a>`).join("")}</nav>` : "";
+  return page("Night Agent · job ads", `<h1>All job ads</h1>${nav}<div class="card"><b>${total}</b> job ads saved · <b>${qualified}</b> qualified · ${total - qualified} not qualified
+    <p class="muted">Every job ad the Scout has ever found, saved for good the moment it's fetched (never deleted). ${QUALIFIED_NOTE}</p>
+    <nav>${qualifiedOnly ? `<a href="/jobs">Show all</a><b>Qualified only</b>` : `<b>Show all</b><a href="/jobs?qualified=1">Qualified only</a>`}</nav></div>
+    ${pager}<section class="card">${rows.length ? `<ul style="padding-left:18px">${rows.map((a) => jobLine(a, null)).join("")}</ul>` : "<p>No job ads saved yet.</p>"}</section>${pager}`);
+}
+
 function leadsCard(leads, title) {
   return `<section class="card"><h2>${esc(title)}${leads.length ? ` (${leads.length})` : ""}</h2><p class="muted">Public posts where someone asked for software like this, and public job ads for work software could do. Never contacted.</p>${leads.length ? leads.map((l) => `<blockquote>“${esc(l.quote)}”<div class="muted">— ${esc(who(l.who))}${l.pays && l.pays !== "unknown" ? ` · pays: ${esc(l.pays)}` : ""}${l.idea ? ` · idea: ${l.ideaId ? `<a href="/idea/${esc(encodeURIComponent(l.ideaId))}">${esc(l.idea)}</a>` : esc(l.idea)}` : ""}${l.night ? ` · ${esc(l.night)}` : ""}</div><div class="src">${l.kind === "job" ? `<span class="tag warn">Job ad</span> ` : "Post: "}${l.sources.map(link).join(" · ")}</div></blockquote>`).join("") : "<p>No leads yet.</p>"}</section>`;
 }
 
 /** Home: the latest night at a glance, this morning's email, and the top ideas with "Yes, build this". */
-export function dashboardPage({ r, email, totals }) {
+export function dashboardPage({ r, email, totals, jobs }) {
   const head = `<h1>Night Agent</h1><p class="muted">Your private dashboard. The Scout runs 1:00–4:55 a.m. and emails you at 6:00 a.m. Jamaica time.</p>${nav}`;
-  const stats = `<div class="card"><b>${totals.nights}</b> night${totals.nights === 1 ? "" : "s"} · <b>${totals.ideas}</b> ideas saved · <b>${totals.leads}</b> leads saved · ${totals.built} chosen to build</div>`;
+  const stats = `<div class="card"><b>${totals.nights}</b> night${totals.nights === 1 ? "" : "s"} · <b>${totals.ideas}</b> ideas saved · <b>${totals.leads}</b> leads saved · ${totals.built} chosen to build
+    <div style="margin-top:6px">${jobs ? `<a href="/jobs"><b>${jobs.total}</b> job ads saved</a> · ${jobs.qualified} qualified` : `<span class="muted">Job ads: the database couldn't be read just now.</span>`}</div></div>`;
   if (!r) return page("Night Agent", `${head}${stats}<div class="card"><h2>No report yet</h2><p>The first morning report appears here after the first night (with your Gemini key added).</p><p class="muted">Email: ${esc(email)}</p></div>`);
   return page("Night Agent", `${head}${stats}<div class="card"><div class="top"><h2>Last night: ${esc(prettyNight(r.id.slice(0, 10)))}${r.id.endsWith("-test") ? " (test)" : ""}</h2><a href="/night/${esc(r.id)}">Full report</a></div>
     ${r.stopped ? `<p class="status stopped">⚠️ Stopped early: ${esc(r.stopped.message)}</p>` : `<p class="status done">✅ ${r.cutShort ? "Ran out of time before finishing" : "Finished"}</p>`}

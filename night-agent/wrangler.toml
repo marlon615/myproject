@@ -14,6 +14,15 @@ crons = ["*/5 6-9 * * *", "0 11 * * *"] # the night, and the 6:00 a.m. Jamaica e
 binding = "SCOUT"
 id = "87c18e78a88a473fb1d3320c6bba6422"
 
+# Every job ad the Scout finds, saved for good (SQLite Durable Object, free plan; no deletes anywhere).
+[[durable_objects.bindings]]
+name = "JOBS"
+class_name = "JobAdsDB"
+
+[[migrations]]
+tag = "v1-job-ads"
+new_sqlite_classes = ["JobAdsDB"]
+
 [vars]
 # Models tried in order (the first one this key can use with Google Search grounding on the free tier).
 GEMINI_MODELS = "gemini-flash-lite-latest,gemini-flash-latest,gemini-2.5-flash-lite,gemini-2.5-flash"

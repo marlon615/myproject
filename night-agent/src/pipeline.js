@@ -52,7 +52,7 @@ function fetchPlan(nightNo) {
 }
 function newNight(id, nightNo) {
   return { id, nightNo, startedAt: new Date().toISOString(), status: "running", model: null, triedModels: [], stopped: null, calls: 0, okCalls: 0, steps: 0, errorsInRow: 0,
-    fetchQueue: fetchPlan(nightNo), fetched: [], docs: {}, nextDoc: 1, analyzeQueue: null, complaints: [], sources: {}, problems: null, compFetched: false, compDocs: {}, compDone: false, competitors: {}, log: [], notes: [] };
+    fetchQueue: fetchPlan(nightNo), fetched: [], docs: {}, nextDoc: 1, analyzeQueue: null, complaints: [], sources: {}, problems: null, compFetched: false, compDocs: {}, compDone: false, competitors: {}, log: [], notes: [], jobsPending: [], qualPending: [] };
 }
 const note = (st, msg) => { st.log.push({ at: new Date().toISOString(), msg }); if (st.log.length > 80) st.log.shift(); };
 function stop(st, kind, message) {
@@ -92,7 +92,7 @@ export async function runStep(env, { now = Date.now(), manual = false } = {}) {
     // 1. Fetch public sources (no Gemini).
     if (st.fetchQueue.length) {
       const seenDocs = new Set(past.docs || []);
-      for (const task of st.fetchQueue.splice(0, FETCH_PER_STEP)) await fetchTask(env, st, task, seenDocs, now);
+      for (const task of st.fetchQueue.splice(0, FETCH_PER_STEP)) await fetchTask(env, st, task, seenDocs, now, jm.date);
     }
     if (!st.fetchQueue.length && !st.analyzeQueue) {
       const ids = Object.keys(st.docs);
@@ -134,6 +134,8 @@ export async function runStep(env, { now = Date.now(), manual = false } = {}) {
   } catch (e) { note(st, `Step error: ${String(e?.message || e).slice(0, 200)}`); }
 
   const working = !st.stopped && (st.fetchQueue.length || !st.analyzeQueue || st.analyzeQueue.length || !st.problems || !st.compDone);
+  // Job ads go to the permanent database now, before this step's saved state drops any text (slim, finish).
+  await flushJobs(env, st, kv, Boolean(isLast || !working));
   if (isLast || !working) await finish(env, st, past, Boolean(isLast && working));
   else await putJSON(kv, `night:${id}`, slim(st), { expirationTtl: 60 * 86400 });
   return st;
@@ -147,7 +149,32 @@ function slim(st) {
   return st;
 }
 
-async function fetchTask(env, st, task, seenDocs, now) {
+/** The permanent job-ad database: a SQLite Durable Object on Cloudflare (jobdb.js), a local SQLite in the tests. */
+export const jobsDb = (env) => (env.JOBS ? env.JOBS.get(env.JOBS.idFromName("all")) : null);
+
+/** Saves this run's waiting job ads (and "qualified" marks) to the database. If the database can't be reached, they stay
+ *  in the night's state and are retried next step; at the end of a run they're kept in KV ("jobs-retry", no expiry) and
+ *  retried on the next run. Saving twice is harmless, so nothing is lost and nothing is doubled. */
+async function flushJobs(env, st, kv, final) {
+  const db = jobsDb(env);
+  st.jobsPending ||= []; st.qualPending ||= [];
+  if (!db) return;
+  const retry = await getJSON(kv, "jobs-retry", { jobs: [], quals: [] });
+  const jobs = [...(retry.jobs || []), ...st.jobsPending], quals = [...(retry.quals || []), ...st.qualPending];
+  if (!jobs.length && !quals.length) return;
+  try {
+    if (jobs.length) { const r = await db.save(jobs); st.jobsAdded = (st.jobsAdded || 0) + r.added; }
+    st.jobsPending = [];
+    if (quals.length) await db.qualify(quals);
+    st.qualPending = [];
+    if (retry.jobs?.length || retry.quals?.length) await putJSON(kv, "jobs-retry", { jobs: [], quals: [] });
+  } catch (e) {
+    note(st, `Job ads couldn't be saved to the database yet (${String(e?.message || e).slice(0, 120)}): kept, and tried again ${final ? "on the next run" : "next step"}.`);
+    if (final) await putJSON(kv, "jobs-retry", { jobs: [...(retry.jobs || []), ...st.jobsPending].slice(-20000), quals: [...(retry.quals || []), ...st.qualPending].slice(-20000) });
+  }
+}
+
+async function fetchTask(env, st, task, seenDocs, now, date) {
   try {
     let docs = [];
     if (task.type === "hn") docs = await hackerNews(env, task.q, { since: now - HN_DAYS * 86400000, hits: HN_HITS });
@@ -156,6 +183,10 @@ async function fetchTask(env, st, task, seenDocs, now) {
     else if (task.type === "remotive") docs = await remotive(env, task.q);
     else if (task.type === "wwr") docs = await weWorkRemotely(env, task.q);
     else if (task.type === "reddit") { const r = await reddit(env, task.q, (u) => robotsAllow(st, u)); if (r.skipped) { st.notes.push(r.skipped); note(st, r.skipped); return; } docs = r.docs; }
+    // Every job ad found is queued for the permanent database, even ones already read before or over tonight's limit.
+    const at = new Date(now).toISOString();
+    for (const d of docs) if (d.kind === "job" && !st.jobsPending.some((x) => x.url === d.url))
+      st.jobsPending.push({ url: d.url, company: d.company || "", role: d.role || d.title || "", source: d.src, pay: d.pay || "", location: d.location || "", run: st.id, date, at });
     let n = 0;
     for (const d of docs) if (!seenDocs.has(urlKey(d.url)) && !Object.values(st.docs).some((x) => x.url === d.url) && addDoc(st, d)) n++;
     note(st, `${sourceName(task)} “${task.q}”: ${n} new text${n === 1 ? "" : "s"}.`);
@@ -210,6 +241,7 @@ function addEvidence(st, raw) {
     const who = job ? `${d.company || "A company (name not given)"} is hiring ${/^[aeiou]/i.test(d.role) ? "an" : "a"} ${d.role}` : d.label;
     st.sources[d.url] = { url: d.url, domain: domainOf(d.url), verified: true, src: d.src };
     st.complaints.push({ id: `c${st.complaints.length + 1}`, docId, kind: job ? "job" : "post", quote, who, where: d.src + (d.title && !job ? `: ${d.title}` : ""), pays, sources: [d.url] });
+    if (job) (st.qualPending ||= []).push({ url: d.url, quote, date: st.id.slice(0, 10) }); // this ad qualified
     n++;
   }
   return n;
@@ -294,6 +326,12 @@ async function finish(env, st, past, cutShort) {
   st.status = st.stopped ? "stopped" : "done";
   st.finishedAt = new Date().toISOString();
   const report = buildReport(st, cutShort);
+  // Every job ad this run found (qualified or not), straight from the permanent database, plus the all-time totals.
+  const db = jobsDb(env);
+  if (db) {
+    try { report.allJobAds = await db.forRun(st.id); report.jobAdsTotals = await db.stats(); }
+    catch (e) { report.allJobAdsError = `The job-ad database couldn't be read for this report (${String(e?.message || e).slice(0, 120)}). The ads are still saved: see Job ads on the dashboard.`; }
+  }
   await putJSON(kv, `report:${st.id}`, report);
   const index = await getJSON(kv, "index", []);
   const entry = { id: st.id, status: st.status, stopped: st.stopped?.message || null, problems: report.problems.length, complaints: report.complaints.length, top: report.problems.slice(0, 3).map((p) => p.title) };
