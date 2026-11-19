@@ -1,5 +1,5 @@
 /**
- * Stand-ins for the tests, on one port: Gemini (no grounding), the Hacker News Algolia API, the Remotive jobs API,
+ * Stand-ins for the tests, on one port: Gemini (no grounding), the Hacker News Algolia API, the Remotive jobs API, The Muse jobs API,
  * We Work Remotely RSS, reddit.com/robots.txt, Resend and ntfy. Usage: node stub-gemini.cjs PORT
  * Gemini's answers include things the Scout must throw away: a quote that isn't in the text, a price that isn't in
  * the text, a problem with no real complaints, and a tool nobody mentioned.
@@ -23,10 +23,20 @@ const HN_TOOLS = [
 const REMOTIVE = { "job-count": 2, jobs: [
   { id: 1, url: "https://remotive.com/remote-jobs/finance/accounts-receivable-clerk-1", title: "Accounts Receivable Clerk", company_name: "Gulf Coast Food Distributors", candidate_required_location: "USA", salary: "$18-$21/hour",
     description: "<p>Call customers daily to follow up on unpaid invoices and record every payment promise in the spreadsheet.</p><p>Other duties as assigned.</p>" },
+  { id: 3, url: "https://remotive.com/remote-jobs/software-development/senior-backend-developer-3", title: "Senior Backend Developer", company_name: "Code Shop", candidate_required_location: "USA", salary: "$150k",
+    description: "<p>Design and build APIs in Go for our payments platform with the backend team.</p>" },
   { id: 2, url: "https://remotive.com/remote-jobs/finance/clerk-de-2", title: "Data Entry Clerk", company_name: "Berlin GmbH", candidate_required_location: "Germany", salary: "", description: "<p>Enter data into SAP every day for our Berlin office team.</p>" },
 ] };
-const JOBICY = { apiVersion: "2", jobCount: 1, jobs: [{ id: 11, url: "https://jobicy.com/jobs/11-customer-service-scheduler", jobTitle: "Customer Service Scheduler", companyName: "Lone Star HVAC Services", jobGeo: "USA",
-  annualSalaryMin: 38000, annualSalaryMax: 44000, salaryCurrency: "USD", jobDescription: "<p>Answer inbound calls from customers and book their service appointments in our calendar.</p>" }] };
+// The Muse public API format: results[] with name, company.name, locations[].name, refs.landing_page, contents (HTML).
+const MUSE = { page: 0, page_count: 1, total: 3, results: [
+  { id: 11, name: "Customer Service Scheduler", company: { id: 5, name: "Lone Star HVAC Services" }, locations: [{ name: "Austin, TX" }], refs: { landing_page: "https://www.themuse.com/jobs/lonestarhvacservices/customer-service-scheduler" },
+    contents: "<p>Answer inbound calls from customers and book their service appointments in our calendar.</p>" },
+  { id: 12, name: "Freelance Writer", company: { id: 6, name: "Words Inc" }, locations: [{ name: "Flexible / Remote" }], refs: { landing_page: "https://www.themuse.com/jobs/wordsinc/freelance-writer" },
+    contents: "<p>Write blog posts and long articles about travel and food for our readers.</p>" },
+  { id: 13, name: "Data Entry Clerk", company: { id: 7, name: "UK Ltd" }, locations: [{ name: "London, United Kingdom" }], refs: { landing_page: "https://www.themuse.com/jobs/ukltd/data-entry-clerk" },
+    contents: "<p>Enter customer records into our CRM every day for the London office.</p>" },
+] };
+let museRobots = "User-agent: *\nAllow: /\n";
 const HIMALAYAS = { offset: 0, limit: 20, totalCount: 2, jobs: [
   { title: "Accounts Payable Clerk", companyName: "Fresh Fields Grocers", applicationLink: "https://himalayas.app/companies/fresh-fields/jobs/accounts-payable-clerk", minSalary: 40000, maxSalary: 46000, currency: "USD", locationRestrictions: ["United States"],
     description: "<p>Enter vendor invoices into QuickBooks and match them against purchase orders every day.</p>" },
@@ -81,14 +91,14 @@ http.createServer((rq, rs) => {
   rq.on("data", (d) => (data += d));
   rq.on("end", () => {
     const send = (code, obj, type = "application/json") => { rs.writeHead(code, { "content-type": type }); rs.end(typeof obj === "string" ? obj : JSON.stringify(obj)); };
-    if (u.pathname === "/control") { const b = JSON.parse(data || "{}"); if ("limitAfter" in b) limitAfter = b.limitAfter ?? Infinity; if (b.retired) retired = new Set(b.retired); if (b.zeroQuota) zeroQuota = new Set(b.zeroQuota); if (b.reset) calls = []; return send(200, { ok: true }); }
+    if (u.pathname === "/control") { const b = JSON.parse(data || "{}"); if ("limitAfter" in b) limitAfter = b.limitAfter ?? Infinity; if (b.retired) retired = new Set(b.retired); if (b.zeroQuota) zeroQuota = new Set(b.zeroQuota); if (b.reset) calls = []; if ("museRobots" in b) museRobots = b.museRobots; return send(200, { ok: true }); }
     if (u.pathname === "/calls") return send(200, calls);
     calls.push({ path: u.pathname, query: u.search });
-    if (u.pathname === "/robots.txt") return send(200, "User-agent: *\nDisallow: /\n", "text/plain"); // reddit.com today
+    if (u.pathname === "/robots.txt") return send(200, /^127\.0\.0\.1/.test(rq.headers.host || "") ? museRobots : "User-agent: *\nDisallow: /\n", "text/plain"); // 127.0.0.1 = The Muse; localhost = reddit.com (disallows all today)
     if (u.pathname === "/search.json") return send(200, { data: { children: [] } });
     if (u.pathname === "/api/v1/search_by_date") { const q = u.searchParams.get("query") || ""; return send(200, { hits: / software$/.test(q) && !q.includes('"') ? HN_TOOLS : HN }); }
     if (u.pathname === "/api/remote-jobs") return send(200, REMOTIVE);
-    if (u.pathname === "/api/v2/remote-jobs") return send(200, JOBICY);
+    if (u.pathname === "/api/public/jobs") return send(200, MUSE);
     if (u.pathname === "/jobs/api/search" || u.pathname === "/jobs/api") return send(200, HIMALAYAS);
     if (/^\/categories\/.+\.rss$/.test(u.pathname)) return send(200, RSS, "application/rss+xml");
     if (u.pathname.startsWith("/ntfy/")) { calls.push({ ntfy: u.pathname, body: data, title: rq.headers.title }); return send(200, { id: "x" }); }

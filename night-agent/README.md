@@ -19,9 +19,11 @@ grounding for this key): the Scout fetches public sources itself, and Gemini onl
    - **Hacker News**, through the official Algolia HN Search API: 10 searches a night (30 results each) for comments and
      posts from the last 90 days, rotating through 30 phrases ("I wish there was…", "is there a tool…", "manual data
      entry", "we still use spreadsheets", "copy and paste between", "chasing invoices"…).
-   - **Remotive** public jobs API: 2 searches a night (they ask for at most ~4 requests a day), US/anywhere jobs only.
-   - **Jobicy** public jobs API: 1 tag search a night (data entry, customer support, bookkeeping, billing…), US jobs only
-     (they ask for at most about 1 request an hour; two in a row were refused). Pay comes from the job board's own salary field.
+   - **Remotive** public jobs API: 2 searches a night (they ask for at most ~4 requests a day), US/anywhere jobs only,
+     and only titles that look like repetitive work (developers, writers and other unrelated jobs are left out and not saved).
+   - **The Muse** public jobs API (no key; it allows up to 500 requests an hour): 2 searches a night (categories Customer
+     Service and Administration and Office), only titles that look like repetitive work, US/remote only. Its robots.txt is
+     checked first; if it disallows the API (or can't be read), The Muse is skipped that night and the log says so.
    - **Himalayas** public jobs API: 2 searches a night (data entry, administrative assistant, dispatcher…), only titles
      that look like repetitive work, US/anywhere only.
    - **We Work Remotely** public RSS feeds: 4 a night (customer support, sales & marketing, management & finance, all

@@ -18,7 +18,7 @@ const check = (ok, name, extra = "") => { console.log(`${ok ? "PASS" : "FAIL"}  
 const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 const ctl = (b) => fetch(`${SB}/control`, { method: "POST", body: JSON.stringify(b) });
 const callsSoFar = async () => (await (await fetch(`${SB}/calls`)).json());
-const SOURCE_VARS = { HN_BASE: SB, REMOTIVE_BASE: SB, WWR_BASE: SB, REDDIT_BASE: SB, JOBICY_BASE: SB, HIMALAYAS_BASE: SB };
+const SOURCE_VARS = { HN_BASE: SB, REMOTIVE_BASE: SB, WWR_BASE: SB, REDDIT_BASE: SB, MUSE_BASE: `http://127.0.0.1:${STUB}`, HIMALAYAS_BASE: SB };
 
 /** The job-ad database for part A: the real SQL (src/jobstore.js) on Node's SQLite, called like the Durable Object
  *  (arguments copied, as RPC does). failing(true) makes every call throw, like an unreachable database. */
@@ -75,20 +75,23 @@ function memoryKV() {
   check(calls1.filter((c) => c.path === "/api/remote-jobs").length === 2, "Remotive is asked only twice a night (they ask for at most ~4 a day)");
   const hnCalls = calls1.filter((c) => c.path === "/api/v1/search_by_date" && (new URLSearchParams(c.query).get("query") || "").includes('"'));
   check(hnCalls.length === 10 && hnCalls.every((c) => new URLSearchParams(c.query).get("hitsPerPage") === "30" && /created_at_i>\d+/.test(new URLSearchParams(c.query).get("numericFilters"))), "Hacker News: 10 searches a night, 30 results each, from the last 90 days", `${hnCalls.length} searches`);
-  const jc = calls1.filter((c) => c.path === "/api/v2/remote-jobs"), hc = calls1.filter((c) => /^\/jobs\/api/.test(c.path || "")), wc = calls1.filter((c) => /\.rss$/.test(c.path || ""));
-  check(jc.length === 1 && jc.every((c) => new URLSearchParams(c.query).get("geo") === "usa") && hc.length === 2 && wc.length === 4, "more job feeds: Jobicy (1 US search a night; they ask for ≤1 an hour), Himalayas (2 searches) and 4 We Work Remotely feeds", `${jc.length}/${hc.length}/${wc.length}`);
+  const jc = calls1.filter((c) => c.path === "/api/public/jobs"), hc = calls1.filter((c) => /^\/jobs\/api/.test(c.path || "")), wc = calls1.filter((c) => /\.rss$/.test(c.path || ""));
+  check(jc.length === 2 && jc.map((c) => new URLSearchParams(c.query).get("category")).join() === "Customer Service,Administration and Office" && hc.length === 2 && wc.length === 4 && !calls1.some((c) => c.path === "/api/v2/remote-jobs"), "job feeds: The Muse (2 categories), Himalayas (2 searches), 4 We Work Remotely feeds; Jobicy is no longer asked", `${jc.length}/${hc.length}/${wc.length}`);
+  check(calls1.filter((c) => c.path === "/robots.txt").length === 2, "The Muse's site rules (robots.txt) are checked before it's asked, once a night");
   check(calls1.some((c) => c.path === "/robots.txt") && !calls1.some((c) => c.path === "/search.json") && r.sourcesNote.some((s) => /Reddit's site rules/.test(s)), "Reddit: its rules (robots.txt) are checked first; they don't allow it, so Reddit isn't fetched and the report says so", r.sourcesNote[0]);
-  check(fetched.every((u) => new URL(u).hostname === "localhost"), "every request went to the stand-ins only (nothing else was contacted)", `${fetched.length} requests`);
+  check(fetched.every((u) => ["localhost", "127.0.0.1"].includes(new URL(u).hostname)), "every request went to the stand-ins only (nothing else was contacted)", `${fetched.length} requests`);
   check(r.texts === 11, "it read 11 public texts: 9 posts and job ads, plus 2 posts about tools (non-US and non-repetitive job ads left out)", String(r.texts));
+  const docsText = JSON.stringify(r) + JSON.stringify(JOBS.store.list({ limit: 500 }).rows);
+  check(!/Senior Backend Developer|Freelance Writer|Code Shop|Words Inc/.test(docsText), "unrelated jobs (a developer on Remotive, a writer on The Muse) aren't read or saved: repetitive-work roles only");
   check(!JSON.stringify(r).includes("Machine Learning") && !JSON.stringify(r).includes("Berlin"), "job ads that aren't repetitive work, or aren't open to the US, are left out");
   check(!JSON.stringify(r).includes("AI receptionist") && !JSON.stringify(r).includes("$999"), "a quote or a price that isn't word for word in the fetched text is left out (nothing made up)");
   const cs = Object.fromEntries(r.complaints.map((c) => [c.id, c]));
-  check(r.complaints.length === 7 && r.complaints.every((c) => c.sources.length === 1 && /^https:\/\/(news\.ycombinator\.com\/item\?id=\d+|remotive\.com\/|weworkremotely\.com\/|jobicy\.com\/|himalayas\.app\/)/.test(c.sources[0].url)), "every piece of evidence links to its public page (Hacker News item, job ad)", r.complaints.map((c) => c.sources[0].url.slice(0, 45)).join(" | "));
+  check(r.complaints.length === 7 && r.complaints.every((c) => c.sources.length === 1 && /^https:\/\/(news\.ycombinator\.com\/item\?id=\d+|remotive\.com\/|weworkremotely\.com\/|www\.themuse\.com\/|himalayas\.app\/)/.test(c.sources[0].url)), "every piece of evidence links to its public page (Hacker News item, job ad)", r.complaints.map((c) => c.sources[0].url.slice(0, 45)).join(" | "));
   check(cs.c1.who === "Hacker News comment" && cs.c1.pays === "“We pay $300 a month for ServiceTitan”" && cs.c3.pays === "unknown", "'who' is what the source says it is; 'pays' only when those words are in the text");
   const byWho = (re) => r.complaints.find((c) => re.test(c.who)) || {};
   check(byWho(/Gulf Coast/).kind === "job" && byWho(/Gulf Coast/).who === "Gulf Coast Food Distributors is hiring an Accounts Receivable Clerk" && byWho(/Gulf Coast/).pays === "$18-$21/hour (job ad)" && byWho(/Acme/).who === "Acme Logistics is hiring an Order Entry Specialist" && byWho(/Acme/).pays === "pays a salary for this work (job ad)", "job ads: company, role and pay from the job board itself; the ad is the proof");
   const jj = r.complaints.find((c) => /Lone Star/.test(c.who)), hj = r.complaints.find((c) => /Fresh Fields/.test(c.who));
-  check(jj && jj.who === "Lone Star HVAC Services is hiring a Customer Service Scheduler" && jj.pays === "$38,000-44,000 a year (job ad)" && jj.sources[0].url.startsWith("https://jobicy.com/") && hj && hj.pays === "$40,000-46,000 a year (job ad)" && hj.sources[0].url.startsWith("https://himalayas.app/"), "Jobicy and Himalayas job ads come in with company, role, listed pay and the ad's link", jj?.pays);
+  check(jj && jj.who === "Lone Star HVAC Services is hiring a Customer Service Scheduler" && jj.pays === "pays a salary for this work (job ad)" && jj.sources[0].url.startsWith("https://www.themuse.com/jobs/") && hj && hj.pays === "$40,000-46,000 a year (job ad)" && hj.sources[0].url.startsWith("https://himalayas.app/"), "The Muse and Himalayas job ads come in with company, role, the ad's link, and pay when the board lists it", jj?.pays);
   check(r.problems.length === 4 && !JSON.stringify(r.problems).includes("made-up") && r.problems.map((p) => p.total).join() === "7.5,7.1,6.9,5.9", "grouped into problems, scored and ranked; a 'problem' with no real complaints is dropped", r.problems.map((p) => p.total).join(", "));
   check(/invoice follow-up/.test(r.problems[1].title) && r.problems[1].complaints.every((c) => c.kind === "job"), "a job-ad idea makes the top 3 when it ranks");
   const comp = r.problems[0].competitors;
@@ -105,7 +108,7 @@ function memoryKV() {
 
   // ── Job ads: every one saved for good, before the night's storage is cleared ────────────────────────
   const EXPECTED_JOBS = { "https://remotive.com/remote-jobs/finance/accounts-receivable-clerk-1": ["Gulf Coast Food Distributors", "Accounts Receivable Clerk", true],
-    "https://jobicy.com/jobs/11-customer-service-scheduler": ["Lone Star HVAC Services", "Customer Service Scheduler", true],
+    "https://www.themuse.com/jobs/lonestarhvacservices/customer-service-scheduler": ["Lone Star HVAC Services", "Customer Service Scheduler", true],
     "https://himalayas.app/companies/fresh-fields/jobs/accounts-payable-clerk": ["Fresh Fields Grocers", "Accounts Payable Clerk", true],
     "https://weworkremotely.com/remote-jobs/acme-logistics-order-entry-specialist": ["Acme Logistics", "Order Entry Specialist", true],
     "https://weworkremotely.com/remote-jobs/bright-dental-front-desk-receptionist": ["Bright Dental", "Front Desk Receptionist", false] };
@@ -167,6 +170,11 @@ function memoryKV() {
   check(pendingMid === 5 && matchesExpected(J3.store.list({ limit: 500 }).rows, "2026-11-29"), "if the database is down for a few steps, the ads wait in the night's state and are saved when it's back", `${pendingMid} waiting, then ${J3.store.stats().total} saved`);
   const srcText = fs.readdirSync(path.join(ROOT, "src")).map((f) => fs.readFileSync(path.join(ROOT, "src", f), "utf8")).join("\n");
   check(!/DELETE\s+FROM|DROP\s+TABLE|TRUNCATE|storage\.delete|deleteAll/i.test(srcText), "there is no code that deletes job ads (no DELETE, DROP or storage delete anywhere)");
+  // The Muse's rules say no → it's skipped and the night log says why.
+  await ctl({ reset: true, museRobots: "User-agent: *\nDisallow: /api/\n" });
+  n = await night("2026-11-30", { e: fresh() });
+  check(!(await callsSoFar()).some((c) => c.path === "/api/public/jobs") && n.report.log.some((l) => /The Muse .* skipped: its site rules/.test(l.msg)), "if The Muse's site rules (robots.txt) disallow it, it isn't asked, and the log says so");
+  await ctl({ museRobots: "User-agent: *\nAllow: /\n" });
   n = await night("2026-11-26", { from: 47, e: fresh() });
   if (!(n.report.cutShort === true && n.steps.length === 1)) console.log("DEBUG cut", n.steps.length, n.report.cutShort, n.report.status, n.st.log.map((l) => l.msg).slice(-3).join(" / "));
   check(n.report.cutShort === true && n.steps.length === 1, "at 4:55 a.m. the report is finished with whatever was done (marked as cut short)");

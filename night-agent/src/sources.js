@@ -5,8 +5,10 @@
  *
  *   Hacker News — the official Algolia HN Search API (hn.algolia.com/api), comments and posts from the last 90 days
  *   Remotive    — its public jobs API (remotive.com/api/remote-jobs); they ask for at most ~4 requests a day: we use 2
+ *                 (repetitive-work titles only)
  *   We Work Remotely — public RSS feeds by category
- *   Jobicy      — its public jobs API (jobicy.com/api/v2/remote-jobs, US jobs); they ask for ≤1 request an hour: we use 2 a night
+ *   The Muse    — its public jobs API (themuse.com/api/public/jobs, no key: up to 500 requests an hour); we use 2 a night,
+ *                 and only if its robots.txt allows it
  *   Himalayas   — its public jobs API (himalayas.app/jobs/api)
  *   Reddit      — only if reddit.com/robots.txt allows automated access (today it doesn't, so it's skipped and the
  *                 report says so; Reddit's API terms also require a registered app)
@@ -42,18 +44,18 @@ export async function hackerNews(env, query, { since, tags = "(comment,story)", 
   }).filter((x) => x.text.length > 40);
 }
 
+const REPETITIVE = /data entry|customer (service|support)|support (specialist|representative|agent)|scheduling|scheduler|appointment|billing|accounts (payable|receivable)|bookkeep|collections|dispatch|admin(istrative)? assistant|office assistant|virtual assistant|receptionist|order (entry|processing)|coordinator|clerk|call center|inbound|outbound|reporting analyst|invoice/i;
 const US = /\b(usa|u\.s\.|united states|us only|us-based|north america|americas|anywhere|worldwide)\b/i;
 /** Remotive public jobs API: one search. */
 export async function remotive(env, search, { limit = 20 } = {}) {
   const u = new URL(`${base(env, "REMOTIVE_BASE", "https://remotive.com")}/api/remote-jobs`);
   u.searchParams.set("search", search); u.searchParams.set("limit", String(limit));
   const d = await (await get(u.toString())).json();
-  return (d.jobs || []).filter((j) => !j.candidate_required_location || US.test(j.candidate_required_location)).map((j) => ({
+  return (d.jobs || []).filter((j) => (!j.candidate_required_location || US.test(j.candidate_required_location)) && REPETITIVE.test(String(j.title || ""))).map((j) => ({
     kind: "job", src: "Remotive", label: "Job ad", url: String(j.url || ""), title: String(j.title || "").slice(0, 120), company: String(j.company_name || "").slice(0, 100), role: String(j.title || "").slice(0, 100),
     pay: String(j.salary || "").slice(0, 80), location: String(j.candidate_required_location || "").slice(0, 80), text: trim(clean(j.description), 900) })).filter((x) => /^https:\/\//.test(x.url) && x.text.length > 40);
 }
 
-const REPETITIVE = /data entry|customer (service|support)|support (specialist|representative|agent)|scheduling|scheduler|appointment|billing|accounts (payable|receivable)|bookkeep|collections|dispatch|admin(istrative)? assistant|office assistant|virtual assistant|receptionist|order (entry|processing)|coordinator|clerk|call center|inbound|outbound|reporting analyst|invoice/i;
 /** We Work Remotely RSS: jobs whose title looks like repetitive work. */
 export async function weWorkRemotely(env, category) {
   const xml = (await (await get(`${base(env, "WWR_BASE", "https://weworkremotely.com")}/categories/${category}.rss`)).text()).slice(0, 400000);
@@ -71,14 +73,17 @@ export async function weWorkRemotely(env, category) {
 
 const salary = (min, max, cur) => (min || max ? `${cur === "USD" || !cur ? "$" : `${cur} `}${[min, max].filter(Boolean).map((n) => Number(n).toLocaleString("en-US")).join("-")} a year` : "");
 
-/** Jobicy public jobs API: one tag search, US jobs only. */
-export async function jobicy(env, tag, { count = 20 } = {}) {
-  const u = new URL(`${base(env, "JOBICY_BASE", "https://jobicy.com")}/api/v2/remote-jobs`);
-  u.searchParams.set("count", String(count)); u.searchParams.set("geo", "usa"); u.searchParams.set("tag", tag);
+const MUSE_US = /flexible \/ remote|united states|,\s*(A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\b/i;
+/** The Muse public jobs API: one category, US or remote jobs, repetitive-work titles only. */
+export async function theMuse(env, category, { page = 0 } = {}) {
+  const u = new URL(`${base(env, "MUSE_BASE", "https://www.themuse.com")}/api/public/jobs`);
+  u.searchParams.set("category", category); u.searchParams.set("page", String(page));
   const d = await (await get(u.toString())).json();
-  return (d.jobs || []).map((j) => ({ kind: "job", src: "Jobicy", label: "Job ad", url: String(j.url || ""), title: clean(j.jobTitle).slice(0, 120), company: clean(j.companyName).slice(0, 100), role: clean(j.jobTitle).slice(0, 100),
-    pay: salary(j.annualSalaryMin, j.annualSalaryMax, j.salaryCurrency).slice(0, 80), location: clean(j.jobGeo).slice(0, 80), text: trim(clean(j.jobDescription || j.jobExcerpt), 900) }))
-    .filter((x) => /^https:\/\//.test(x.url) && x.text.length > 40 && (!x.location || US.test(x.location)));
+  return (d.results || []).map((j) => {
+    const loc = (Array.isArray(j.locations) ? j.locations.map((l) => (typeof l === "string" ? l : l?.name || "")).filter(Boolean).join("; ") : "");
+    return { kind: "job", src: "The Muse", label: "Job ad", url: String(j.refs?.landing_page || ""), title: clean(j.name).slice(0, 120), company: clean(j.company?.name).slice(0, 100), role: clean(j.name).slice(0, 100),
+      pay: "", location: loc.slice(0, 80), text: trim(clean(j.contents), 900) };
+  }).filter((x) => /^https:\/\//.test(x.url) && REPETITIVE.test(x.role) && x.text.length > 40 && (!x.location || US.test(x.location) || MUSE_US.test(x.location)));
 }
 
 /** Himalayas public jobs API: a search (or, if search isn't available, the newest jobs), repetitive-work titles only. */

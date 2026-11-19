@@ -3,7 +3,7 @@
  * saved in KV after each step so it fits Cloudflare's free plan. No Gemini search: public sources are fetched directly,
  * and Gemini only reads that text (no grounding).
  *
- *   1. fetch      Hacker News (Algolia API), Remotive, Jobicy and Himalayas job APIs, We Work Remotely RSS; Reddit only
+ *   1. fetch      Hacker News (Algolia API), Remotive, The Muse and Himalayas job APIs, We Work Remotely RSS; Reddit only
  *                 if its rules allow
  *   2. analyze    batches of ~30 texts → Gemini picks complaints, wishes and repetitive job duties, quoting them.
  *                 A quote is kept only if it appears word for word in the fetched text (that page is the proof).
@@ -14,7 +14,7 @@
  * At most one Gemini call per step (up to ~13 a night). A limit stops the night, and the report says so.
  */
 import { ask, listModels, GeminiError } from "./gemini.js";
-import { hackerNews, remotive, weWorkRemotely, jobicy, himalayas, reddit } from "./sources.js";
+import { hackerNews, remotive, weWorkRemotely, theMuse, himalayas, reddit } from "./sources.js";
 import { clusterPrompt, clusterSchema } from "./plan.js";
 import { jamaica, similar, getJSON, putJSON, domainOf } from "./util.js";
 
@@ -30,7 +30,7 @@ export const HN_PHRASES = ["\"I wish there was\" software", "\"is there a tool\"
   "\"takes hours every week\"", "\"manual reconciliation\"", "\"no good software for\""];
 export const HN_PER_NIGHT = 10, HN_HITS = 30, HN_DAYS = 90;
 export const JOB_SEARCHES = ["data entry", "customer service", "scheduling", "accounts receivable", "bookkeeping", "dispatcher", "virtual assistant", "order processing"];
-export const JOBICY_TAGS = ["data entry", "customer support", "bookkeeping", "administrative", "scheduling", "billing", "virtual assistant", "accounts payable"];
+export const MUSE_CATEGORIES = ["Customer Service", "Administration and Office"];
 export const HIMALAYAS_SEARCHES = ["data entry", "customer support", "administrative assistant", "bookkeeper", "scheduler", "billing specialist", "order entry", "dispatcher"];
 export const WWR_FEEDS = ["remote-customer-support-jobs", "all-other-remote-jobs", "remote-sales-and-marketing-jobs", "remote-management-and-finance-jobs"];
 
@@ -38,15 +38,15 @@ const STOP_WORDS = { limit: "Gemini's free daily limit was reached", "no-free-qu
   location: "Gemini refused requests from this server's location", key: "There's no working Gemini API key", model: "No usable Gemini model was available", errors: "Gemini kept failing" };
 
 /**
- * Tonight's fetches (20): Reddit (rules check), 10 Hacker News searches (30 results each, last 90 days), 2 Remotive
- * searches (they ask for ≤4 a day), 1 Jobicy search (they ask for ≤1 an hour; 2 in a row were refused with 429), 2 Himalayas searches, 4 We Work Remotely feeds.
+ * Tonight's fetches (21): Reddit (rules check), 10 Hacker News searches (30 results each, last 90 days), 2 Remotive
+ * searches (they ask for ≤4 a day), 2 The Muse searches (only if its robots.txt allows), 2 Himalayas searches, 4 We Work Remotely feeds.
  */
 const pick = (list, nightNo, n) => Array.from({ length: n }, (_, k) => list[(nightNo * n + k) % list.length]);
 function fetchPlan(nightNo) {
   return [{ type: "reddit", q: "\"is there an app\" OR \"I wish there was\" small business" },
     ...pick(HN_PHRASES, nightNo, HN_PER_NIGHT).map((q) => ({ type: "hn", q })),
     ...pick(JOB_SEARCHES, nightNo, 2).map((q) => ({ type: "remotive", q })),
-    ...pick(JOBICY_TAGS, nightNo, 1).map((q) => ({ type: "jobicy", q })),
+    ...MUSE_CATEGORIES.map((q) => ({ type: "muse", q })),
     ...pick(HIMALAYAS_SEARCHES, nightNo, 2).map((q) => ({ type: "himalayas", q })),
     ...WWR_FEEDS.map((q) => ({ type: "wwr", q }))];
 }
@@ -178,7 +178,11 @@ async function fetchTask(env, st, task, seenDocs, now, date) {
   try {
     let docs = [];
     if (task.type === "hn") docs = await hackerNews(env, task.q, { since: now - HN_DAYS * 86400000, hits: HN_HITS });
-    else if (task.type === "jobicy") docs = await jobicy(env, task.q);
+    else if (task.type === "muse") {
+      const u = `${env.ALLOW_TEST === "1" && env.MUSE_BASE ? env.MUSE_BASE : "https://www.themuse.com"}/api/public/jobs`;
+      if (!(await robotsAllow(st, u))) { note(st, `The Muse “${task.q}” skipped: its site rules (robots.txt) don't allow it, or couldn't be read.`); return; }
+      docs = await theMuse(env, task.q);
+    }
     else if (task.type === "himalayas") docs = await himalayas(env, task.q);
     else if (task.type === "remotive") docs = await remotive(env, task.q);
     else if (task.type === "wwr") docs = await weWorkRemotely(env, task.q);
@@ -192,7 +196,7 @@ async function fetchTask(env, st, task, seenDocs, now, date) {
     note(st, `${sourceName(task)} “${task.q}”: ${n} new text${n === 1 ? "" : "s"}.`);
   } catch (e) { note(st, `${sourceName(task)} “${task.q}” failed: ${String(e?.message || e).slice(0, 120)}`); }
 }
-const sourceName = (t) => ({ hn: "Hacker News", remotive: "Remotive jobs", jobicy: "Jobicy jobs", himalayas: "Himalayas jobs", wwr: "We Work Remotely", reddit: "Reddit" })[t.type];
+const sourceName = (t) => ({ hn: "Hacker News", remotive: "Remotive jobs", muse: "The Muse jobs", himalayas: "Himalayas jobs", wwr: "We Work Remotely", reddit: "Reddit" })[t.type];
 const urlKey = (u) => String(u).replace(/^https?:\/\/(www\.)?/, "").slice(0, 90);
 function addDoc(st, d) {
   const existing = Object.keys(st.docs).find((k) => st.docs[k].url === d.url);
