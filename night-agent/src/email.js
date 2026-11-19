@@ -15,10 +15,10 @@ export function buildEmail(r, night, st, site) {
     return { subject: `Night Agent: no report for ${day}`, text: `No morning report for ${day}.\n${why}\n\nDashboard: ${site}/`, html: `<p>No morning report for ${esc(day)}.</p><p>${esc(why)}</p><p><a href="${esc(site)}/">Open your dashboard</a></p>` };
   }
   const top = r.problems.slice(0, 3), leads = r.leads || [];
-  const did = `${r.searches} of ${r.searchesPlanned} searches · ${r.complaints.length} pieces of evidence with proof${r.jobAds ? ` (${r.jobAds} job ad${r.jobAds === 1 ? "" : "s"})` : ""} · ${r.problems.length} new idea${r.problems.length === 1 ? "" : "s"} · ${r.calls} Gemini calls${r.stopped ? ` · stopped early: ${r.stopped.message}` : r.cutShort ? " · ran out of time before finishing" : ""}`;
+  const did = `${r.texts ?? r.searches ?? 0} public texts read (Hacker News, job boards) · ${r.complaints.length} pieces of evidence with proof${r.jobAds ? ` (${r.jobAds} job ad${r.jobAds === 1 ? "" : "s"})` : ""} · ${r.problems.length} new idea${r.problems.length === 1 ? "" : "s"} · ${r.calls} Gemini calls${r.stopped ? ` · stopped early: ${r.stopped.message}` : r.cutShort ? " · ran out of time before finishing" : ""}`;
   const subject = top.length ? `Night Agent: ${top.length} idea${top.length === 1 ? "" : "s"} for ${day}${r.stopped ? " (stopped early)" : ""}` : `Night Agent: no new ideas for ${day}${r.stopped ? " (stopped early)" : ""}`;
   const proofText = (c) => `${c.kind === "job" ? "[Job ad] " : ""}"${short(c.quote, 160)}" — ${who(c.who)} (${c.sources[0]?.url})`;
-  const text = [`Night Agent — ${day}`, "", "OVERNIGHT", did, "",
+  const text = [`Night Agent — ${day}`, "", "OVERNIGHT", did, ...(r.sourcesNote || []), "",
     top.length ? "TOP IDEAS" : "No new ideas with proof tonight.",
     ...top.flatMap((p, i) => [`${i + 1}. ${p.title} — ${p.total}/10`, `   ${short(p.summary, 220)}`, ...p.complaints.slice(0, 2).map((c) => `   Proof: ${proofText(c)}`),
       ...(p.competitors[0] ? [`   Competitor: ${p.competitors[0].name}${p.competitors[0].price ? `, ${p.competitors[0].price}` : ""}`] : []), `   Build it: ${site}/idea/${encodeURIComponent(`${r.id}-${p.key}`)}`, ""]),
@@ -37,7 +37,7 @@ ${p.competitors[0] ? `<div style="margin-top:6px;color:#53584f">Competitor: ${es
 <h3 style="margin:16px 0 6px">Leads${leads.length ? ` (${leads.length})` : ""}</h3>
 ${leads.length ? `<p style="margin:0 0 6px;color:#53584f;font-size:13px">Public posts and job ads showing this need. Not contacted.</p><ol style="padding-left:20px;margin:0">${leads.map((l) => `<li style="margin-bottom:6px">${l.kind === "job" ? "<b>Job ad</b> · " : ""}${esc(who(l.who))}: “${esc(short(l.quote, 120))}” · ${l.sources.slice(0, 1).map(a).join("")}${l.idea ? ` <span style="color:#53584f">(${esc(l.idea)})</span>` : ""}</li>`).join("")}</ol>` : `<p>No leads tonight.</p>`}
 <p style="margin-top:18px"><a href="${esc(site)}/night/${esc(r.id)}" style="color:#1f4e8c;font-weight:700">Open the full report and your dashboard</a></p>
-<p style="color:#8a8f86;font-size:12px">Every quote links to the public page it came from. Nothing without proof is included.</p></div>`;
+<p style="color:#8a8f86;font-size:12px">Every quote is copied word for word from the public page it links to. Nothing without proof is included.${(r.sourcesNote || []).map((n) => ` ${esc(n)}`).join("")}</p></div>`;
   return { subject, text, html };
 }
 
@@ -63,6 +63,26 @@ export async function morningEmail(env, time = Date.now(), { force = false } = {
   await putJSON(kv, `email:${night}`, result, { expirationTtl: 90 * 86400 });
   return result;
 }
+/** Emails a saved report now (used for the live test report), once per report; recorded in KV. */
+export async function reportEmailNow(env, reportId, { prefix = "[Test] " } = {}) {
+  const kv = env.SCOUT, key = `email-report:${reportId}`;
+  const done = await getJSON(kv, key);
+  if (done?.ok) return done;
+  const site = String(env.SITE_URL || "").replace(/\/+$/, "");
+  const r = await getJSON(kv, `report:${reportId}`);
+  const mail = buildEmail(r, reportId.slice(0, 10), null, site);
+  const base = env.ALLOW_TEST === "1" && env.RESEND_BASE ? env.RESEND_BASE : "https://api.resend.com";
+  const result = { at: new Date().toISOString(), to: env.REPORT_EMAIL || "" };
+  try {
+    const res = await fetch(`${base}/emails`, { method: "POST", headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json" }, signal: AbortSignal.timeout(15000),
+      body: JSON.stringify({ from: env.EMAIL_FROM || "Night Agent <onboarding@resend.dev>", to: [env.REPORT_EMAIL], subject: `${prefix}${mail.subject}`, text: `${prefix ? "TEST RUN (a short version of a night, run on demand)\n\n" : ""}${mail.text}`, html: mail.html }) });
+    const body = await res.json().catch(() => ({}));
+    Object.assign(result, res.ok ? { ok: true, id: body.id || "", subject: `${prefix}${mail.subject}` } : { ok: false, error: `Resend said ${res.status}: ${String(body.message || body.name || "").slice(0, 200)}` });
+  } catch (e) { Object.assign(result, { ok: false, error: `Couldn't reach Resend (${e?.name || "network"}).` }); }
+  await putJSON(kv, key, result, { expirationTtl: 30 * 86400 });
+  return result;
+}
+
 /** A one-off test email (same sender and recipient as the morning report), recorded in KV as "email-test". */
 export async function testEmail(env) {
   const kv = env.SCOUT;

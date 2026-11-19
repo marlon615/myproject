@@ -1,69 +1,73 @@
 /**
- * The Scout's night, in small steps (one per Cron Trigger run, every 5 minutes from 1:00 to 4:55 a.m. Jamaica time).
- * Each step does a little work and saves its progress in KV, so it fits Cloudflare's free plan (10 ms of CPU, 50
- * outside requests per run) and Gemini's free tier (1 Gemini call per step, so at most one every 5 minutes).
+ * The Scout's night, in small steps (one per Cron Trigger run, every 5 minutes from 1:00 to 4:55 a.m. Jamaica time),
+ * saved in KV after each step so it fits Cloudflare's free plan. No Gemini search: public sources are fetched directly,
+ * and Gemini only reads that text (no grounding).
  *
- *   1. search    12 Google-grounded searches for real complaints and wishes (1 per step)
- *   2. resolve   every source link is turned into its real address, and quotes are checked on the page where possible
- *   3. group     the complaints are grouped into problems and scored (1 Gemini call)
- *   4. compete   the top 5 problems: existing products, prices, what users dislike (grounded, 1 per step)
- *   5. report    the morning report is saved; ideas from earlier reports are left out
- *
- * Only things Google's grounding tied to a web page are kept (with that page as proof). If Gemini says a limit is
- * reached, the Scout stops for the night and the report says so.
+ *   1. fetch      Hacker News (Algolia API), Remotive jobs API, We Work Remotely RSS; Reddit only if its rules allow
+ *   2. analyze    batches of ~30 texts → Gemini picks complaints, wishes and repetitive job duties, quoting them.
+ *                 A quote is kept only if it appears word for word in the fetched text (that page is the proof).
+ *   3. group      complaints → problems, scored 1–10 (people, paying, anger, build speed); repeats left out
+ *   4. compete    for the top 5: posts that mention existing tools (Hacker News), then Gemini names the tools, again
+ *                 only with a word-for-word quote; a price only if it's written in that text
+ *   5. report     saved, with leads and ideas; emailed at 6 a.m.
+ * At most one Gemini call per step (~8 a night). A limit stops the night, and the report says so.
  */
-import { ask, listModels, GeminiError, supportedSources } from "./gemini.js";
-import { nightQueries, nightJobQueries, searchPrompt, jobPrompt, competitorPrompt, clusterPrompt, clusterSchema, readBlocks } from "./plan.js";
+import { ask, listModels, GeminiError } from "./gemini.js";
+import { hackerNews, remotive, weWorkRemotely, reddit } from "./sources.js";
+import { clusterPrompt, clusterSchema } from "./plan.js";
 import { jamaica, similar, getJSON, putJSON, domainOf } from "./util.js";
 
-const MAX_CALLS_PER_STEP = 1, RESOLVE_PER_STEP = 10, VERIFY_PER_STEP = 2, STEP_MS = 3 * 60 * 1000, TOP = 5;
-const DEFAULT_MODELS = "gemini-flash-latest,gemini-flash-lite-latest,gemini-2.5-flash,gemini-2.5-flash-lite";
-export const LAST_SLOT = { hour: 4, minute: 55 }; // the night's last run (Jamaica time): the report is finished then, whatever happens
+const FETCH_PER_STEP = 3, BATCH = 30, STEP_MS = 3 * 60 * 1000, TOP = 5;
+const DEFAULT_MODELS = "gemini-flash-lite-latest,gemini-flash-latest,gemini-2.5-flash-lite,gemini-2.5-flash";
+export const LAST_SLOT = { hour: 4, minute: 55 };
 
-const STOP_WORDS = { limit: "Gemini's free daily limit was reached", "no-free-quota": "Gemini refused the very first search request on every model (\"quota exceeded\"): Google Search grounding seems to have no free quota for this key", location: "Gemini refused requests from this server's location", key: "There's no working Gemini API key", model: "No usable Gemini model was available", "no-grounding": "Google Search grounding isn't available on the free tier for the available models", errors: "Gemini kept failing" };
+export const HN_PHRASES = ["\"I wish there was\" software", "\"is there a tool\"", "\"is there software\"", "\"hate our software\"", "\"looking for software\" small business",
+  "\"is there an app\" business", "\"we still use spreadsheets\"", "\"manual data entry\"", "\"we pay\" \"per month\" frustrated", "\"switched from\" software terrible",
+  "\"anyone know a tool\"", "\"why is there no\" software", "\"spend hours every week\"", "\"copy and paste\" between systems", "\"our CRM\" hate"];
+export const JOB_SEARCHES = ["data entry", "customer service", "scheduling", "accounts receivable", "bookkeeping", "dispatcher", "virtual assistant", "order processing"];
+export const WWR_FEEDS = ["remote-customer-support-jobs", "all-other-remote-jobs", "remote-sales-and-marketing-jobs"];
 
-/** 12 complaint searches with 4 job-ad searches mixed in (one job search after every 3 complaint searches). */
-const mix = (qs, jobs) => qs.flatMap((q, i) => [{ q, done: false }, ...(i % 3 === 2 && jobs[(i - 2) / 3] ? [{ q: jobs[(i - 2) / 3], done: false, kind: "job" }] : [])]);
-function newNight(id, nightNo, past) {
-  return { id, nightNo, startedAt: new Date().toISOString(), status: "running", model: null, triedModels: [], stopped: null, calls: 0, steps: 0, errorsInRow: 0,
-    queries: mix(nightQueries(nightNo, new Set(past.queries || [])), nightJobQueries(nightNo, new Set(past.queries || []))), complaints: [], sources: {}, problems: null, competitors: {}, compQueue: null, log: [] };
+const STOP_WORDS = { limit: "Gemini's free daily limit was reached", "no-free-quota": "Gemini refused the very first request on every model (\"quota exceeded\"): there seems to be no free quota for this key",
+  location: "Gemini refused requests from this server's location", key: "There's no working Gemini API key", model: "No usable Gemini model was available", errors: "Gemini kept failing" };
+
+/** Tonight's fetches: Reddit (rules check), 5 Hacker News searches, 2 Remotive searches (they ask for ≤4 a day), 2 We Work Remotely feeds. */
+function fetchPlan(nightNo) {
+  const hn = Array.from({ length: 5 }, (_, k) => HN_PHRASES[(nightNo * 5 + k) % HN_PHRASES.length]);
+  const jobs = [JOB_SEARCHES[(nightNo * 2) % JOB_SEARCHES.length], JOB_SEARCHES[(nightNo * 2 + 1) % JOB_SEARCHES.length]];
+  const feeds = [WWR_FEEDS[nightNo % WWR_FEEDS.length], WWR_FEEDS[(nightNo + 1) % WWR_FEEDS.length]];
+  return [{ type: "reddit", q: "\"is there an app\" OR \"I wish there was\" small business" }, ...hn.map((q) => ({ type: "hn", q })), ...jobs.map((q) => ({ type: "remotive", q })), ...feeds.map((q) => ({ type: "wwr", q }))];
 }
-const note = (st, msg) => { st.log.push({ at: new Date().toISOString(), msg }); if (st.log.length > 60) st.log.shift(); };
+function newNight(id, nightNo) {
+  return { id, nightNo, startedAt: new Date().toISOString(), status: "running", model: null, triedModels: [], stopped: null, calls: 0, okCalls: 0, steps: 0, errorsInRow: 0,
+    fetchQueue: fetchPlan(nightNo), fetched: [], docs: {}, nextDoc: 1, analyzeQueue: null, complaints: [], sources: {}, problems: null, compFetched: false, compDocs: {}, compDone: false, competitors: {}, log: [], notes: [] };
+}
+const note = (st, msg) => { st.log.push({ at: new Date().toISOString(), msg }); if (st.log.length > 80) st.log.shift(); };
 function stop(st, kind, message) {
   if (st.stopped) return;
   st.stopped = { kind, message: `${STOP_WORDS[kind] || "Stopped"}${message ? ` (${message.slice(0, 160)})` : ""}.`, at: new Date().toISOString() };
   note(st, `Stopped for the night: ${st.stopped.message}`);
 }
 
-/** One step. Returns the night's state after it. `now` and `manual` are for "Run a step now" and tests. */
+/** One step. `manual` = "Run one step now" / a live test (a separate test report, at most 2 analysis batches). */
 export async function runStep(env, { now = Date.now(), manual = false } = {}) {
   const t0 = Date.now(), kv = env.SCOUT;
-  const jm = jamaica(now), id = manual ? `${jm.date}-test` : jm.date; // "Run one step now" builds a separate test report
-  const past = await getJSON(kv, "seen", { problems: [], queries: [], nights: 0 });
+  const jm = jamaica(now), id = manual ? `${jm.date}-test` : jm.date;
+  const past = await getJSON(kv, "seen", { problems: [], queries: [], docs: [], nights: 0 });
   let st = await getJSON(kv, `night:${id}`);
   if (st?.status === "done" || st?.status === "stopped") return st;
-  if (!st) st = newNight(id, past.nights || 0, past);
+  if (!st) st = newNight(id, past.nights || 0);
   st.steps++;
   const isLast = !manual && (jm.hour > LAST_SLOT.hour || (jm.hour === LAST_SLOT.hour && jm.minute >= LAST_SLOT.minute));
   let calls = 0;
   const timeLeft = () => Date.now() - t0 < STEP_MS;
-
-  // Gemini call with the night's rules: a limit or a missing key stops the night; no grounding → try the next model.
   const gem = async (prompt, opts) => {
     for (;;) {
-      try { calls++; st.calls++; const r = await ask(env, st.model, prompt, opts); st.errorsInRow = 0; st.okCalls = (st.okCalls || 0) + 1; return r; }
+      try { calls++; st.calls++; const r = await ask(env, st.model, prompt, opts); st.errorsInRow = 0; st.okCalls++; return r; }
       catch (e) {
         if (!(e instanceof GeminiError)) throw e;
-        // This model can't be used (retired for new users, or no free grounding): try the next one on the list.
-        if ((e.kind === "model" || (e.kind === "no-grounding" && opts.search)) && await nextModel(env, st)) continue;
-        // Refused before anything worked tonight: that model may have no free quota at all, so try the next one once.
-        if (e.kind === "limit" && !st.okCalls) {
-          st.refused = [...(st.refused || []), st.model];
-          if (await nextModel(env, st)) continue;
-          stop(st, "no-free-quota", `models tried: ${st.refused.join(", ")}`);
-          return null;
-        }
-        if (["limit", "location", "key", "no-grounding", "model"].includes(e.kind)) { stop(st, e.kind, e.message); return null; }
+        if (e.kind === "model" && await nextModel(env, st)) continue; // retired for new users → the next model
+        if (e.kind === "limit" && !st.okCalls) { st.refused = [...(st.refused || []), st.model]; if (await nextModel(env, st)) continue; stop(st, "no-free-quota", `models tried: ${st.refused.join(", ")}`); return null; }
+        if (["limit", "location", "key", "model", "no-grounding"].includes(e.kind)) { stop(st, e.kind === "no-grounding" ? "errors" : e.kind, e.message); return null; }
         st.errorsInRow++; note(st, `Gemini error: ${e.message.slice(0, 160)}`);
         if (st.errorsInRow >= 4) stop(st, "errors", e.message);
         return null;
@@ -72,51 +76,85 @@ export async function runStep(env, { now = Date.now(), manual = false } = {}) {
   };
 
   try {
-    if (!st.stopped && !st.model) {
-      if (!env.GEMINI_API_KEY) stop(st, "key", "add GEMINI_API_KEY as a secret on the night-agent Worker");
-      else {
-        try { if (!(await nextModel(env, st))) stop(st, "model", `none of ${env.GEMINI_MODELS || DEFAULT_MODELS} is available to this key`); }
-        catch (e) { stop(st, e instanceof GeminiError ? e.kind : "errors", e.message); }
-      }
+    // 1. Fetch public sources (no Gemini).
+    if (st.fetchQueue.length) {
+      const seenDocs = new Set(past.docs || []);
+      for (const task of st.fetchQueue.splice(0, FETCH_PER_STEP)) await fetchTask(env, st, task, seenDocs, now);
     }
-    // 1–2. Source links → real addresses, and quote checks (no Gemini calls).
-    await resolveSources(st);
-    // 1. Searches.
-    while (!st.stopped && calls < MAX_CALLS_PER_STEP && timeLeft()) {
-      const q = st.queries.find((x) => !x.done);
-      if (!q) break;
-      const r = await gem(q.kind === "job" ? jobPrompt(q.q) : searchPrompt(q.q), { search: true });
-      if (!r) { if (!st.stopped) { q.done = true; q.error = true; } break; }
-      q.done = true; q.found = q.kind === "job" ? addJobs(st, r, q.q) : addComplaints(st, r, q.q);
-      note(st, `Searched ${q.kind === "job" ? "job ads" : ""} “${q.q}”: ${q.found} ${q.kind === "job" ? "job ad" : "complaint"}${q.found === 1 ? "" : "s"} with proof.`.replace("Searched  “", "Searched “"));
+    if (!st.fetchQueue.length && !st.analyzeQueue) {
+      const ids = Object.keys(st.docs);
+      st.analyzeQueue = []; for (let i = 0; i < ids.length; i += BATCH) st.analyzeQueue.push(ids.slice(i, i + BATCH));
+      if (manual) st.analyzeQueue = st.analyzeQueue.slice(0, 2);
+      note(st, `Fetched ${ids.length} new public texts (${ids.filter((d) => st.docs[d].kind === "job").length} job ads).`);
+    }
+    // Gemini model (only once there's something to read).
+    const needGemini = !st.stopped && st.analyzeQueue && (st.analyzeQueue.length || !st.problems || !st.compDone);
+    if (needGemini && !st.model && (st.analyzeQueue.length || st.complaints.length)) {
+      if (!env.GEMINI_API_KEY) stop(st, "key", "add GEMINI_API_KEY as a secret on the night-agent Worker");
+      else { try { if (!(await nextModel(env, st))) stop(st, "model", `none of ${env.GEMINI_MODELS || DEFAULT_MODELS} is available to this key`); } catch (e) { stop(st, e instanceof GeminiError ? e.kind : "errors", e.message); } }
+    }
+    // 2. Analyze a batch.
+    if (!st.stopped && st.analyzeQueue?.length && calls < 1 && timeLeft()) {
+      const batch = st.analyzeQueue[0], r = await gem(analyzePrompt(batch.map((d) => ({ id: d, ...st.docs[d] }))), { schema: analyzeSchema, temperature: 0.1 });
+      if (r || !st.stopped) { st.analyzeQueue.shift(); if (r) { const n = addEvidence(st, r.text); note(st, `Read ${batch.length} texts: ${n} with exact quotes.`); } }
     }
     // 3. Group and score.
-    if (!st.stopped && st.queries.every((x) => x.done) && !st.problems && calls < MAX_CALLS_PER_STEP && timeLeft()) {
-      if (!st.complaints.length) { st.problems = []; note(st, "No complaints with proof were found tonight."); }
+    if (!st.stopped && st.analyzeQueue && !st.analyzeQueue.length && !st.problems && calls < 1 && timeLeft()) {
+      if (!st.complaints.length) { st.problems = []; st.compDone = true; note(st, "No complaints or job ads with exact quotes were found tonight."); }
       else {
         const r = await gem(clusterPrompt(st.complaints.map(({ id, quote, who, where, pays, kind }) => ({ id, quote, who, where, pays, kind })), (past.problems || []).slice(-150).map((p) => p.title)), { schema: clusterSchema, temperature: 0.1 });
-        if (r) { st.problems = cleanProblems(st, r.text, past); st.compQueue = st.problems.slice(0, TOP).map((p) => p.key); note(st, `Grouped into ${st.problems.length} new problem${st.problems.length === 1 ? "" : "s"}.`); }
+        if (r) { st.problems = cleanProblems(st, r.text, past); note(st, `Grouped into ${st.problems.length} new problem${st.problems.length === 1 ? "" : "s"}.`); if (!st.problems.length) st.compDone = true; }
       }
     }
-    // 4. Competitors for the top problems.
-    while (!st.stopped && st.compQueue?.length && calls < MAX_CALLS_PER_STEP && timeLeft()) {
-      const key = st.compQueue[0], p = st.problems.find((x) => x.key === key);
-      const r = await gem(competitorPrompt(p), { search: true });
-      if (!r && !st.stopped) { st.compQueue.shift(); continue; }
-      if (!r) break;
-      st.compQueue.shift();
-      st.competitors[key] = addCompetitors(st, r);
-      note(st, `Checked competitors for “${p.title}”: ${st.competitors[key].length} with proof.`);
+    // 4. Competitors: fetch posts mentioning tools (no Gemini), then one Gemini call to name them.
+    if (!st.stopped && st.problems?.length && !st.compFetched && calls < 1 && timeLeft()) {
+      for (const p of st.problems.slice(0, TOP)) {
+        try { st.compDocs[p.key] = (await hackerNews(env, `${keyTerms(p.title)} software`, { hits: 8 })).map((d) => addDoc(st, d)).filter(Boolean); } catch { st.compDocs[p.key] = []; }
+      }
+      st.compFetched = true;
+      note(st, `Fetched posts about tools for the top ${Math.min(TOP, st.problems.length)} problems.`);
+    } else if (!st.stopped && st.compFetched && !st.compDone && calls < 1 && timeLeft()) {
+      const groups = st.problems.slice(0, TOP).map((p) => ({ p, docs: (st.compDocs[p.key] || []).map((d) => ({ id: d, ...st.docs[d] })).filter((d) => d.text) })).filter((g) => g.docs.length);
+      if (!groups.length) st.compDone = true;
+      else { const r = await gem(competitorPrompt(groups), { schema: competitorSchema, temperature: 0.1 }); if (r || !st.stopped) { st.compDone = true; if (r) addCompetitors(st, r.text); } }
     }
-    await resolveSources(st);
   } catch (e) { note(st, `Step error: ${String(e?.message || e).slice(0, 200)}`); }
 
-  const searching = !st.stopped && (st.queries.some((x) => !x.done) || !st.problems || st.compQueue?.length);
-  const pending = Object.values(st.sources).some((s) => s.url === undefined);
-  if (isLast || (!searching && !pending) || (st.stopped && !pending)) await finish(env, st, past, isLast && (searching || pending));
-  else await putJSON(kv, `night:${id}`, st, { expirationTtl: 60 * 86400 });
+  const working = !st.stopped && (st.fetchQueue.length || !st.analyzeQueue || st.analyzeQueue.length || !st.problems || !st.compDone);
+  if (isLast || !working) await finish(env, st, past, Boolean(isLast && working));
+  else await putJSON(kv, `night:${id}`, slim(st), { expirationTtl: 60 * 86400 });
   return st;
 }
+
+/** Texts that have been read and aren't quoted anywhere are dropped from the saved state (keeps each step small). */
+function slim(st) {
+  if (!st.analyzeQueue) return st;
+  const keep = new Set([...st.analyzeQueue.flat(), ...Object.values(st.compDocs).flat(), ...st.complaints.map((c) => c.docId)]);
+  for (const id of Object.keys(st.docs)) if (!keep.has(id)) { st.fetched.push(st.docs[id].url); delete st.docs[id]; }
+  return st;
+}
+
+async function fetchTask(env, st, task, seenDocs, now) {
+  try {
+    let docs = [];
+    if (task.type === "hn") docs = await hackerNews(env, task.q, { since: now - 60 * 86400000 });
+    else if (task.type === "remotive") docs = await remotive(env, task.q);
+    else if (task.type === "wwr") docs = await weWorkRemotely(env, task.q);
+    else if (task.type === "reddit") { const r = await reddit(env, task.q, (u) => robotsAllow(st, u)); if (r.skipped) { st.notes.push(r.skipped); note(st, r.skipped); return; } docs = r.docs; }
+    let n = 0;
+    for (const d of docs) if (!seenDocs.has(urlKey(d.url)) && !Object.values(st.docs).some((x) => x.url === d.url) && addDoc(st, d)) n++;
+    note(st, `${sourceName(task)} “${task.q}”: ${n} new text${n === 1 ? "" : "s"}.`);
+  } catch (e) { note(st, `${sourceName(task)} “${task.q}” failed: ${String(e?.message || e).slice(0, 120)}`); }
+}
+const sourceName = (t) => ({ hn: "Hacker News", remotive: "Remotive jobs", wwr: "We Work Remotely", reddit: "Reddit" })[t.type];
+const urlKey = (u) => String(u).replace(/^https?:\/\/(www\.)?/, "").slice(0, 90);
+function addDoc(st, d) {
+  const existing = Object.keys(st.docs).find((k) => st.docs[k].url === d.url);
+  if (existing) return existing;
+  if (Object.keys(st.docs).length >= 260) return null;
+  const id = `d${st.nextDoc++}`; st.docs[id] = d; return id;
+}
+const keyTerms = (title) => String(title).replace(/[^A-Za-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 3 && !/^(with|that|their|from|this|have|automatic|automated|software|tool|tools|small|businesses|business)$/i.test(w)).slice(0, 3).join(" ");
 
 async function nextModel(env, st) {
   if (!st.available) { st.available = (await listModels(env).catch((e) => { if (e instanceof GeminiError && ["key", "location", "limit"].includes(e.kind)) throw e; return []; })).filter((m) => /flash/.test(m)); }
@@ -127,62 +165,60 @@ async function nextModel(env, st) {
   return false;
 }
 
-/** Keeps only items whose quote Google's grounding tied to a web page; those pages are the proof. */
-function addComplaints(st, r, query) {
+// ── Reading the texts ──────────────────────────────────────────────────────────────────────────────────
+export const analyzeSchema = { type: "OBJECT", properties: { items: { type: "ARRAY", items: { type: "OBJECT", properties: {
+  docId: { type: "STRING" }, quote: { type: "STRING" }, paysQuote: { type: "STRING" } }, required: ["docId", "quote"] } } }, required: ["items"] };
+export const analyzePrompt = (docs) => `Below are public texts: posts and comments (POST) and job ads (JOB). Find:
+- POST: a person complaining about software they use, or wishing for software that doesn't exist or doesn't work well — especially business owners and teams that pay for software.
+- JOB: a company paying someone to do repetitive work by hand that software could do (data entry, chasing invoices, answering calls, scheduling, taking orders, making reports, copying data between systems).
+For each one, return the text's id and a QUOTE: one or two sentences copied EXACTLY, character for character, from that text. Never change, shorten inside, merge or invent words.
+If the text says what they pay or would pay, copy those exact words as paysQuote; otherwise leave it empty.
+Skip texts that aren't one of these. Return at most one item per text.
+
+${docs.map((d) => `[${d.id}] ${d.kind === "job" ? `JOB — ${d.company || "company"}: ${d.role}${d.pay ? ` (${d.pay})` : ""}` : "POST"}\n${d.text}`).join("\n\n")}`;
+
+const norm = (s) => String(s || "").toLowerCase().replace(/[‘’ʼ]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "").replace(/\s+/g, " ").trim();
+/** True only if `quote` appears word for word in `text` (ignoring case, spacing and curly quotes). */
+export const inText = (quote, text, min = 20) => { const q = norm(quote).replace(/^["']+|["']+$/g, "").trim(); return q.length >= min && norm(text).includes(q); };
+
+function addEvidence(st, raw) {
+  let data; try { data = JSON.parse(raw); } catch { return 0; }
   let n = 0;
-  for (const it of readBlocks(r.text, "ITEM", ["quote", "who", "where", "pays"])) {
-    if (!it.quote || it.quote.length < 15) continue;
-    const src = supportedSources(r, it._lines.quote || it.quote);
-    if (!src.length) continue; // no proof → left out
-    if (st.complaints.some((c) => similar(c.quote, it.quote) > 0.8)) continue;
-    const uris = [];
-    for (const s of src.slice(0, 3)) { if (!st.sources[s.uri]) st.sources[s.uri] = { title: s.title }; uris.push(s.uri); }
-    // Who wrote it and what they pay are kept only if Google's grounding backs those lines too (no made-up details).
-    const whoOk = it.who && supportedSources(r, it._lines.who || it.who).length > 0;
-    const paysOk = it.pays && !/^unknown$/i.test(it.pays) && supportedSources(r, it._lines.pays || it.pays).length > 0;
-    st.complaints.push({ id: `c${st.complaints.length + 1}`, quote: it.quote.slice(0, 500), who: whoOk ? it.who.slice(0, 160) : "", where: (it.where || "").slice(0, 120), pays: paysOk ? it.pays.slice(0, 200) : "unknown", sources: uris, query });
+  for (const it of (data.items || []).slice(0, 60)) {
+    const docId = typeof it.docId === "string" && st.docs[it.docId] ? it.docId : null, d = docId && st.docs[docId];
+    if (!d || !it.quote || !inText(it.quote, d.text)) continue; // not word for word in the fetched text → left out
+    if (st.complaints.some((c) => c.docId === docId || similar(c.quote, it.quote) > 0.8)) continue;
+    const quote = String(it.quote).trim().replace(/^["']+|["']+$/g, "").slice(0, 500);
+    const paysQuote = it.paysQuote && inText(it.paysQuote, d.text, 4) ? String(it.paysQuote).trim().slice(0, 160) : "";
+    const job = d.kind === "job";
+    const pays = job ? (d.pay ? `${d.pay} (job ad)` : "pays a salary for this work (job ad)") : paysQuote ? `“${paysQuote}”` : "unknown";
+    const who = job ? `${d.company || "A company (name not given)"} is hiring ${/^[aeiou]/i.test(d.role) ? "an" : "a"} ${d.role}` : d.label;
+    st.sources[d.url] = { url: d.url, domain: domainOf(d.url), verified: true, src: d.src };
+    st.complaints.push({ id: `c${st.complaints.length + 1}`, docId, kind: job ? "job" : "post", quote, who, where: d.src + (d.title && !job ? `: ${d.title}` : ""), pays, sources: [d.url] });
     n++;
   }
   return n;
 }
 
-/**
- * Job ads: a company paying someone to do repetitive work by hand. Kept only if Google's grounding ties the quoted duties
- * to the ad; the company name, title and pay are shown only if backed too. The ad's page is the proof.
- */
-function addJobs(st, r, query) {
-  let n = 0;
-  for (const it of readBlocks(r.text, "JOB", ["company", "role", "tasks", "pay", "where"])) {
-    if (!it.tasks || it.tasks.length < 15) continue;
-    const src = supportedSources(r, it._lines.tasks || it.tasks);
-    if (!src.length) continue; // duties not tied to an ad → left out
-    if (st.complaints.some((c) => similar(c.quote, it.tasks) > 0.8)) continue;
-    const ok = (k) => it[k] && supportedSources(r, it._lines[k] || it[k]).length > 0;
-    const company = ok("company") ? it.company.slice(0, 100) : "", role = ok("role") ? it.role.slice(0, 100) : "";
-    const pay = ok("pay") && !/not listed/i.test(it.pay) ? it.pay.slice(0, 80) : "";
-    const uris = [];
-    for (const s of src.slice(0, 2)) { if (!st.sources[s.uri]) st.sources[s.uri] = { title: s.title }; uris.push(s.uri); }
-    st.complaints.push({ id: `c${st.complaints.length + 1}`, kind: "job", quote: it.tasks.slice(0, 500), company, role,
-      who: `${company || "A company (name not confirmed)"} is hiring${role ? ` ${/^[aeiou]/i.test(role) ? "an" : "a"} ${role}` : ""}`, where: (it.where || "job ad").slice(0, 80),
-      pays: pay ? `${pay} (job ad)` : "pays a salary for this work (job ad)", sources: uris, query });
-    n++;
-  }
-  return n;
-}
+// ── Competitors (tools people mention) ────────────────────────────────────────────────────────────────
+export const competitorSchema = { type: "OBJECT", properties: { tools: { type: "ARRAY", items: { type: "OBJECT", properties: {
+  problem: { type: "STRING" }, name: { type: "STRING" }, docId: { type: "STRING" }, quote: { type: "STRING" }, priceQuote: { type: "STRING" } }, required: ["problem", "name", "docId", "quote"] } } }, required: ["tools"] };
+export const competitorPrompt = (groups) => `For each problem below there are public posts. List existing software products that the posts mention as a way to deal with that problem.
+For each product: the problem key, the product name exactly as written, the post id, and a QUOTE copied EXACTLY from that post (one sentence) that mentions it — ideally what people like or dislike about it. If that post states a price for it, copy those exact words as priceQuote. Only products named in the posts; never add any from your own knowledge. At most 3 per problem.
 
-function addCompetitors(st, r) {
-  const out = [];
-  for (const it of readBlocks(r.text, "COMPETITOR", ["name", "price", "dislikes"])) {
-    if (!it.name) continue;
-    const nameSrc = supportedSources(r, it._lines.name || it.name), priceSrc = it.price ? supportedSources(r, it._lines.price) : [], disSrc = it.dislikes ? supportedSources(r, it._lines.dislikes) : [];
-    const all = [...nameSrc, ...priceSrc, ...disSrc];
-    if (!all.length) continue; // nothing about it was tied to a page → left out
-    const keep = (arr) => arr.slice(0, 2).map((s) => { if (!st.sources[s.uri]) st.sources[s.uri] = { title: s.title }; return s.uri; });
-    out.push({ name: it.name.slice(0, 80), price: priceSrc.length && it.price && !/not published/i.test(it.price) ? it.price.slice(0, 120) : null, priceSources: keep(priceSrc),
-      dislikes: disSrc.length ? it.dislikes.slice(0, 400) : null, dislikeSources: keep(disSrc), sources: keep(nameSrc.length ? nameSrc : all) });
-    if (out.length >= 4) break;
+${groups.map((g) => `PROBLEM ${g.p.key}: ${g.p.title}\n${g.docs.map((d) => `[${d.id}] ${d.text}`).join("\n")}`).join("\n\n")}`;
+
+function addCompetitors(st, raw) {
+  let data; try { data = JSON.parse(raw); } catch { return; }
+  for (const t of (data.tools || []).slice(0, 30)) {
+    const p = st.problems.find((x) => x.key === t.problem), d = st.docs[t.docId];
+    if (!p || !d || !(st.compDocs[p.key] || []).includes(t.docId) || !t.name || !inText(t.quote, d.text) || !norm(d.text).includes(norm(t.name))) continue;
+    const list = (st.competitors[p.key] ||= []);
+    if (list.length >= 3 || list.some((c) => norm(c.name) === norm(t.name))) continue;
+    st.sources[d.url] = { url: d.url, domain: domainOf(d.url), verified: true, src: d.src };
+    const priceOk = t.priceQuote && /\d/.test(t.priceQuote) && inText(t.priceQuote, d.text, 3);
+    list.push({ name: String(t.name).slice(0, 80), price: priceOk ? String(t.priceQuote).slice(0, 120) : null, priceSources: priceOk ? [d.url] : [], dislikes: String(t.quote).slice(0, 400), dislikeSources: [d.url], sources: [d.url] });
   }
-  return out;
 }
 
 const clamp = (v) => Math.max(1, Math.min(10, Math.round(Number(v) || 1)));
@@ -203,30 +239,8 @@ function cleanProblems(st, text, past) {
   return out.sort((a, b) => b.total - a.total || b.complaintIds.length - a.complaintIds.length);
 }
 
-/** Source links from grounding are Google redirect links: find each one's real address, and check quotes on the page. */
-async function resolveSources(st) {
-  const todo = Object.entries(st.sources).filter(([, s]) => s.url === undefined).slice(0, RESOLVE_PER_STEP);
-  await Promise.all(todo.map(async ([uri, s]) => {
-    try {
-      const res = await fetch(uri, { redirect: "manual", signal: AbortSignal.timeout(8000) });
-      const loc = res.headers.get("location");
-      s.url = res.status >= 300 && res.status < 400 && loc ? new URL(loc, uri).toString() : res.ok ? uri : null;
-    } catch { s.url = null; }
-    s.domain = domainOf(s.url || "") || s.title || domainOf(uri);
-  }));
-  const toCheck = [];
-  for (const c of st.complaints) {
-    const s = st.sources[c.sources[0]];
-    if (s && s.url && s.verified === undefined && toCheck.length < VERIFY_PER_STEP) toCheck.push([c, s]);
-  }
-  await Promise.all(toCheck.map(async ([c, s]) => { s.verified = (await robotsAllow(st, s.url)) ? await quoteOnPage(s.url, c.quote) : null; }));
-}
-
+// ── Site rules (checked before Reddit) ────────────────────────────────────────────────────────────────
 const UA_TOKEN = "nightagentscout";
-/**
- * Site rules: a page is read only if the site's robots.txt allows it (for this agent or for all bots). No robots.txt
- * (404) means allowed; if robots.txt can't be read, the page isn't read. Rules are remembered per site for the night.
- */
 async function robotsAllow(st, url) {
   let u; try { u = new URL(url); } catch { return false; }
   st.robots ||= {};
@@ -257,24 +271,8 @@ export function robotsRules(text) {
   const mine = groups.find((g) => g.agents.some((a) => a !== "*" && UA_TOKEN.includes(a))) || groups.find((g) => g.agents.includes("*"));
   return (mine?.rules || []).filter(([allow, pre]) => allow || pre !== "").slice(0, 300);
 }
-const squash = (t) => t.toLowerCase().replace(/<[^>]{0,2000}>/g, " ").replace(/&#39;|&rsquo;|&#x27;/g, "'").replace(/&quot;|&ldquo;|&rdquo;/g, '"').replace(/&amp;/g, "&").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ");
-/** true: the quote's words are on the page; false: the page loaded but they aren't; null: the page couldn't be read. */
-async function quoteOnPage(url, quote) {
-  try {
-    const res = await fetch(url, { headers: { "user-agent": "Mozilla/5.0 (compatible; NightAgentScout/1.0)", accept: "text/html" }, signal: AbortSignal.timeout(8000) });
-    if (!res.ok || !/html|text/.test(res.headers.get("content-type") || "")) return null;
-    const reader = res.body.getReader(); let got = "", bytes = 0; const td = new TextDecoder();
-    while (bytes < 300000) { const { done, value } = await reader.read(); if (done) break; bytes += value.length; got += td.decode(value, { stream: true }); }
-    reader.cancel().catch(() => {});
-    const words = squash(quote).replace(/[^a-z0-9' ]/g, " ").split(" ").filter(Boolean);
-    if (words.length < 5) return null;
-    const page = squash(got).replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ");
-    const probe = words.slice(0, Math.min(8, words.length)).join(" ");
-    return page.includes(probe);
-  } catch { return null; }
-}
 
-/** The morning report: saved once, plus the history index and the list of ideas already shown. */
+// ── The morning report ─────────────────────────────────────────────────────────────────────────────────
 async function finish(env, st, past, cutShort) {
   const kv = env.SCOUT;
   if (cutShort && !st.stopped) note(st, "The night ended before everything was finished; this report has what was done.");
@@ -285,6 +283,10 @@ async function finish(env, st, past, cutShort) {
   const index = await getJSON(kv, "index", []);
   const entry = { id: st.id, status: st.status, stopped: st.stopped?.message || null, problems: report.problems.length, complaints: report.complaints.length, top: report.problems.slice(0, 3).map((p) => p.title) };
   await putJSON(kv, "index", [entry, ...index.filter((x) => x.id !== st.id)].slice(0, 180));
+  // A test run ("Run one step now", the live test) only leaves its report: it doesn't mark texts as read or add to the
+  // saved ideas and leads, so the real night isn't affected.
+  const isTest = st.id.endsWith("-test");
+  if (isTest) { await putJSON(kv, `night:${st.id}`, { ...st, docs: {}, compDocs: {} }, { expirationTtl: 60 * 86400 }); return; }
   // Ideas and leads are kept for good (monthly groups, never deleted).
   const month = st.id.slice(0, 7), now = new Date().toISOString();
   if (report.problems.length) {
@@ -302,8 +304,10 @@ async function finish(env, st, past, cutShort) {
   await putJSON(kv, "totals", { ideas: totals.ideas + report.problems.length, leads: totals.leads + report.leads.length });
   const months = await getJSON(kv, "months", []);
   if (!months.includes(month)) await putJSON(kv, "months", [...months, month].sort().reverse());
-  await putJSON(kv, "seen", { nights: (past.nights || 0) + 1, problems: [...(past.problems || []), ...report.problems.map((p) => ({ title: p.title, night: st.id }))].slice(-1000), queries: [...(past.queries || []), ...st.queries.filter((q) => q.done).map((q) => q.q)].slice(-3000) });
-  await putJSON(kv, `night:${st.id}`, st, { expirationTtl: 60 * 86400 });
+  const docsSeen = [...st.fetched, ...Object.values(st.docs).map((d) => d.url)].map(urlKey);
+  await putJSON(kv, "seen", { nights: (past.nights || 0) + 1, problems: [...(past.problems || []), ...report.problems.map((p) => ({ title: p.title, night: st.id }))].slice(-1000),
+    queries: (past.queries || []).slice(-500), docs: [...(past.docs || []), ...docsSeen].slice(-4000) });
+  await putJSON(kv, `night:${st.id}`, { ...st, docs: {}, compDocs: {} }, { expirationTtl: 60 * 86400 });
   const alert = await getJSON(kv, "settings", {});
   if (alert.ntfyTopic) {
     const base = env.ALLOW_TEST === "1" && env.NTFY_BASE ? env.NTFY_BASE : "https://ntfy.sh";
@@ -313,23 +317,21 @@ async function finish(env, st, past, cutShort) {
 }
 
 export function buildReport(st, cutShort = false) {
-  const src = (uri) => { const s = st.sources[uri] || {}; return { url: s.url || uri, domain: s.domain || s.title || domainOf(uri), verified: s.verified ?? null }; };
+  const src = (url) => { const s = st.sources[url] || {}; return { url, domain: s.src || s.domain || domainOf(url), verified: s.verified ?? null }; };
   const complaint = (c) => ({ id: c.id, kind: c.kind || "post", quote: c.quote, who: c.who, where: c.where, pays: c.pays, sources: c.sources.map(src) });
   const problems = (st.problems || []).map((p) => ({ ...p, complaints: p.complaintIds.map((id) => st.complaints.find((c) => c.id === id)).filter(Boolean).map(complaint),
     competitors: (st.competitors[p.key] || []).map((c) => ({ ...c, sources: c.sources.map(src), priceSources: c.priceSources.map(src), dislikeSources: c.dislikeSources.map(src) })) }));
+  const fetchedTotal = st.fetched.length + Object.keys(st.docs).length;
   return { id: st.id, status: st.status, stopped: st.stopped, cutShort, model: st.model, startedAt: st.startedAt, finishedAt: st.finishedAt, calls: st.calls, steps: st.steps,
-    searches: st.queries.filter((q) => q.done && !q.error).length, searchesPlanned: st.queries.length, grouped: Boolean(st.problems),
-    jobAds: st.complaints.filter((c) => c.kind === "job").length, complaints: st.complaints.map(complaint), problems, leads: leadsOf(st, problems, complaint), log: st.log };
+    texts: fetchedTotal, sourcesNote: st.notes, grouped: Boolean(st.problems), jobAds: st.complaints.filter((c) => c.kind === "job").length,
+    complaints: st.complaints.map(complaint), problems, leads: leadsOf(st, problems, complaint), log: st.log };
 }
 
-/**
- * Leads: public posts where someone asked for software (never contacted in stage 1). Only real posts with a link; up to
- * 10, best first: the idea's score, whether they said what they pay, and whether the quote was found on the page.
- */
+/** Up to 10 leads: public posts and job ads showing the need (never contacted), best first. */
 function leadsOf(st, problems, complaint) {
   const ideaOf = new Map(); for (const p of problems) for (const id of p.complaintIds) ideaOf.set(id, p);
-  return st.complaints.filter((c) => c.sources.length).map((c) => {
+  return st.complaints.map((c) => {
     const p = ideaOf.get(c.id), out = complaint(c);
-    return { ...out, idea: p ? p.title : null, ideaId: p ? `${st.id}-${p.key}` : null, rank: (p ? p.total : 3) + (c.pays !== "unknown" ? 2 : 0) + (out.sources.some((s) => s.verified) ? 1 : 0) };
+    return { ...out, idea: p ? p.title : null, ideaId: p ? `${st.id}-${p.key}` : null, rank: (p ? p.total : 3) + (c.pays !== "unknown" ? 2 : 0) };
   }).sort((a, b) => b.rank - a.rank).slice(0, 10).map(({ rank, ...l }) => l);
 }

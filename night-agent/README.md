@@ -11,46 +11,37 @@ that pay for software. It groups what it finds into problems, scores them, check
 
 ## What happens each night
 
-A Cron Trigger fires every 5 minutes (`*/5 6-9 * * *` UTC = 1:00–4:55 a.m. in Jamaica, which is UTC−5 all year).
-Each run does one small step and saves progress in KV, so it fits the free plan:
+A Cron Trigger fires every 5 minutes (`*/5 6-9 * * *` UTC = 1:00–4:55 a.m. in Jamaica, UTC−5 all year). Each run does
+one small step and saves progress in KV, so it fits the free plan. **Gemini never searches** (Google refused free search
+grounding for this key): the Scout fetches public sources itself, and Gemini only reads that text.
 
-1. **Search** — 12 searches a night with Gemini + Google Search grounding: Reddit, forums, app store reviews,
-   Google reviews, Product Hunt, TikTok/YouTube comments that show up in search, G2/Capterra. Business types rotate
-   (restaurants, HVAC, dental offices, property managers, e-commerce sellers, … 30 in all), and a search used before is
-   never used again.
-   Plus **4 job-ad searches** (Indeed, LinkedIn Jobs, ZipRecruiter, SimplyHired, Glassdoor, company career pages, through
-   Google Search): companies paying people to do repetitive work by hand — data entry, chasing invoices, answering calls,
-   scheduling, taking orders, making reports. Each ad is treated as a proven, paid need: the duties are quoted from the
-   ad, the ad is linked as proof, and the company name and pay are shown only when the source backs them. Job sites are
-   never visited directly (they don't allow bots); the ads come from Google's search results. 16 searches a night in all.
-2. **Proof** — only quotes that Google's grounding tied to a web page are kept, with that page as the proof. Anything
-   the model wrote without a source is thrown away. Each source link is turned into its real address, and where the
-   page can be read, the quote is checked on it ("quote found on page").
-3. **Group and score** — complaints become problems, scored 1–10 on how many people have it, whether they already pay,
-   how angry they are, and how fast it could be built with Claude Code. Total = 30% people + 30% paying + 20% anger +
-   20% build speed. A "problem" with no real complaints behind it is dropped.
-4. **Competitors** — for the top 5: existing products, their published prices, what users dislike, each with its source.
-   A price that wasn't found is shown as "price not found", never guessed.
-5. **Report** — saved when done (usually by about 2:30 a.m.), or at 4:55 a.m. with whatever was finished.
-   Ideas from earlier reports are left out (the model is told them, and a word-overlap check catches near-repeats).
+1. **Fetch** (no Gemini) — official public sources only:
+   - **Hacker News**, through the official Algolia HN Search API: 5 searches a night for comments and posts from the last
+     60 days ("I wish there was…", "is there a tool…", "manual data entry", "we still use spreadsheets"…), rotating.
+   - **Remotive** public jobs API: 2 searches a night (they ask for at most ~4 requests a day), US/anywhere jobs only.
+   - **We Work Remotely** public RSS feeds: 2 a night, only titles that look like repetitive work (data entry, customer
+     support, scheduling, billing, dispatch, order entry, assistants…), US/anywhere only.
+   - **Reddit**: its robots.txt is checked every night. Today it disallows all automated access (and Reddit's API terms
+     require a registered app), so Reddit is skipped and the report says so. If you want Reddit, register a free official
+     Reddit app and I can add it the approved way.
+   Texts already read on an earlier night aren't read again.
+2. **Read** — Gemini (no search) reads the texts in batches of ~30 and picks complaints, wishes for software, and job
+   ads for repetitive work, each with a quote. **A quote is kept only if it appears word for word in the fetched text**;
+   the page it came from is the proof. "What they pay" is kept only if those words are in the text too (job ads: the pay
+   the job board lists). "Who" is what the source itself says (e.g. "Hacker News comment", or the company and job title).
+3. **Group and score** — problems scored 1–10 (people, already paying, anger, build speed); total = 30/30/20/20.
+   Job ads count as proof the company already pays for the work. Ideas from earlier reports are left out.
+4. **Competitors** — for the top 5, Hacker News posts about tools for that problem are fetched, and Gemini names the
+   tools they mention, again only with a word-for-word quote. A price is shown only if it's written in that post.
+5. **Report** — usually done by about 2:00 a.m.; at 4:55 a.m. at the latest. Up to 10 leads (public posts and job ads,
+   never contacted). Ideas and leads are saved for good.
 
-**Leads.** Up to 10 a night: public posts where someone asked for software like this, and job ads for work software
-could do, each with its link and the idea
-it belongs to. Fewer if fewer were found (never padded). Nobody is contacted in stage 1, and no names are collected.
+**Limits.** At most one Gemini call per step, about 8 a night. If Gemini refuses (limit, no free quota, retired model,
+missing key), the Scout tries the next model where that makes sense, otherwise stops for the night and says why.
+About 30 KV writes a night (free: 1,000 a day). Each step's own work measured 1–2 ms of CPU in tests (free: 10 ms).
 
-**Rules it follows.** Public information only, never logs into any site. The only time it opens a site's page itself
-(to check a quote) it first reads that site's robots.txt and skips the page if the site doesn't allow it (Reddit doesn't,
-so Reddit quotes are linked but not checked). "Who wrote it" and "what they pay" are shown only when Google's grounding
-backs them too; otherwise "details not confirmed".
-
-**Limits.** One Gemini call per step (at most one every 5 minutes; about 22 a night). If Gemini says a limit is reached
-(429), or a model has no free grounding, or the key doesn't work, the Scout stops for the night and the report says so
-in plain words, showing whatever it had already found. About 50 KV writes a night (free: 1,000 a day). Each step's own
-work measured a few milliseconds of CPU in tests (free: 10 ms per run).
-
-**Models.** Each night it asks Google which models your key can use and takes the first of `GEMINI_MODELS` in
-`wrangler.toml` (default: gemini-2.5-flash, then gemini-2.5-flash-lite, then gemini-flash-latest). If one has no free
-Google Search grounding, it tries the next. It never sets up or uses billing.
+**Models.** `GEMINI_MODELS` in `wrangler.toml` (default: gemini-flash-lite-latest, gemini-flash-latest, then the 2.5
+models). Each night it asks Google which ones the key can use. It never sets up or uses billing.
 
 ## The 6:00 a.m. email
 
