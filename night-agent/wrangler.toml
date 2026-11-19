@@ -27,7 +27,7 @@ new_sqlite_classes = ["JobAdsDB"]
 # Models tried in order (the first one this key can use with Google Search grounding on the free tier).
 GEMINI_MODELS = "gemini-flash-lite-latest,gemini-flash-latest,gemini-2.5-flash-lite,gemini-2.5-flash"
 # Raise this and redeploy to choose a new report passcode (forgotten passcode). Reports are kept.
-RESET_GENERATION = "1"
+RESET_GENERATION = "2"
 # The morning report email (sent with Resend's free plan from its starter address, which can only email the address the
 # Resend account was created with).
 REPORT_EMAIL = "marlonapp.sales@gmail.com"
