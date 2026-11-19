@@ -40,7 +40,7 @@ function answer(prompt, body) {
     return grounded(text, [["NAME: Jobber", [3]], ["PRICE: $69/month", [3]], ["DISLIKES: Text reminders can't be timed to the tech's arrival", [3]]]);
   }
   const text = QUOTES.map((q, i) => `ITEM\nQUOTE: ${q}\nWHO: ${["HVAC owner in Texas", "plumbing company owner", "dispatcher", "anonymous"][i]}\nWHERE: reddit.com/r/HVAC\nPAYS: ${i === 0 ? "ServiceTitan" : i === 1 ? "would pay $50/month" : "unknown"}\nEND`).join("\n");
-  return grounded(text, [[`QUOTE: ${QUOTES[0]}`, [0]], [`QUOTE: ${QUOTES[1]}`, [1]], [`QUOTE: ${QUOTES[2]}`, [2]]]);
+  return grounded(text, [[`QUOTE: ${QUOTES[0]}`, [0]], ["WHO: HVAC owner in Texas", [0]], ["PAYS: ServiceTitan", [0]], [`QUOTE: ${QUOTES[1]}`, [1]], ["WHO: plumbing company owner", [1]], ["PAYS: would pay $50/month", [1]], [`QUOTE: ${QUOTES[2]}`, [2]]]);
 }
 
 http.createServer((rq, rs) => {
@@ -51,7 +51,9 @@ http.createServer((rq, rs) => {
     if (u.pathname === "/control") { const b = JSON.parse(data || "{}"); if ("limitAfter" in b) limitAfter = b.limitAfter ?? Infinity; if (b.noGrounding) noGrounding = new Set(b.noGrounding); if (b.reset) calls = []; return send(200, { ok: true }); }
     if (u.pathname === "/calls") return send(200, calls);
     if (u.pathname.startsWith("/r/")) { rs.writeHead(302, { location: `${B}/page/${u.pathname.slice(3)}` }); return rs.end(); }
-    if (u.pathname.startsWith("/page/")) return send(200, page(Number(u.pathname.slice(6))), "text/html; charset=utf-8");
+    if (u.pathname === "/robots.txt") return send(200, "User-agent: *\nDisallow: /page/3\n", "text/plain");
+    if (u.pathname.startsWith("/page/")) { calls.push({ page: Number(u.pathname.slice(6)) }); return send(200, page(Number(u.pathname.slice(6))), "text/html; charset=utf-8"); }
+    if (u.pathname === "/emails" && rq.method === "POST") { calls.push({ email: JSON.parse(data || "{}"), auth: rq.headers.authorization }); return send(rq.headers.authorization === "Bearer re_test" ? 200 : 401, rq.headers.authorization === "Bearer re_test" ? { id: "email_1" } : { name: "validation_error", message: "API key is invalid" }); }
     if (u.pathname.startsWith("/ntfy/")) { calls.push({ ntfy: u.pathname, body: data, title: rq.headers.title }); return send(200, { id: "x" }); }
     if (rq.headers["x-goog-api-key"] !== "test-key") return send(400, { error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } });
     if (u.pathname === "/v1beta/models") return send(200, { models: ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3-pro"].map((m) => ({ name: `models/${m}`, supportedGenerationMethods: ["generateContent", "countTokens"] })) });

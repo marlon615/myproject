@@ -127,7 +127,10 @@ function addComplaints(st, r, query) {
     if (st.complaints.some((c) => similar(c.quote, it.quote) > 0.8)) continue;
     const uris = [];
     for (const s of src.slice(0, 3)) { if (!st.sources[s.uri]) st.sources[s.uri] = { title: s.title }; uris.push(s.uri); }
-    st.complaints.push({ id: `c${st.complaints.length + 1}`, quote: it.quote.slice(0, 500), who: (it.who || "unknown").slice(0, 160), where: (it.where || "").slice(0, 120), pays: (it.pays || "unknown").slice(0, 200), sources: uris, query });
+    // Who wrote it and what they pay are kept only if Google's grounding backs those lines too (no made-up details).
+    const whoOk = it.who && supportedSources(r, it._lines.who || it.who).length > 0;
+    const paysOk = it.pays && !/^unknown$/i.test(it.pays) && supportedSources(r, it._lines.pays || it.pays).length > 0;
+    st.complaints.push({ id: `c${st.complaints.length + 1}`, quote: it.quote.slice(0, 500), who: whoOk ? it.who.slice(0, 160) : "", where: (it.where || "").slice(0, 120), pays: paysOk ? it.pays.slice(0, 200) : "unknown", sources: uris, query });
     n++;
   }
   return n;
@@ -182,7 +185,43 @@ async function resolveSources(st) {
     const s = st.sources[c.sources[0]];
     if (s && s.url && s.verified === undefined && toCheck.length < VERIFY_PER_STEP) toCheck.push([c, s]);
   }
-  await Promise.all(toCheck.map(async ([c, s]) => { s.verified = await quoteOnPage(s.url, c.quote); }));
+  await Promise.all(toCheck.map(async ([c, s]) => { s.verified = (await robotsAllow(st, s.url)) ? await quoteOnPage(s.url, c.quote) : null; }));
+}
+
+const UA_TOKEN = "nightagentscout";
+/**
+ * Site rules: a page is read only if the site's robots.txt allows it (for this agent or for all bots). No robots.txt
+ * (404) means allowed; if robots.txt can't be read, the page isn't read. Rules are remembered per site for the night.
+ */
+async function robotsAllow(st, url) {
+  let u; try { u = new URL(url); } catch { return false; }
+  st.robots ||= {};
+  if (!(u.origin in st.robots)) {
+    try {
+      const res = await fetch(`${u.origin}/robots.txt`, { headers: { "user-agent": "NightAgentScout/1.0" }, signal: AbortSignal.timeout(6000) });
+      st.robots[u.origin] = res.status === 404 || res.status === 410 ? [] : res.ok ? robotsRules((await res.text()).slice(0, 60000)) : null;
+    } catch { st.robots[u.origin] = null; }
+  }
+  const rules = st.robots[u.origin];
+  if (!rules) return false;
+  const path = u.pathname + u.search;
+  let best = null;
+  for (const [allow, pre] of rules) if (pre && path.startsWith(pre) && (!best || pre.length > best[1].length || (pre.length === best[1].length && allow))) best = [allow, pre];
+  return !best || best[0];
+}
+/** The rules that apply to this agent: its own group if the file has one, otherwise the "*" group. → [[allow, prefix]] */
+export function robotsRules(text) {
+  const groups = []; let cur = null, lastWasAgent = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/#.*/, "").trim(), m = /^([A-Za-z-]+)\s*:\s*(.*)$/.exec(line);
+    if (!m) continue;
+    const k = m[1].toLowerCase(), v = m[2].trim();
+    if (k === "user-agent") { if (!lastWasAgent) { cur = { agents: [], rules: [] }; groups.push(cur); } cur.agents.push(v.toLowerCase()); lastWasAgent = true; continue; }
+    lastWasAgent = false;
+    if (cur && (k === "allow" || k === "disallow")) cur.rules.push([k === "allow", v.replace(/\*.*$/, "").replace(/\$$/, "")]);
+  }
+  const mine = groups.find((g) => g.agents.some((a) => a !== "*" && UA_TOKEN.includes(a))) || groups.find((g) => g.agents.includes("*"));
+  return (mine?.rules || []).filter(([allow, pre]) => allow || pre !== "").slice(0, 300);
 }
 const squash = (t) => t.toLowerCase().replace(/<[^>]{0,2000}>/g, " ").replace(/&#39;|&rsquo;|&#x27;/g, "'").replace(/&quot;|&ldquo;|&rdquo;/g, '"').replace(/&amp;/g, "&").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ");
 /** true: the quote's words are on the page; false: the page loaded but they aren't; null: the page couldn't be read. */
@@ -212,6 +251,23 @@ async function finish(env, st, past, cutShort) {
   const index = await getJSON(kv, "index", []);
   const entry = { id: st.id, status: st.status, stopped: st.stopped?.message || null, problems: report.problems.length, complaints: report.complaints.length, top: report.problems.slice(0, 3).map((p) => p.title) };
   await putJSON(kv, "index", [entry, ...index.filter((x) => x.id !== st.id)].slice(0, 180));
+  // Ideas and leads are kept for good (monthly groups, never deleted).
+  const month = st.id.slice(0, 7), now = new Date().toISOString();
+  if (report.problems.length) {
+    const bucket = await getJSON(kv, `ideas:${month}`, []);
+    const ideas = report.problems.map((p) => ({ id: `${st.id}-${p.key}`, night: st.id, title: p.title, summary: p.summary, who: p.who, total: p.total, scores: p.scores, why: p.why,
+      complaints: p.complaints.slice(0, 6).map((c) => ({ quote: c.quote, who: c.who, pays: c.pays, sources: c.sources.slice(0, 2) })),
+      competitors: p.competitors.map((c) => ({ name: c.name, price: c.price, priceSources: c.priceSources, dislikes: c.dislikes, dislikeSources: c.dislikeSources, sources: c.sources })), saved: now }));
+    await putJSON(kv, `ideas:${month}`, [...bucket.filter((x) => x.night !== st.id), ...ideas]);
+  }
+  if (report.leads.length) {
+    const bucket = await getJSON(kv, `leads:${month}`, []);
+    await putJSON(kv, `leads:${month}`, [...bucket.filter((x) => x.night !== st.id), ...report.leads.map((l) => ({ ...l, night: st.id }))]);
+  }
+  const totals = await getJSON(kv, "totals", { ideas: 0, leads: 0 });
+  await putJSON(kv, "totals", { ideas: totals.ideas + report.problems.length, leads: totals.leads + report.leads.length });
+  const months = await getJSON(kv, "months", []);
+  if (!months.includes(month)) await putJSON(kv, "months", [...months, month].sort().reverse());
   await putJSON(kv, "seen", { nights: (past.nights || 0) + 1, problems: [...(past.problems || []), ...report.problems.map((p) => ({ title: p.title, night: st.id }))].slice(-1000), queries: [...(past.queries || []), ...st.queries.filter((q) => q.done).map((q) => q.q)].slice(-3000) });
   await putJSON(kv, `night:${st.id}`, st, { expirationTtl: 60 * 86400 });
   const alert = await getJSON(kv, "settings", {});
@@ -229,5 +285,17 @@ export function buildReport(st, cutShort = false) {
     competitors: (st.competitors[p.key] || []).map((c) => ({ ...c, sources: c.sources.map(src), priceSources: c.priceSources.map(src), dislikeSources: c.dislikeSources.map(src) })) }));
   return { id: st.id, status: st.status, stopped: st.stopped, cutShort, model: st.model, startedAt: st.startedAt, finishedAt: st.finishedAt, calls: st.calls, steps: st.steps,
     searches: st.queries.filter((q) => q.done && !q.error).length, searchesPlanned: st.queries.length, grouped: Boolean(st.problems),
-    complaints: st.complaints.map(complaint), problems, log: st.log };
+    complaints: st.complaints.map(complaint), problems, leads: leadsOf(st, problems, complaint), log: st.log };
+}
+
+/**
+ * Leads: public posts where someone asked for software (never contacted in stage 1). Only real posts with a link; up to
+ * 10, best first: the idea's score, whether they said what they pay, and whether the quote was found on the page.
+ */
+function leadsOf(st, problems, complaint) {
+  const ideaOf = new Map(); for (const p of problems) for (const id of p.complaintIds) ideaOf.set(id, p);
+  return st.complaints.filter((c) => c.sources.length).map((c) => {
+    const p = ideaOf.get(c.id), out = complaint(c);
+    return { ...out, idea: p ? p.title : null, ideaId: p ? `${st.id}-${p.key}` : null, rank: (p ? p.total : 3) + (c.pays !== "unknown" ? 2 : 0) + (out.sources.some((s) => s.verified) ? 1 : 0) };
+  }).sort((a, b) => b.rank - a.rank).slice(0, 10).map(({ rank, ...l }) => l);
 }

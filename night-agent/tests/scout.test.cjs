@@ -55,7 +55,11 @@ function memoryKV() {
   check(!JSON.stringify(r).includes("Honestly this whole industry"), "a quote Google's grounding didn't tie to a page is left out (no proof, no entry)");
   check(r.complaints.length === 3 && r.complaints.every((c) => c.sources.length && c.sources.every((s) => s.url.startsWith(`${SB}/page/`))), "every complaint keeps its proof: the real address of the page it came from (not the redirect)");
   const v = Object.fromEntries(r.complaints.map((c) => [c.id, c.sources[0].verified]));
-  check(v.c1 === true && v.c2 === true && v.c3 === false, "quotes are checked on the page: found → marked 'quote found on page'; not found → not marked", JSON.stringify(v));
+  check(v.c1 === true && v.c2 === true && v.c3 === null, "quotes are checked on the page when the site allows it: found → marked 'quote found on page'", JSON.stringify(v));
+  check(!(await callsSoFar()).some((c) => c.page === 3), "site rules are followed: a page the site's robots.txt disallows is never read (only linked)");
+  const cs = Object.fromEntries(r.complaints.map((c) => [c.id, c]));
+  check(cs.c1.who === "HVAC owner in Texas" && cs.c2.pays === "would pay $50/month" && cs.c3.who === "" && cs.c3.pays === "unknown", "who wrote it and what they pay are kept only when Google's grounding backs them; otherwise 'not confirmed'", JSON.stringify([cs.c3.who, cs.c3.pays]));
+  check(r.leads.length === 3 && r.leads.length <= 10 && r.leads.every((l) => l.sources[0].url.startsWith(`${SB}/page/`)) && r.leads[0].idea === r.problems[0].title, "leads: up to 10 real public posts, each with its link and the idea it belongs to (here 3 — never padded)", r.leads.map((l) => l.id).join(","));
   check(r.problems.length === 3 && !JSON.stringify(r.problems).includes("made-up"), "complaints are grouped into problems; a 'problem' with no real complaints behind it is dropped", r.problems.map((p) => p.title).join(" | "));
   check(r.problems[0].total === 7.5 && r.problems[1].total === 6.9 && r.problems[2].total === 5.9 && r.problems[0].scores.buildSpeed === 9, "each problem is scored 1–10 on people, paying, anger and build speed, and ranked", r.problems.map((p) => p.total).join(", "));
   const comp = r.problems[0].competitors;
@@ -69,12 +73,27 @@ function memoryKV() {
   const alert = (await callsSoFar()).find((c) => c.ntfy);
   check(alert && alert.ntfy === "/ntfy/night-agent-test" && /1\. Automatic 'tech is on the way' texts/.test(alert.body), "with phone alerts on, a notification with the top ideas is sent when the report is ready");
 
+  const ideas1 = await kv.get("ideas:2026-11", "json"), leads1 = await kv.get("leads:2026-11", "json");
+  check(ideas1.length === 3 && ideas1[0].id === "2026-11-20-p1" && ideas1[0].complaints[0].sources[0].url.startsWith(`${SB}/page/`) && leads1.length === 3, "ideas and leads are saved for good (with their proof), month by month");
+
+  // Email and build prompt (built from the saved report only)
+  const E = await import("../src/email.js"), PR = await import("../src/prompt.js");
+  const mail = E.buildEmail(r, r.id, null, "https://night-agent.example");
+  check(/^Night Agent: 3 ideas for Friday, November 20, 2026$/.test(mail.subject) && /OVERNIGHT\n12 of 12 searches · 3 complaints with proof · 3 new ideas · \d+ Gemini calls/.test(mail.text), "the email says what the agent did overnight", mail.subject);
+  check(/1\. Automatic 'tech is on the way' texts for HVAC customers — 7\.5\/10/.test(mail.text) && /Proof: "I wish there was an app that texted/.test(mail.text) && mail.text.includes(`${SB}/page/1`) && /Build it: https:\/\/night-agent\.example\/idea\/2026-11-20-p1/.test(mail.text), "…the top 3 ideas with their proof links and a 'build this' link");
+  check(/LEADS \(3, public posts — not contacted\)/.test(mail.text) && (mail.text.match(/^\d+\. .*http:\/\/localhost:8931\/page\/\d/gm) || []).length >= 3 && /Yes, build this/.test(mail.html), "…and the leads, each with its link (short and clear, text and HTML)");
+  const prompt = PR.buildPrompt(ideas1[0]);
+  const money = [...prompt.matchAll(/\$\d[\d,.]*(?:\/\w+)?/g)].map((m) => m[0]);
+  check(prompt.includes(ideas1[0].complaints[0].quote) && prompt.includes(`${SB}/page/1`) && /Jobber: \$69\/month \(source: http:\/\/localhost:8931\/page\/4\)/.test(prompt) && /Don't contact any of the people quoted/.test(prompt), "'Yes, build this' makes a ready-to-paste Claude Code prompt with the real quotes, links, scores and competitors");
+  check(money.every((m) => JSON.stringify(ideas1[0]).includes(m)), "the prompt adds no numbers of its own: every price in it comes from the saved proof", money.join(", "));
+
   // ── A2. The next night: nothing repeated ────────────────────────────────────────────────────────────
   await ctl({ reset: true });
   n = await night("2026-11-21");
   const q1 = (await kv.get("night:2026-11-20", "json")).queries.map((q) => q.q), q2 = n.st.queries.map((q) => q.q);
   check(n.report.status === "done" && n.report.problems.length === 0 && n.report.grouped, "the next night, ideas already reported are left out (same problems found again → 0 new)", `${n.report.problems.length} new`);
   check(!q2.some((q) => q1.includes(q)), "and it searches different things than the night before");
+  check((await kv.get("ideas:2026-11", "json")).length === 3 && (await kv.get("leads:2026-11", "json")).length === 6, "earlier ideas stay saved (never deleted); new leads are added");
 
   // ── A3. Hitting the free limit: stop for the night and say so ─────────────────────────────────────
   await ctl({ reset: true, limitAfter: 3 });
@@ -107,7 +126,7 @@ function memoryKV() {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "night-agent-"));
   const log = [];
   const w = spawn(WRANGLER, ["dev", "--port", String(PORT), "--persist-to", stateDir, "--test-scheduled", "--show-interactive-dev-session=false", "--log-level", "warn",
-    "--var", "ALLOW_TEST:1", "--var", `GEMINI_BASE:${SB}`, "--var", "GEMINI_API_KEY:test-key", "--var", `NTFY_BASE:${SB}/ntfy`], { cwd: ROOT, env: { ...process.env, WRANGLER_SEND_METRICS: "false", CLOUDFLARE_API_TOKEN: "placeholder-not-used-locally" }, stdio: ["ignore", "pipe", "pipe"] });
+    "--var", "ALLOW_TEST:1", "--var", `GEMINI_BASE:${SB}`, "--var", "GEMINI_API_KEY:test-key", "--var", `NTFY_BASE:${SB}/ntfy`, "--var", "RESEND_API_KEY:re_test", "--var", `RESEND_BASE:${SB}`], { cwd: ROOT, env: { ...process.env, WRANGLER_SEND_METRICS: "false", CLOUDFLARE_API_TOKEN: "placeholder-not-used-locally" }, stdio: ["ignore", "pipe", "pipe"] });
   w.stdout.on("data", (d) => log.push(String(d))); w.stderr.on("data", (d) => log.push(String(d)));
   const browser = await chromium.launch();
   try {
@@ -131,11 +150,37 @@ function memoryKV() {
     const idle = async () => { let last = -1; for (let i = 0; i < 60; i++) { const n = (await callsSoFar()).length; if (n === last) return; last = n; await sleep(700); } };
     for (let k = 0; k < 48 && !(await callsSoFar()).some((c) => c.ntfy); k++) { await fetch(`${BASE}/__test/tick?time=${Date.parse("2026-12-01T06:00:00Z") + k * 300000}`); await idle(); }
     check((await callsSoFar()).some((c) => c.ntfy), "the Cron Trigger runs drive the whole night on the real Worker, ending with the phone alert");
-    await pg.goto(BASE);
+    await pg.goto(`${BASE}/night/2026-12-01`);
     const text = (await pg.innerText("main")).replace(/\s+/g, " ");
     check(/Automatic 'tech is on the way' texts for HVAC customers 7\.5\/10/.test(text) && /Proof: localhost/.test(text) && /Jobber — \$69\/month/.test(text) && /quote found on page/.test(text), "the morning report shows ranked problems with scores, quotes with proof links, and competitors with prices", text.slice(0, 160));
     check(await pg.locator("main a[href^='http://localhost:8931/page/']").count() >= 3, "every proof is a real link to the source page");
     await pg.screenshot({ path: path.join(OUT, "report-phone.png"), fullPage: true });
+    // 6:00 a.m. email, once.
+    const before = (await callsSoFar()).filter((c) => c.email).length;
+    const e1 = await (await fetch(`${BASE}/__test/tick?kind=email&time=${Date.parse("2026-12-01T11:00:00Z")}`)).json();
+    await fetch(`${BASE}/__test/tick?kind=email&time=${Date.parse("2026-12-01T11:00:00Z")}`);
+    const sent = (await callsSoFar()).filter((c) => c.email).slice(before);
+    check(e1.ok && sent.length === 1 && sent[0].email.to[0] === "marlonapp.sales@gmail.com" && /^Night Agent: 3 ideas for Tuesday, December 1, 2026$/.test(sent[0].email.subject) && sent[0].email.from === "Night Agent <onboarding@resend.dev>", "at 6:00 a.m. the report is emailed to marlonapp.sales@gmail.com — once, even if the trigger fires twice", sent[0]?.email.subject);
+    check(sent[0].email.to.length === 1 && (await callsSoFar()).filter((c) => c.email).every((c) => c.email.to.join() === "marlonapp.sales@gmail.com"), "the email goes only to you (nobody else is ever contacted)");
+    // Dashboard, ideas, build prompt, leads.
+    await pg.goto(BASE);
+    const dash = (await pg.innerText("main")).replace(/\s+/g, " ");
+    check(/1 night · 3 ideas saved · 3 leads saved · 0 chosen to build/.test(dash) && /Email: Sent .* to marlonapp\.sales@gmail\.com/.test(dash) && await pg.locator("main form[action$='/build'] button").count() === 3, "the dashboard shows last night, totals, this morning's email, and the top 3 ideas with 'Yes, build this'", dash.slice(0, 200));
+    await pg.screenshot({ path: path.join(OUT, "dashboard-phone.png"), fullPage: true });
+    await pg.locator("main form[action$='/build'] button").first().click();
+    await pg.waitForSelector("#prompt");
+    const ptext = await pg.inputValue("#prompt");
+    check(/^Build a new app for this problem/.test(ptext) && ptext.includes("http://localhost:8931/page/1") && ptext.includes("I wish there was an app that texted"), "'Yes, build this' opens a ready-to-paste Claude Code prompt for that idea");
+    await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
+    await pg.click("[data-copy]");
+    await pg.waitForFunction(() => /Copied|Selected/.test(document.getElementById("copied").textContent));
+    check(/Copied|Selected/.test(await pg.textContent("#copied")), "…with a Copy button");
+    await pg.screenshot({ path: path.join(OUT, "build-prompt-phone.png"), fullPage: true });
+    await pg.goto(`${BASE}/ideas`);
+    const ideasText = (await pg.innerText("main")).replace(/\s+/g, " ");
+    check(/All ideas/.test(ideasText) && /chosen to build/.test(ideasText) && await pg.locator("main section.card").count() === 3, "the Ideas page lists every saved idea, marking the ones chosen to build");
+    await pg.goto(`${BASE}/leads`);
+    check(await pg.locator("main blockquote").count() === 3 && /Never contacted|nobody is contacted/.test(await pg.innerText("main")), "the Leads page lists every saved lead with its post link");
     const json401 = await fetch(`${BASE}/report/2026-12-01.json`);
     check(json401.status === 401 && !(await json401.text()).includes("HVAC"), "without signing in, the report and its data can't be read");
     await pg.goto(`${BASE}/history`);

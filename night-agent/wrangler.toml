@@ -8,7 +8,7 @@ workers_dev = true
 preview_urls = false
 
 [triggers]
-crons = ["*/5 6-9 * * *"]
+crons = ["*/5 6-9 * * *", "0 11 * * *"] # the night, and the 6:00 a.m. Jamaica email
 
 [[kv_namespaces]]
 binding = "SCOUT"
@@ -19,5 +19,10 @@ id = "87c18e78a88a473fb1d3320c6bba6422"
 GEMINI_MODELS = "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-flash-latest"
 # Raise this and redeploy to choose a new report passcode (forgotten passcode). Reports are kept.
 RESET_GENERATION = "1"
+# The morning report email (sent with Resend's free plan from its starter address, which can only email the address the
+# Resend account was created with).
+REPORT_EMAIL = "marlonapp.sales@gmail.com"
+SITE_URL = "https://night-agent.marlon615.workers.dev"
 
-# Secret (never in this file): GEMINI_API_KEY — a free key from aistudio.google.com, added in Cloudflare as a secret.
+# Secrets (never in this file): GEMINI_API_KEY (free key from aistudio.google.com) and RESEND_API_KEY (free key from
+# resend.com), each added in Cloudflare as a secret on this Worker.

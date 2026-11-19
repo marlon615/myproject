@@ -10,11 +10,13 @@
  * Secret: GEMINI_API_KEY (Google AI Studio, free tier). Nothing here ever turns on billing.
  */
 import { runStep } from "./pipeline.js";
-import { reportPage, historyPage, settingsPage, authPage, page } from "./report.js";
+import { reportPage, historyPage, settingsPage, authPage, page, dashboardPage, ideasPage, ideaPage, promptPage, leadsPage } from "./report.js";
+import { morningEmail, emailStatusText } from "./email.js";
+import { buildPrompt } from "./prompt.js";
 import { getJSON, putJSON, randomHex, sha256, hex, jamaica, jamaicaTime } from "./util.js";
 
 const HEADERS = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "x-frame-options": "DENY",
-  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", "x-robots-tag": "noindex, nofollow" };
+  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", "x-robots-tag": "noindex, nofollow" };
 const html = (body, status = 200, extra = {}) => new Response(body, { status, headers: { ...HEADERS, ...extra } });
 const redirect = (to, extra = {}) => new Response(null, { status: 303, headers: { location: to, "cache-control": "no-store", ...extra } });
 const ROUNDS = 5000; // PBKDF2 rounds: the free plan allows ~10 ms of CPU per request
@@ -33,8 +35,21 @@ async function newSession(env) {
 }
 const form = async (req) => { try { return Object.fromEntries(new URLSearchParams(await req.text())); } catch { return {}; } };
 
+const COPY_JS = `document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+  const t = document.getElementById(b.dataset.copy), out = document.getElementById("copied");
+  try { await navigator.clipboard.writeText(t.value); out.textContent = "Copied. Paste it into Claude Code."; }
+  catch { t.focus(); t.select(); out.textContent = "Selected: copy it with your phone's Copy button."; }
+}));`;
+
+async function findIdea(kv, id) {
+  const m = /^(\d{4}-\d{2})-\d{2}(?:-test)?-p\d+$/.exec(id || "");
+  return m ? (await getJSON(kv, `ideas:${m[1]}`, [])).find((x) => x.id === id) || null : null;
+}
+const monthParam = (url, months) => { const m = url.searchParams.get("month"); return /^\d{4}-\d{2}$/.test(m || "") ? m : months[0] || null; };
+
 async function handle(req, env) {
   const url = new URL(req.url), path = url.pathname, kv = env.SCOUT;
+  if (path === "/copy.js") return new Response(COPY_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", "x-content-type-options": "nosniff" } });
   const auth = await getJSON(kv, "auth", null);
   const claimed = auth && auth.gen === String(env.RESET_GENERATION || "1");
   if (req.method === "POST" && path === "/setup") {
@@ -63,13 +78,41 @@ async function handle(req, env) {
     if (st.status !== "running") return html(reportPage(await getJSON(kv, `report:${st.id}`), { notice: `<div class="card status done">${msg.replace(/[<>&]/g, "")}</div>` }));
     return html(await settingsHtml(env, msg));
   }
+  if (req.method === "POST" && path === "/email-now") {
+    const r = await morningEmail(env, Date.now(), { force: true });
+    return html(await settingsHtml(env, r.ok ? `Email sent to ${r.to}.` : `Email not sent: ${r.error}`));
+  }
+  const b = /^\/idea\/([^/]+)\/build$/.exec(path);
+  if (req.method === "POST" && b) {
+    const id = decodeURIComponent(b[1]), idea = await findIdea(kv, id);
+    if (!idea) return html(page("Not found", "<h1>That idea wasn't found</h1><p><a href='/ideas'>All ideas</a></p>"), 404);
+    const built = await getJSON(kv, "built", {});
+    if (!built[id]) await putJSON(kv, "built", { ...built, [id]: new Date().toISOString() });
+    return redirect(`/idea/${encodeURIComponent(id)}/prompt`);
+  }
   if (req.method === "POST" && path === "/alerts") {
     const f = await form(req), s = await getJSON(kv, "settings", {});
     await putJSON(kv, "settings", { ...s, ntfyTopic: f.off ? null : s.ntfyTopic || `night-agent-${randomHex(12)}` });
     return redirect("/settings");
   }
   if (req.method !== "GET") return html(page("Not found", "<h1>Not found</h1>"), 404);
-  if (path === "/") { const index = await getJSON(kv, "index", []); return html(reportPage(index[0] ? await getJSON(kv, `report:${index[0].id}`) : null)); }
+  if (path === "/") {
+    const index = await getJSON(kv, "index", []), totals = await getJSON(kv, "totals", { ideas: 0, leads: 0 }), built = await getJSON(kv, "built", {});
+    const r = index[0] ? await getJSON(kv, `report:${index[0].id}`) : null;
+    return html(dashboardPage({ r, email: emailStatusText(await getJSON(kv, `email:${r && !r.id.endsWith("-test") ? r.id : jamaica().date}`)), totals: { nights: index.length, ideas: totals.ideas, leads: totals.leads, built: Object.keys(built).length } }));
+  }
+  if (path === "/ideas" || path === "/leads") {
+    const months = await getJSON(kv, "months", []), month = monthParam(url, months);
+    if (path === "/ideas") return html(ideasPage({ ideas: month ? await getJSON(kv, `ideas:${month}`, []) : [], months, month, built: await getJSON(kv, "built", {}) }));
+    return html(leadsPage({ leads: month ? await getJSON(kv, `leads:${month}`, []) : [], months, month }));
+  }
+  const ip = /^\/idea\/([^/]+?)(\/prompt)?$/.exec(path);
+  if (ip) {
+    const id = decodeURIComponent(ip[1]), idea = await findIdea(kv, id);
+    if (!idea) return html(page("Not found", "<h1>That idea wasn't found</h1><p><a href='/ideas'>All ideas</a></p>"), 404);
+    const built = (await getJSON(kv, "built", {}))[id];
+    return html(ip[2] ? promptPage(idea, buildPrompt(idea)) : ideaPage(idea, built));
+  }
   if (path === "/history") return html(historyPage(await getJSON(kv, "index", [])));
   if (path === "/settings") return html(await settingsHtml(env, ""));
   const m = /^\/night\/(\d{4}-\d{2}-\d{2}(?:-test)?)$/.exec(path);
@@ -83,9 +126,11 @@ async function settingsHtml(env, msg) {
   const jm = jamaica(), live = await getJSON(env.SCOUT, `night:${jm.date}`) || await getJSON(env.SCOUT, `night:${jm.date}-test`);
   const s = await getJSON(env.SCOUT, "settings", {});
   return settingsPage({ hasKey: Boolean(env.GEMINI_API_KEY), models: env.GEMINI_MODELS || "gemini-2.5-flash, gemini-2.5-flash-lite, gemini-flash-latest",
-    live: live ? `${live.log.at(-1)?.msg || ""} (${jamaicaTime(live.log.at(-1)?.at || live.startedAt)})` : "", alerts: s.ntfyTopic || null, msg });
+    live: live ? `${live.log.at(-1)?.msg || ""} (${jamaicaTime(live.log.at(-1)?.at || live.startedAt)})` : "", alerts: s.ntfyTopic || null, msg,
+    email: { to: env.REPORT_EMAIL || "", hasKey: Boolean(env.RESEND_API_KEY), status: emailStatusText(await getJSON(env.SCOUT, `email:${(await getJSON(env.SCOUT, "index", [])).find((x) => !x.id.endsWith("-test"))?.id || jm.date}`)) } });
 }
 
+const EMAIL_CRON = "0 11 * * *"; // 6:00 a.m. Jamaica time
 /** One Cron Trigger run: a step of tonight's work, only between 1:00 and 4:59 a.m. Jamaica time. */
 async function nightTick(env, time) {
   const jm = jamaica(time);
@@ -96,8 +141,15 @@ async function nightTick(env, time) {
 export default {
   async fetch(req, env) {
     // Tests only (ALLOW_TEST=1, never on the live Worker): run a Cron Trigger tick for a chosen time.
-    if (env.ALLOW_TEST === "1" && new URL(req.url).pathname === "/__test/tick") { const st = await nightTick(env, Number(new URL(req.url).searchParams.get("time"))); return new Response(JSON.stringify({ status: st?.status || "skipped" }), { headers: { "content-type": "application/json" } }); }
+    if (env.ALLOW_TEST === "1" && new URL(req.url).pathname === "/__test/tick") {
+      const q = new URL(req.url).searchParams, time = Number(q.get("time"));
+      const out = q.get("kind") === "email" ? await morningEmail(env, time) : { status: (await nightTick(env, time))?.status || "skipped" };
+      return new Response(JSON.stringify(out), { headers: { "content-type": "application/json" } });
+    }
     try { return await handle(req, env); } catch (e) { console.error(e?.stack || e); return html(page("Error", "<h1>Something went wrong</h1><p>Please try again.</p>"), 500); }
   },
-  async scheduled(event, env, ctx) { ctx.waitUntil(nightTick(env, event.scheduledTime)); },
+  async scheduled(event, env, ctx) {
+    if (event.cron === EMAIL_CRON) ctx.waitUntil(morningEmail(env, event.scheduledTime).catch((e) => console.error("email failed", e?.stack || e)));
+    else ctx.waitUntil(nightTick(env, event.scheduledTime));
+  },
 };
