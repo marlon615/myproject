@@ -63,4 +63,22 @@ export async function morningEmail(env, time = Date.now(), { force = false } = {
   await putJSON(kv, `email:${night}`, result, { expirationTtl: 90 * 86400 });
   return result;
 }
+/** A one-off test email (same sender and recipient as the morning report), recorded in KV as "email-test". */
+export async function testEmail(env) {
+  const kv = env.SCOUT;
+  if (await kv.get("email-test")) return null; // only once
+  const site = String(env.SITE_URL || "").replace(/\/+$/, "");
+  const base = env.ALLOW_TEST === "1" && env.RESEND_BASE ? env.RESEND_BASE : "https://api.resend.com";
+  const result = { at: new Date().toISOString(), to: env.REPORT_EMAIL || "" };
+  try {
+    const res = await fetch(`${base}/emails`, { method: "POST", headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json" }, signal: AbortSignal.timeout(15000),
+      body: JSON.stringify({ from: env.EMAIL_FROM || "Night Agent <onboarding@resend.dev>", to: [env.REPORT_EMAIL], subject: "Night Agent: test email",
+        text: `This is a test from your Night Agent.\n\nThe email is set up: every morning at 6:00 a.m. Jamaica time, the morning report (what ran overnight, the top 3 ideas with proof, and the leads) will be sent here.\n\nDashboard: ${site}/`,
+        html: `<div style="font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#1c1d1a"><h2 style="margin:0 0 8px">Night Agent: test email</h2><p>The email is set up. Every morning at <b>6:00 a.m. Jamaica time</b>, your morning report will be sent here: what ran overnight, the top 3 ideas with proof, and the leads.</p><p><a href="${esc(site)}/" style="color:#1f4e8c;font-weight:700">Open your dashboard</a></p></div>` }) });
+    const body = await res.json().catch(() => ({}));
+    Object.assign(result, res.ok ? { ok: true, id: body.id || "" } : { ok: false, error: `Resend said ${res.status}: ${String(body.message || body.name || "").slice(0, 200)}` });
+  } catch (e) { Object.assign(result, { ok: false, error: `Couldn't reach Resend (${e?.name || "network"}).` }); }
+  await putJSON(kv, "email-test", result, { expirationTtl: 30 * 86400 });
+  return result;
+}
 export const emailStatusText = (e) => (!e ? "Not sent yet." : e.ok ? `Sent ${jamaicaTime(e.at)} to ${e.to}: “${e.subject}”` : `Not sent (${jamaicaTime(e.at)}): ${e.error}`);

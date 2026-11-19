@@ -11,7 +11,7 @@
  */
 import { runStep } from "./pipeline.js";
 import { reportPage, historyPage, settingsPage, authPage, page, dashboardPage, ideasPage, ideaPage, promptPage, leadsPage } from "./report.js";
-import { morningEmail, emailStatusText } from "./email.js";
+import { morningEmail, emailStatusText, testEmail } from "./email.js";
 import { buildPrompt } from "./prompt.js";
 import { getJSON, putJSON, randomHex, sha256, hex, jamaica, jamaicaTime } from "./util.js";
 
@@ -131,6 +131,7 @@ async function settingsHtml(env, msg) {
 }
 
 const EMAIL_CRON = "0 11 * * *"; // 6:00 a.m. Jamaica time
+const TEST_EMAIL_CRON = "*/2 * * * *"; // only while a one-off test email is being sent (added and removed in wrangler.toml)
 /** One Cron Trigger run: a step of tonight's work, only between 1:00 and 4:59 a.m. Jamaica time. */
 async function nightTick(env, time) {
   const jm = jamaica(time);
@@ -150,6 +151,7 @@ export default {
   },
   async scheduled(event, env, ctx) {
     if (event.cron === EMAIL_CRON) ctx.waitUntil(morningEmail(env, event.scheduledTime).catch((e) => console.error("email failed", e?.stack || e)));
+    else if (event.cron === TEST_EMAIL_CRON) ctx.waitUntil(testEmail(env).catch((e) => console.error("test email failed", e?.stack || e)));
     else ctx.waitUntil(nightTick(env, event.scheduledTime));
   },
 };
