@@ -481,3 +481,5 @@ dialog.review::backdrop { background: rgba(10, 12, 9, .5); }
 .remote-title { margin: 0; font-weight: 700; }
 .remote-sub { margin: 4px 0 0; font-size: 14px; color: var(--ink-2); }
 .remote-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.remote-push { margin-top: 10px; }
+.remote-push .btn-alert { width: 100%; }

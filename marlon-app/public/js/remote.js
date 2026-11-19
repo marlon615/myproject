@@ -62,7 +62,6 @@ export async function sendForSignature(inv) {
   if (t.items.some((it) => it.price === null || !(it.qty > 0))) return { error: "Every item needs a quantity and a price before it can be sent." };
   const p = await phone();
   if (!p) return { error: "This phone isn't set up for sending yet. Open Marlon from your personal link once." };
-  if (typeof Notification !== "undefined" && Notification.permission === "default") Notification.requestPermission().catch(() => {}); // to hear when it's signed
   const r = await post("/api/sign/create", { ...p, invoice: { id: t.id, number: t.number, date: t.date, seller: t.seller, sellerAddress: t.sellerAddress, sellerPhone: t.sellerPhone, store: t.store, address: t.address, items: t.items } });
   if (!r.ok) return { error: r.data.error || "That didn't send. Please try again." };
   const link = linkFor(r.data.token);
@@ -146,8 +145,58 @@ export async function checkNow() {
   return running;
 }
 
+// ── Alerts when Marlon is closed (web push) ──────────────────────────────────────────────────────────────
+// iPhone: only for Marlon added to the Home Screen (iOS 16.4 or later). The permission prompt must come from a tap.
+export const pushSupported = () => typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && typeof Notification !== "undefined";
+let pushKeyP = null;
+const pushKey = () => (pushKeyP ||= fetch("/api/push/key").then((r) => (r.ok ? r.json() : null)).then((d) => d?.key || null).catch(() => null).then((k) => { if (!k) pushKeyP = null; return k; }));
+const unb64url = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+const sameKey = (sub, key) => { const a = sub?.options?.applicationServerKey; if (!a) return true; const x = new Uint8Array(a), y = unb64url(key); return x.length === y.length && x.every((v, i) => v === y[i]); };
+
+/** "unsupported" | "denied" | "off" | "on" */
+export async function pushState() {
+  if (!pushSupported()) return "unsupported";
+  if (Notification.permission === "denied") return "denied";
+  if (Notification.permission !== "granted") return "off";
+  const reg = await navigator.serviceWorker.getRegistration();
+  return (await reg?.pushManager.getSubscription()) ? "on" : "off";
+}
+async function saveSub(sub) {
+  const p = await phone();
+  if (!p) return { error: "This phone isn't set up for alerts yet." };
+  const r = await post("/api/push/subscribe", { ...p, subscription: sub.toJSON() });
+  return r.ok ? { ok: true } : { error: r.data.error || "Couldn't turn on alerts. Check the internet and try again." };
+}
+async function subscription(key) {
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (sub && !sameKey(sub, key)) { await sub.unsubscribe().catch(() => {}); sub = null; } // the server's key changed
+  return sub || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: unb64url(key) });
+}
+/** From a tap: asks permission, subscribes this phone, and tells the server. */
+export async function enablePush() {
+  if (!pushSupported()) return { error: "This phone can't show alerts from Marlon. On iPhone, open Marlon from its Home Screen icon (iOS 16.4 or later)." };
+  const keyReady = pushKey();
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") return { error: perm === "denied" ? "Alerts are blocked for Marlon. Turn them on in your phone's settings, then try again." : "Alerts weren't turned on." };
+  const key = await keyReady;
+  if (!key) return { error: "Couldn't reach the server. Check the internet and try again." };
+  try { return await saveSub(await subscription(key)); } catch (e) { console.error(e); return { error: "This phone couldn't turn on alerts. Please try again." }; }
+}
+/** On every open: keeps the server's copy of this phone's subscription up to date (it can change). */
+export async function syncPush() {
+  try {
+    if ((await pushState()) !== "on") return;
+    const key = await pushKey();
+    if (key) await saveSub(await subscription(key));
+  } catch { /* try again next time */ }
+}
+if (typeof navigator !== "undefined" && navigator.serviceWorker) navigator.serviceWorker.addEventListener("message", (e) => { if (e.data?.type === "remote-check") { startRemoteWatch(); checkNow(); } });
+
 function stop() { clearInterval(timer); timer = null; }
+let synced = false;
 export function startRemoteWatch() {
+  if (!synced) { synced = true; syncPush(); }
   if (timer) return;
   timer = setInterval(() => { if (document.visibilityState === "visible") checkNow(); }, EVERY);
   checkNow();

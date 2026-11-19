@@ -12,7 +12,7 @@ import {
   normalizeUnit, parseAmount, priceInputText, qtyText, signedOnText, storeKey, sumTotals, todayISO, uid, withTotals,
 } from "./util.js";
 import { alertSheet, choiceSheet, confirmSheet, toast } from "./ui.js";
-import { cancelLink, isRemoteSigned, isWaiting, remoteStatus, sendForSignature, shareLink, startRemoteWatch } from "./remote.js";
+import { cancelLink, enablePush, isRemoteSigned, isWaiting, pushState, remoteStatus, sendForSignature, shareLink, startRemoteWatch } from "./remote.js";
 import { SignaturePad } from "./signature.js";
 import { SignThanks, signatureArea } from "./sign-thanks.js";
 import { invoiceToText, invoiceToUrl } from "./codec.js";
@@ -472,6 +472,25 @@ function renderRemote() {
     h("div", { class: "remote-btns" },
       h("button", { type: "button", class: "btn btn-small btn-primary", onclick: async () => { const how = await shareLink(state.inv); if (how === "copied") toast("Link copied. Paste it into WhatsApp, Instagram, email or a text."); if (how === "shown") alertSheet({ title: "The signing link", message: state.inv.remote.link }); } }, "Share link again"),
       h("button", { type: "button", class: "btn btn-small", onclick: () => allowChange() }, "Cancel and edit")));
+  renderPushOffer(box);
+}
+
+/** While waiting: offer alerts that work with Marlon closed (web push), or say they're on / blocked. */
+async function renderPushOffer(box) {
+  const st = await pushState();
+  if (st === "unsupported" || !box.isConnected) return;
+  const row = h("div", { class: "remote-push" });
+  if (st === "on") row.append(h("p", { class: "remote-sub" }, "🔔 You'll get an alert when it's signed, even with Marlon closed."));
+  else if (st === "denied") row.append(h("p", { class: "remote-sub" }, "Alerts are blocked for Marlon in your phone's settings. Turn them on there to hear when it's signed."));
+  else row.append(h("button", { type: "button", class: "btn btn-small btn-alert", onclick: async (e) => {
+    e.currentTarget.disabled = true;
+    const r = await enablePush();
+    if (r.ok) toast("Alerts are on. You'll hear when a buyer signs, even with Marlon closed.");
+    else alertSheet({ title: "Alerts aren't on", message: r.error });
+    renderRemote();
+  } }, "🔔 Alert me when they sign"));
+  box.querySelector(".remote-push")?.remove();
+  box.append(row);
 }
 
 async function onSendForSignature() {

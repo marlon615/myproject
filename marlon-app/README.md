@@ -59,7 +59,13 @@ For online sellers (Instagram, WhatsApp, TikTok) whose buyer can't sign on the s
 - **Back to the seller:** the app checks every 20 seconds while it's open (and whenever it's opened). A signed copy
   replaces the invoice on the phone with exactly what was signed, with a message, and the invoice is locked for good
   (even against changes saved straight into the phone's storage). While a link is waiting, changing the invoice first
-  cancels the link ("Cancel and edit"). The phone can only notify while the app is open or running in the background.
+  cancels the link ("Cancel and edit").
+- **Alerts with Marlon closed (web push):** while a link is waiting, the seller can tap **🔔 Alert me when they sign**
+  (one tap, once per phone). When the buyer signs, the server sends an encrypted push (RFC 8291, signed with VAPID)
+  to that phone only: "Invoice 0007 signed · Signed by Jada Brown on [date, time]". Tapping it opens Marlon, which
+  fetches the signed copy. The server makes its own VAPID key pair on first use and keeps it encrypted with
+  `ENCRYPTION_KEY`, so there's nothing extra to set up. It only calls real push services (Google, Apple, Mozilla,
+  Microsoft) and forgets subscriptions they report as gone. iPhone: only for Marlon added to the Home Screen, iOS 16.4+.
 - **Statuses:** Sent, Opened, Signed (and Expired) on the invoice and in the dashboard history. Unsigned links expire
   after 7 days; the seller can send a new one, and the old link then says a newer one was sent.
 - **Privacy:** only a hash of each link is stored; the invoice, the buyer's name and their signature are encrypted

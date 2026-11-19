@@ -4,7 +4,7 @@
  * newest version; the open app reloads itself if it's still on the splash, or offers "Refresh" otherwise.
  * VERSION is stamped by scripts/stamp-sw.cjs.
  */
-const VERSION = "7695307c0d89";
+const VERSION = "e2f0c54d8546";
 const CACHE = `marlon-app-${VERSION}`;
 
 // On Cloudflare "/index.html" redirects to "/" and "/v.html" to "/v", so the pages are cached by those URLs.
@@ -114,4 +114,31 @@ self.addEventListener("fetch", (event) => {
       return res;
     })),
   );
+});
+
+// ── Alerts (web push): a buyer signed an invoice sent for signature, even while Marlon is closed ──
+const signedText = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }); };
+self.addEventListener("push", (event) => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch { d = {}; }
+  const signed = d.type === "signed";
+  const no = d.number ? String(d.number).padStart(4, "0") : "";
+  const title = signed ? `Invoice ${no} signed`.replace("Invoice  ", "Invoice ") : "Marlon";
+  const when = signed && d.signedAt ? signedText(d.signedAt) : "";
+  const body = signed ? `Signed by ${d.signer || "your buyer"}${when ? ` on ${when}` : ""}` : "Open Marlon to see what's new.";
+  event.waitUntil((async () => {
+    // If Marlon is open, it fetches the signed copy straight away.
+    for (const c of await self.clients.matchAll({ type: "window" })) c.postMessage({ type: "remote-check" });
+    // Always show it (phones require that); the same tag as the app's own alert, so it never appears twice.
+    await self.registration.showNotification(title, { body, tag: d.invoiceId ? `signed-${d.invoiceId}` : "marlon", icon: "/icons/icon-192.png", badge: "/icons/icon-192.png", data: { url: "/" } });
+  })());
+});
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const app = wins.find((w) => new URL(w.url).pathname === "/");
+    if (app) { app.postMessage({ type: "remote-check" }); return app.focus(); }
+    return self.clients.openWindow("/");
+  })());
 });

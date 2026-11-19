@@ -27,6 +27,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { FILES, RULES } from "./assets.generated.js";
 import { withTotals, normalizeUnit } from "../public/js/util.js";
+import { newVapidKeys, pushEndpointOk, sendPush } from "./webpush.js";
 
 const KINDS = ["open", "setup", "invoice", "voice", "print", "pdf", "picture"];
 const BOSS_PLACES = 2; // boss phones per team (on iPhone, the browser and the Home Screen icon count as two)
@@ -155,6 +156,8 @@ export class Stats extends DurableObject {
       data TEXT NOT NULL, digest TEXT NOT NULL, status TEXT NOT NULL, created TEXT NOT NULL, expires INTEGER NOT NULL,
       opened_at TEXT, signed_at TEXT, signer TEXT, signature TEXT, delivered INTEGER NOT NULL DEFAULT 0)`);
     this.sql.exec("CREATE INDEX IF NOT EXISTS sign_links_phone ON sign_links (buyer, device, invoice_id)");
+    // Web push: each seller phone's push subscription(s) (encrypted), so it hears about signatures even when Marlon is closed.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS push_subs (hash TEXT PRIMARY KEY, buyer TEXT NOT NULL, device TEXT NOT NULL, data TEXT NOT NULL, created TEXT NOT NULL)`);
   }
 
   #meta(k) { return this.sql.exec("SELECT v FROM meta WHERE k = ?", k).toArray()[0]?.v ?? null; }
@@ -216,8 +219,50 @@ export class Stats extends DurableObject {
     return { state: "open", invoice, digest: row.digest, expires: new Date(row.expires).toISOString() };
   }
 
+  // ── Web push ──────────────────────────────────────────────────────────────────────────────────────────
+  // This server's VAPID key pair is made once and kept here, encrypted with ENCRYPTION_KEY (no extra secret to set up).
+  #vapidP = null;
+  #vapid() {
+    return (this.#vapidP ||= (async () => {
+      const stored = this.#meta("vapid");
+      if (stored) { try { return JSON.parse(await unseal(this.env, stored)); } catch { this.sql.exec("DELETE FROM push_subs"); } } // key changed: old subscriptions can't work
+      const keys = await newVapidKeys();
+      this.#setMeta("vapid", await seal(this.env, JSON.stringify(keys)));
+      return keys;
+    })().catch((e) => { this.#vapidP = null; throw e; }));
+  }
+  async pushKey() { if (!SIGN_KEY_OK(this.env)) return { error: "setup" }; return { key: (await this.#vapid()).publicKey }; }
+  async pushSubscribe(key, device, sub) {
+    const b = this.#activePhone(key, device);
+    if (!b) return { error: "off" };
+    if (!SIGN_KEY_OK(this.env)) return { error: "setup" };
+    const hash = await sha256Hex(sub.endpoint);
+    this.sql.exec("INSERT INTO push_subs (hash, buyer, device, data, created) VALUES (?, ?, ?, ?, ?) ON CONFLICT(hash) DO UPDATE SET buyer = excluded.buyer, device = excluded.device, data = excluded.data",
+      hash, b.id, device, await seal(this.env, JSON.stringify(sub)), new Date().toISOString());
+    const extra = this.sql.exec("SELECT hash FROM push_subs WHERE buyer = ? AND device = ? ORDER BY created DESC LIMIT -1 OFFSET 5", b.id, device).toArray();
+    for (const r of extra) this.sql.exec("DELETE FROM push_subs WHERE hash = ?", r.hash);
+    return { ok: true };
+  }
+  async pushUnsubscribe(key, device, endpoint) {
+    const b = this.#activePhone(key, device);
+    if (!b) return { error: "off" };
+    this.sql.exec("DELETE FROM push_subs WHERE hash = ? AND buyer = ? AND device = ?", await sha256Hex(endpoint), b.id, device);
+    return { ok: true };
+  }
+  /** Tells the seller's phone(s) an invoice was signed. Subscriptions the push service says are gone are removed. */
+  async #pushSigned(buyer, device, payload, subject) {
+    const rows = this.sql.exec("SELECT hash, data FROM push_subs WHERE buyer = ? AND device = ?", buyer, device).toArray();
+    if (!rows.length) return;
+    const keys = await this.#vapid();
+    for (const r of rows) {
+      let sub; try { sub = JSON.parse(await unseal(this.env, r.data)); } catch { this.sql.exec("DELETE FROM push_subs WHERE hash = ?", r.hash); continue; }
+      const res = await sendPush(sub, keys, subject, payload);
+      if (res.gone) this.sql.exec("DELETE FROM push_subs WHERE hash = ?", r.hash);
+    }
+  }
+
   /** The buyer signs. Only their name and signature are accepted, and only for the exact copy they were shown. */
-  async signSubmit(token, name, signature, digest, now = Date.now()) {
+  async signSubmit(token, name, signature, digest, now = Date.now(), origin = "") {
     const row = this.sql.exec("SELECT * FROM sign_links WHERE hash = ?", await sha256Hex(token)).toArray()[0];
     if (!row) return { state: "unknown" };
     const st = this.#signState(row, now);
@@ -228,6 +273,10 @@ export class Stats extends DurableObject {
     const at = new Date().toISOString();
     this.sql.exec("UPDATE sign_links SET status = 'signed', signed_at = ?, signer = ?, signature = ?, opened_at = COALESCE(opened_at, ?) WHERE hash = ? AND status IN ('sent', 'opened')",
       at, await seal(this.env, name), await seal(this.env, signature), at, row.hash);
+    // Alert the seller's phone, even with Marlon closed (in the background: the buyer doesn't wait for it).
+    const { invoice } = await this.#signCopy(row);
+    this.ctx.waitUntil(this.#pushSigned(row.buyer, row.device, { type: "signed", invoiceId: row.invoice_id, number: invoice.number, store: invoice.store, signer: name, signedAt: at }, origin || "mailto:noreply@invalid")
+      .catch((e) => console.error("push failed", e?.message)));
     return this.#signedOut(this.sql.exec("SELECT * FROM sign_links WHERE hash = ?", row.hash).one());
   }
 
@@ -703,6 +752,30 @@ async function api(request, env, path) {
   // Teams.
   const hex32 = (v) => (typeof v === "string" && /^[0-9a-f]{32}$/.test(v) ? v : null);
 
+  // Web push for seller phones (alerts when an invoice is signed, even with Marlon closed).
+  if (path === "/api/push/key" && request.method === "GET") {
+    const r = await stub.pushKey();
+    return r.error ? json({ error: "Alerts aren't set up on this server yet." }, 503) : json(r);
+  }
+  if ((path === "/api/push/subscribe" || path === "/api/push/unsubscribe") && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 4000); } catch { return json({ error: "bad request" }, 400); }
+    const key = hex32(body.key), device = hex32(body.device), sub = body.subscription || {};
+    if (!key || !device) return json({ error: "This phone isn't set up for alerts." }, 400);
+    const endpoint = typeof sub.endpoint === "string" && sub.endpoint.length < 1000 ? sub.endpoint : "";
+    if (!pushEndpointOk(endpoint, { allowLocal: env.ALLOW_TEST_CLOCK === "1" })) return json({ error: "That isn't a push service this server can use." }, 400);
+    let r;
+    if (path === "/api/push/unsubscribe") r = await stub.pushUnsubscribe(key, device, endpoint);
+    else {
+      const p256dh = sub.keys?.p256dh, auth = sub.keys?.auth, b64u = (v, n) => typeof v === "string" && new RegExp(`^[A-Za-z0-9_-]{${n}}$`).test(v);
+      if (!b64u(p256dh, 87) || !b64u(auth, 22)) return json({ error: "That subscription is missing its keys." }, 400);
+      r = await stub.pushSubscribe(key, device, { endpoint, keys: { p256dh, auth } });
+    }
+    if (r.error === "off") return json({ error: "This phone is switched off." }, 403);
+    if (r.error === "setup") return json({ error: "Alerts aren't set up on this server yet." }, 503);
+    return json({ ok: true });
+  }
+
   // Send for signature. The seller's phone proves itself with its personal link key + phone id; the buyer has only the
   // secret link. The buyer can send nothing but a name and a signature for the exact copy they saw.
   if (path.startsWith("/api/sign/") && request.method === "POST") {
@@ -742,7 +815,7 @@ async function api(request, env, path) {
       try { png = sig.length < 280000 && sig.startsWith("data:image/png;base64,") && atob(sig.slice(22, 54)).startsWith("\x89PNG"); } catch { png = false; }
       if (!png) return json({ error: "Please sign in the box first." }, 400);
       if (typeof body.digest !== "string" || !/^[0-9a-f]{64}$/.test(body.digest)) return answer({ state: "changed" });
-      return answer(await stub.signSubmit(token, name, sig, body.digest, testNow));
+      return answer(await stub.signSubmit(token, name, sig, body.digest, testNow, new URL(request.url).origin));
     }
     if (path === "/api/sign/status" || path === "/api/sign/cancel") {
       const key = hex32(body.key), device = hex32(body.device);
