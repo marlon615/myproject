@@ -1,0 +1,23 @@
+# Night Agent, stage 1 (the Scout). Runs every 5 minutes from 1:00 to 4:55 a.m. Jamaica time (UTC−5, no daylight
+# saving) = 06:00–09:55 UTC, and leaves a morning report. Free plan only: Workers, Cron Triggers and KV.
+name = "night-agent"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+account_id = "30f2c89d75621ddef8b783383296410f"
+workers_dev = true
+preview_urls = false
+
+[triggers]
+crons = ["*/5 6-9 * * *"]
+
+[[kv_namespaces]]
+binding = "SCOUT"
+id = "87c18e78a88a473fb1d3320c6bba6422"
+
+[vars]
+# Models tried in order (the first one this key can use with Google Search grounding on the free tier).
+GEMINI_MODELS = "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-flash-latest"
+# Raise this and redeploy to choose a new report passcode (forgotten passcode). Reports are kept.
+RESET_GENERATION = "1"
+
+# Secret (never in this file): GEMINI_API_KEY — a free key from aistudio.google.com, added in Cloudflare as a secret.
