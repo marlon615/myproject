@@ -98,8 +98,10 @@ export const clusterSchema = {
           complaintIds: { type: "ARRAY", items: { type: "STRING" } },
           people: { type: "INTEGER" }, pays: { type: "INTEGER" }, anger: { type: "INTEGER" }, buildSpeed: { type: "INTEGER" },
           why: { type: "STRING" }, repeatOf: { type: "STRING" },
+          buyer: { type: "STRING" }, product: { type: "STRING" }, price: { type: "INTEGER" }, priceWhy: { type: "STRING" },
+          category: { type: "STRING", enum: ["software", "hardware", "service", "other"] }, tooBroad: { type: "BOOLEAN" },
         },
-        required: ["title", "summary", "who", "complaintIds", "people", "pays", "anger", "buildSpeed", "why"],
+        required: ["title", "summary", "who", "complaintIds", "people", "pays", "anger", "buildSpeed", "why", "buyer", "product", "price", "priceWhy", "category", "tooBroad"],
       },
     },
   },
@@ -107,7 +109,13 @@ export const clusterSchema = {
 };
 export const clusterPrompt = (complaints, past) => `Here are complaints and wishes about software that real people posted, and public job ads where companies pay people to do repetitive work by hand (each has an id).
 Job ads (marked JOB AD) are proof of a paid need: the company already spends a salary on this work, so count them as strong evidence for "pays".
-Group them into distinct PROBLEMS that a solo developer could build software for. A problem needs at least one complaint.
+Group them into distinct PROBLEMS that a solo developer could build SOFTWARE for. Put a complaint in a problem only if it shows that exact problem. Aim for problems that at least 3 complaints from different sources show.
+For each problem give:
+- buyer: ONE specific type of buyer who would pay (for example "owners of HVAC companies with 1–10 technicians", never a vague group like "small businesses", "companies" or "people")
+- product: the exact software product to build, in one sentence: what it does for that buyer
+- price: a suggested monthly price in US dollars (a whole number) for that buyer; priceWhy: one sentence on why (only mention a dollar amount if it's written in the complaints below)
+- category: "software" if software alone solves it; "hardware" if it needs a device or physical product; "service" if it needs people doing the work (outsourcing, an agency); otherwise "other"
+- tooBroad: true if the problem is vague or covers many different needs (for example "admin work is tedious"), false if it's one clear problem
 Score each problem from 1 to 10:
 - people: how many people seem to have it (more complaints, bigger groups of businesses = higher)
 - pays: whether they already pay for a fix or clearly would (evidence of paid tools, budgets, prices = higher)

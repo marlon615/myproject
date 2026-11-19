@@ -3,7 +3,7 @@
  * saved in KV after each step so it fits Cloudflare's free plan. No Gemini search: public sources are fetched directly,
  * and Gemini only reads that text (no grounding).
  *
- *   1. fetch      Hacker News (Algolia API), Remotive, The Muse and Himalayas job APIs, We Work Remotely RSS; Reddit only
+ *   1. fetch      Hacker News (Algolia API), Remotive, Himalayas, Remote OK and Working Nomads job APIs, Stack Exchange questions, We Work Remotely RSS; Reddit only
  *                 if its rules allow
  *   2. analyze    batches of ~30 texts → Gemini picks complaints, wishes and repetitive job duties, quoting them.
  *                 A quote is kept only if it appears word for word in the fetched text (that page is the proof).
@@ -14,12 +14,12 @@
  * At most one Gemini call per step (up to ~13 a night). A limit stops the night, and the report says so.
  */
 import { ask, listModels, GeminiError } from "./gemini.js";
-import { hackerNews, remotive, weWorkRemotely, theMuse, himalayas, reddit } from "./sources.js";
+import { hackerNews, remotive, weWorkRemotely, himalayas, reddit, stackExchange, remoteOk, workingNomads } from "./sources.js";
 import { clusterPrompt, clusterSchema } from "./plan.js";
 import { jamaica, similar, getJSON, putJSON, domainOf } from "./util.js";
 import { ideaKey } from "./ideastore.js";
 
-const FETCH_PER_STEP = 3, BATCH = 30, STEP_MS = 3 * 60 * 1000, TOP = 5;
+const FETCH_PER_STEP = 3, STEP_DOCS = 80, BATCH = 30, STEP_MS = 3 * 60 * 1000, TOP = 5;
 const DEFAULT_MODELS = "gemini-flash-lite-latest,gemini-flash-latest,gemini-2.5-flash-lite,gemini-2.5-flash";
 export const LAST_SLOT = { hour: 4, minute: 55 };
 
@@ -29,28 +29,35 @@ export const HN_PHRASES = ["\"I wish there was\" software", "\"is there a tool\"
   "\"would pay for\" tool", "\"is there a SaaS\"", "\"spreadsheet hell\"", "\"hired someone just to\"", "\"invoicing is a nightmare\"", "\"scheduling nightmare\"",
   "\"QuickBooks\" frustrating", "\"double entry\" manually", "\"our POS\" terrible", "\"inventory spreadsheet\"", "\"dispatch software\"", "\"small business owner\" software problem",
   "\"takes hours every week\"", "\"manual reconciliation\"", "\"no good software for\""];
-export const HN_PER_NIGHT = 10, HN_HITS = 30, HN_DAYS = 90;
+export const HN_BROAD = ["small business software frustrating", "spreadsheet manual process", "invoice manual work", "scheduling software small business", "CRM too expensive",
+  "bookkeeping takes hours", "data entry automation", "customer follow up manual", "inventory tracking spreadsheet", "dispatch scheduling", "appointment reminders", "estimates and quotes by hand",
+  "payroll small team", "paper work orders", "client intake forms", "route planning small business"];
+// Each night: 12 quoted-phrase searches (last 90 days) + 8 broad searches (last 3 days), 40 results each; more if under MIN_TEXTS.
+export const HN_PER_NIGHT = 12, HN_BROAD_PER_NIGHT = 8, HN_HITS = 40, HN_DAYS = 90, HN_BROAD_DAYS = 3, MIN_TEXTS = 150, TOPUP_MAX = 8, MIN_LEADS = 3;
 export const JOB_SEARCHES = ["data entry", "customer service", "scheduling", "accounts receivable", "bookkeeping", "dispatcher", "virtual assistant", "order processing"];
-export const MUSE_CATEGORIES = ["Customer Service", "Administration and Office"];
+export const STACK_SITES = ["softwarerecs", "webapps"];
 export const HIMALAYAS_SEARCHES = ["data entry", "customer support", "administrative assistant", "bookkeeper", "scheduler", "billing specialist", "order entry", "dispatcher"];
-export const WWR_FEEDS = ["remote-customer-support-jobs", "all-other-remote-jobs", "remote-sales-and-marketing-jobs", "remote-management-and-finance-jobs"];
+export const WWR_FEEDS = ["remote-customer-support-jobs", "all-other-remote-jobs", "remote-sales-and-marketing-jobs", "remote-management-and-finance-jobs", "all"]; // "all" = every new job
 
 const STOP_WORDS = { limit: "Gemini's free daily limit was reached", "no-free-quota": "Gemini refused the very first request on every model (\"quota exceeded\"): there seems to be no free quota for this key",
   location: "Gemini refused requests from this server's location", key: "There's no working Gemini API key", model: "No usable Gemini model was available", errors: "Gemini kept failing" };
 
 /**
- * Tonight's fetches (21): Reddit (rules check), 10 Hacker News searches (30 results each, last 90 days), 2 Remotive
- * searches (they ask for ≤4 a day), 2 The Muse searches (only if its robots.txt allows), 2 Himalayas searches, 4 We Work Remotely feeds.
+ * Tonight's fetches (38): Reddit (rules check), 12 + 8 Hacker News searches (40 results each), 2 Remotive searches (they
+ * ask for ≤4 a day), 6 Himalayas searches, 5 We Work Remotely feeds, 2 Stack Exchange sites, Remote OK, Working Nomads. If they bring fewer than MIN_TEXTS new texts, up to TOPUP_MAX more Hacker News searches are added.
  */
 const pick = (list, nightNo, n) => Array.from({ length: n }, (_, k) => list[(nightNo * n + k) % list.length]);
 function fetchPlan(nightNo) {
   return [{ type: "reddit", q: "\"is there an app\" OR \"I wish there was\" small business" },
     ...pick(HN_PHRASES, nightNo, HN_PER_NIGHT).map((q) => ({ type: "hn", q })),
+    ...pick(HN_BROAD, nightNo, HN_BROAD_PER_NIGHT).map((q) => ({ type: "hn", q, days: HN_BROAD_DAYS })),
     ...pick(JOB_SEARCHES, nightNo, 2).map((q) => ({ type: "remotive", q })),
-    ...MUSE_CATEGORIES.map((q) => ({ type: "muse", q })),
-    ...pick(HIMALAYAS_SEARCHES, nightNo, 2).map((q) => ({ type: "himalayas", q })),
-    ...WWR_FEEDS.map((q) => ({ type: "wwr", q }))];
+    ...pick(HIMALAYAS_SEARCHES, nightNo, 6).map((q) => ({ type: "himalayas", q })),
+    ...WWR_FEEDS.map((q) => ({ type: "wwr", q })),
+    ...STACK_SITES.map((q) => ({ type: "stack", q })),
+    { type: "remoteok", q: "newest jobs" }, { type: "wn", q: "newest jobs" }];
 }
+const topUps = (nightNo) => pick(HN_BROAD, nightNo + 1, TOPUP_MAX).map((q) => ({ type: "hn", q, days: 7, topUp: true }));
 function newNight(id, nightNo) {
   return { id, nightNo, startedAt: new Date().toISOString(), status: "running", model: null, triedModels: [], stopped: null, calls: 0, okCalls: 0, steps: 0, errorsInRow: 0,
     fetchQueue: fetchPlan(nightNo), fetched: [], docs: {}, nextDoc: 1, analyzeQueue: null, complaints: [], sources: {}, problems: null, compFetched: false, compDocs: {}, compDone: false, competitors: {}, log: [], notes: [], jobsPending: [], qualPending: [] };
@@ -92,11 +99,17 @@ export async function runStep(env, { now = Date.now(), manual = false } = {}) {
   try {
     // 1. Fetch public sources (no Gemini).
     if (st.fetchQueue.length) {
-      const seenDocs = new Set(past.docs || []);
-      for (const task of st.fetchQueue.splice(0, FETCH_PER_STEP)) await fetchTask(env, st, task, seenDocs, now, jm.date);
+      const seenDocs = new Set((past.docs || []).map(seenKey));
+      // Up to 3 sources a step, but stop early once ~80 texts came in (keeps each step under the free plan's 10 ms of CPU).
+      for (let taken = 0, got = 0; st.fetchQueue.length && taken < FETCH_PER_STEP && got < STEP_DOCS; taken++) got += (await fetchTask(env, st, st.fetchQueue.shift(), seenDocs, now, jm.date)) || 0;
+    }
+    if (!st.fetchQueue.length && !st.analyzeQueue && !st.toppedUp && !manual && Object.keys(st.docs).length < MIN_TEXTS) {
+      st.toppedUp = true; st.fetchQueue.push(...topUps(st.nightNo || 0));
+      note(st, `Only ${Object.keys(st.docs).length} new texts so far (aim: at least ${MIN_TEXTS}): adding ${TOPUP_MAX} more Hacker News searches.`);
     }
     if (!st.fetchQueue.length && !st.analyzeQueue) {
       const ids = Object.keys(st.docs);
+      if (!manual && ids.length < MIN_TEXTS) st.notes.push(`Only ${ids.length} new public texts were found tonight (aim: at least ${MIN_TEXTS}): the sources had nothing more that hadn't been read before.`);
       st.analyzeQueue = []; for (let i = 0; i < ids.length; i += BATCH) st.analyzeQueue.push(ids.slice(i, i + BATCH));
       if (manual) st.analyzeQueue = st.analyzeQueue.slice(0, 2);
       note(st, `Fetched ${ids.length} new public texts (${ids.filter((d) => st.docs[d].kind === "job").length} job ads).`);
@@ -125,8 +138,8 @@ export async function runStep(env, { now = Date.now(), manual = false } = {}) {
         if (memory) {
           const r = await gem(clusterPrompt(st.complaints.map(({ id, quote, who, where, pays, kind }) => ({ id, quote, who, where, pays, kind })), memory.slice(-300).map((m) => m.title)), { schema: clusterSchema, temperature: 0.1 });
           if (r) {
-            const g = cleanProblems(st, r.text, memory); st.problems = g.problems; st.updates = g.updates;
-            note(st, `Grouped into ${st.problems.length} new problem${st.problems.length === 1 ? "" : "s"}${st.updates.length ? ` and ${st.updates.length} update${st.updates.length === 1 ? "" : "s"} on past ideas` : ""} (${memory.length} past idea${memory.length === 1 ? "" : "s"} remembered).`);
+            const g = cleanProblems(st, r.text, memory); st.problems = g.problems; st.updates = g.updates; st.dropped = g.dropped;
+            note(st, `Grouped into ${st.problems.length} new problem${st.problems.length === 1 ? "" : "s"}${st.updates.length ? ` and ${st.updates.length} update${st.updates.length === 1 ? "" : "s"} on past ideas` : ""}${st.dropped.length ? `; left out ${st.dropped.length} (${st.dropped.map((d) => d.why).join(", ")})` : ""} (${memory.length} past idea${memory.length === 1 ? "" : "s"} remembered).`);
             if (!st.problems.length) st.compDone = true;
           }
         }
@@ -159,6 +172,7 @@ function slim(st) {
   if (!st.analyzeQueue) return st;
   const keep = new Set([...st.analyzeQueue.flat(), ...Object.values(st.compDocs).flat(), ...st.complaints.map((c) => c.docId)]);
   for (const id of Object.keys(st.docs)) if (!keep.has(id)) { st.fetched.push(st.docs[id].url); delete st.docs[id]; }
+  docIndexes.delete(st);
   return st;
 }
 
@@ -190,11 +204,11 @@ async function flushJobs(env, st, kv, final) {
 async function fetchTask(env, st, task, seenDocs, now, date) {
   try {
     let docs = [];
-    if (task.type === "hn") docs = await hackerNews(env, task.q, { since: now - HN_DAYS * 86400000, hits: HN_HITS });
-    else if (task.type === "muse") {
-      const u = `${env.ALLOW_TEST === "1" && env.MUSE_BASE ? env.MUSE_BASE : "https://www.themuse.com"}/api/public/jobs`;
-      if (!(await robotsAllow(st, u))) { note(st, `The Muse “${task.q}” skipped: its site rules (robots.txt) don't allow it, or couldn't be read.`); return; }
-      docs = await theMuse(env, task.q);
+    if (task.type === "hn") docs = await hackerNews(env, task.q, { since: now - (task.days || HN_DAYS) * 86400000, hits: HN_HITS });
+    else if (GATED[task.type]) { // asked only if the site's robots.txt allows it
+      const [key, real, p] = GATED[task.type], u = `${env.ALLOW_TEST === "1" && env[key] ? env[key] : real}${p}`;
+      if (!(await robotsAllow(st, u))) { note(st, `${sourceName(task)} “${task.q}” skipped: its site rules (robots.txt) don't allow it, or couldn't be read.`); return; }
+      docs = task.type === "stack" ? await stackExchange(env, task.q) : task.type === "remoteok" ? await remoteOk(env) : await workingNomads(env);
     }
     else if (task.type === "himalayas") docs = await himalayas(env, task.q);
     else if (task.type === "remotive") docs = await remotive(env, task.q);
@@ -202,20 +216,31 @@ async function fetchTask(env, st, task, seenDocs, now, date) {
     else if (task.type === "reddit") { const r = await reddit(env, task.q, (u) => robotsAllow(st, u)); if (r.skipped) { st.notes.push(r.skipped); note(st, r.skipped); return; } docs = r.docs; }
     // Every job ad found is queued for the permanent database, even ones already read before or over tonight's limit.
     const at = new Date(now).toISOString();
-    for (const d of docs) if (d.kind === "job" && !st.jobsPending.some((x) => x.url === d.url))
+    const pendingUrls = new Set(st.jobsPending.map((x) => x.url));
+    for (const d of docs) if (d.kind === "job" && !pendingUrls.has(d.url) && pendingUrls.add(d.url))
       st.jobsPending.push({ url: d.url, company: d.company || "", role: d.role || d.title || "", source: d.src, pay: d.pay || "", location: d.location || "", run: st.id, date, at });
     let n = 0;
-    for (const d of docs) if (!seenDocs.has(urlKey(d.url)) && !Object.values(st.docs).some((x) => x.url === d.url) && addDoc(st, d)) n++;
-    note(st, `${sourceName(task)} “${task.q}”: ${n} new text${n === 1 ? "" : "s"}.`);
-  } catch (e) { note(st, `${sourceName(task)} “${task.q}” failed: ${String(e?.message || e).slice(0, 120)}`); }
+    const idx = docIndex(st);
+    for (const d of docs) if (!idx.has(d.url) && !seenDocs.has(urlKey(d.url)) && addDoc(st, d)) n++;
+    note(st, `${sourceName(task)} “${task.q}${task.page ? ` (page ${task.page + 1})` : ""}”${task.topUp ? " (extra)" : ""}: ${n} new text${n === 1 ? "" : "s"}.`);
+    return docs.length;
+  } catch (e) { note(st, `${sourceName(task)} “${task.q}” failed: ${String(e?.message || e).slice(0, 120)}`); return 0; }
 }
-const sourceName = (t) => ({ hn: "Hacker News", remotive: "Remotive jobs", muse: "The Muse jobs", himalayas: "Himalayas jobs", wwr: "We Work Remotely", reddit: "Reddit" })[t.type];
-const urlKey = (u) => String(u).replace(/^https?:\/\/(www\.)?/, "").slice(0, 90);
+const sourceName = (t) => ({ hn: "Hacker News", remotive: "Remotive jobs", stack: "Stack Exchange", remoteok: "Remote OK jobs", wn: "Working Nomads jobs", himalayas: "Himalayas jobs", wwr: "We Work Remotely", reddit: "Reddit" })[t.type];
+const GATED = { stack: ["STACK_BASE", "https://api.stackexchange.com", "/2.3/questions"],
+  remoteok: ["REMOTEOK_BASE", "https://remoteok.com", "/api"], wn: ["WN_BASE", "https://www.workingnomads.com", "/api/exposed_jobs/"] };
+/** A short key for "already read" (kept for the last ~12,000 texts): h:<id> for Hacker News, else a hash of the link. */
+const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16).padStart(8, "0"); };
+const urlKey = (u) => { const x = String(u).replace(/^https?:\/\/(www\.)?/, ""); const hn = /^news\.ycombinator\.com\/item\?id=(\d+)$/.exec(x); return hn ? `h:${hn[1]}` : fnv(x.slice(0, 300)); };
+const seenKey = (k) => (/^h:\d+$|^[0-9a-f]{8}$/.test(k) ? k : urlKey(`https://${k}`)); // older entries were the link itself
+/** Link → doc id for tonight's texts (built once per step, kept up to date), so each new text is checked in one look-up. */
+const docIndexes = new WeakMap();
+const docIndex = (st) => { let m = docIndexes.get(st); if (!m) { m = new Map(Object.entries(st.docs).map(([k, v]) => [v.url, k])); docIndexes.set(st, m); } return m; };
 function addDoc(st, d) {
-  const existing = Object.keys(st.docs).find((k) => st.docs[k].url === d.url);
+  const idx = docIndex(st), existing = idx.get(d.url);
   if (existing) return existing;
-  if (Object.keys(st.docs).length >= 300) return null; // at most 10 reading batches (Gemini calls) a night
-  const id = `d${st.nextDoc++}`; st.docs[id] = d; return id;
+  if (idx.size >= 300) return null; // at most 10 reading batches (Gemini calls) a night
+  const id = `d${st.nextDoc++}`; st.docs[id] = d; idx.set(d.url, id); return id;
 }
 const keyTerms = (title) => String(title).replace(/[^A-Za-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 3 && !/^(with|that|their|from|this|have|automatic|automated|software|tool|tools|small|businesses|business)$/i.test(w)).slice(0, 3).join(" ");
 
@@ -290,14 +315,30 @@ const clamp = (v) => Math.max(1, Math.min(10, Math.round(Number(v) || 1)));
  *  real or test) is never shown as new: if it brings new proof (a page not shown for that idea before), it becomes an
  *  "update on a past idea"; otherwise it's left out. Same idea = Gemini says so (repeatOf), or the titles share most of
  *  their key words, or the new proof links to a page already used as proof for that idea. */
+const HARDWARE = /\b(hardware|devices?|handhelds?|gadgets?|phones?|smartphones?|tablets?|sensors?|printers?|cameras?|laptops?|keyboards?|wearables?|chips?|routers?|drones?|robots?|kiosks?)\b/i;
+const VAGUE_BUYER = /^(small )?(and medium )?(businesses|business owners|companies|people|users|everyone|anyone|consumers|customers|teams|small teams|organizations|organisations|individuals|professionals|developers|owners|freelancers|startups|enterprises|smbs|entrepreneurs|workers|employees)$/;
+/** Why a group can't be an idea (empty = it can): it must be software, specific, for one clear buyer, with a product and a price. */
+function notAnIdea(p) {
+  const cat = String(p.category || "").toLowerCase(), buyer = String(p.buyer || "").toLowerCase().replace(/[^a-z ]+/g, " ").replace(/\s+/g, " ").trim();
+  if (cat !== "software") return cat === "hardware" ? "hardware" : cat === "service" ? "a service, not software" : "not clearly software";
+  if (HARDWARE.test(String(p.title || ""))) return "hardware";
+  if (p.tooBroad === true) return "too broad";
+  if (!buyer || buyer.length < 6 || VAGUE_BUYER.test(buyer.replace(/^(all|most|many|any) /, ""))) return "no clear buyer";
+  if (String(p.product || "").trim().length < 15) return "no clear product";
+  if (!Number.isInteger(p.price) || p.price < 1 || p.price > 5000) return "no suggested price";
+  return "";
+}
+
 function cleanProblems(st, text, memory) {
   let data; try { data = JSON.parse(text); } catch { return { problems: [], updates: [] }; }
-  const byId = new Map(st.complaints.map((c) => [c.id, c])), used = new Set(), out = [], upd = new Map();
+  const byId = new Map(st.complaints.map((c) => [c.id, c])), used = new Set(), out = [], upd = new Map(), dropped = [];
   const best = (t) => { let b = null, sc = 0; for (const m of memory) { const x = ideaKey(m.title) === ideaKey(t) ? 1 : similar(m.title, t); if (x > sc) { sc = x; b = m; } } return [b, sc]; };
   for (const p of data.problems || []) {
     const cids = [...new Set((p.complaintIds || []).filter((x) => byId.has(x) && !used.has(x)))];
     if (!cids.length || !p.title) continue; // a problem needs real complaints behind it
     const srcs = cids.flatMap((id) => byId.get(id).sources);
+    const bad = notAnIdea(p);
+    if (bad) { dropped.push({ title: String(p.title).slice(0, 140), why: bad }); continue; } // hardware, too broad, no clear buyer…
     let match = null;
     const rep = String(p.repeatOf || "").trim();
     if (rep) { const [m1, s1] = best(rep), [m2, s2] = best(p.title); match = s1 >= 0.3 ? m1 : s2 >= 0.2 ? m2 : "unknown"; }
@@ -314,11 +355,18 @@ function cleanProblems(st, text, memory) {
       upd.set(match.key, u);
       continue;
     }
+    const leadUrls = new Set(srcs);
+    if (leadUrls.size < MIN_LEADS) { dropped.push({ title: String(p.title).slice(0, 140), why: `only ${leadUrls.size} lead${leadUrls.size === 1 ? "" : "s"} (needs ${MIN_LEADS})` }); continue; }
+    // The suggested price is an estimate; its reason may only mention dollar amounts written in the evidence.
+    const evidence = cids.map((id) => `${byId.get(id).quote} ${byId.get(id).pays}`).join(" ");
+    let priceWhy = String(p.priceWhy || "").slice(0, 300);
+    if (!priceWhy || (priceWhy.match(/\$\s?\d[\d,.]*/g) || []).some((m) => !evidence.includes(m.replace(/\s/g, "")))) priceWhy = "Our estimate: no price was found in tonight's sources.";
     const s = { people: clamp(p.people), pays: clamp(p.pays), anger: clamp(p.anger), buildSpeed: clamp(p.buildSpeed) };
-    out.push({ key: `p${out.length + 1}`, title: String(p.title).slice(0, 140), summary: String(p.summary || "").slice(0, 600), who: String(p.who || "").slice(0, 200), complaintIds: cids, scores: s,
+    out.push({ key: `p${out.length + 1}`, title: String(p.title).slice(0, 140), summary: String(p.summary || "").slice(0, 600), who: String(p.buyer || p.who || "").slice(0, 200), complaintIds: cids, scores: s,
+      buyer: String(p.buyer).trim().slice(0, 160), product: String(p.product).trim().slice(0, 300), price: p.price, priceWhy,
       total: Math.round((s.people * 0.3 + s.pays * 0.3 + s.anger * 0.2 + s.buildSpeed * 0.2) * 10) / 10, why: String(p.why || "").slice(0, 600) });
   }
-  return { problems: out.sort((a, b) => b.total - a.total || b.complaintIds.length - a.complaintIds.length), updates: [...upd.values()].slice(0, 10) };
+  return { problems: out.sort((a, b) => b.total - a.total || b.complaintIds.length - a.complaintIds.length), updates: [...upd.values()].slice(0, 10), dropped: dropped.slice(0, 20) };
 }
 
 /** Every idea ever reported, from the permanent database. The first time, the ideas from reports sent before this memory
@@ -410,7 +458,8 @@ async function finish(env, st, past, cutShort) {
   if (report.problems.length) {
     const bucket = await getJSON(kv, `ideas:${month}`, []);
     const ideas = report.problems.map((p) => ({ id: `${st.id}-${p.key}`, night: st.id, title: p.title, summary: p.summary, who: p.who, total: p.total, scores: p.scores, why: p.why,
-      complaints: p.complaints.slice(0, 6).map((c) => ({ kind: c.kind, quote: c.quote, who: c.who, pays: c.pays, sources: c.sources.slice(0, 2) })),
+      buyer: p.buyer, product: p.product, price: p.price, priceWhy: p.priceWhy,
+      complaints: p.complaints.slice(0, 12).map((c) => ({ kind: c.kind, quote: c.quote, who: c.who, pays: c.pays, sources: c.sources.slice(0, 2) })),
       competitors: p.competitors.map((c) => ({ name: c.name, price: c.price, priceSources: c.priceSources, dislikes: c.dislikes, dislikeSources: c.dislikeSources, sources: c.sources })), saved: now }));
     await putJSON(kv, `ideas:${month}`, [...bucket.filter((x) => x.night !== st.id), ...ideas]);
   }
@@ -424,7 +473,7 @@ async function finish(env, st, past, cutShort) {
   if (!months.includes(month)) await putJSON(kv, "months", [...months, month].sort().reverse());
   const docsSeen = [...st.fetched, ...Object.values(st.docs).map((d) => d.url)].map(urlKey);
   await putJSON(kv, "seen", { nights: (past.nights || 0) + 1, problems: [...(past.problems || []), ...report.problems.map((p) => ({ title: p.title, night: st.id }))].slice(-1000),
-    queries: (past.queries || []).slice(-500), docs: [...(past.docs || []), ...docsSeen].slice(-4000) });
+    queries: (past.queries || []).slice(-500), docs: [...(past.docs || []).map(seenKey), ...docsSeen].slice(-12000) });
   await putJSON(kv, `night:${st.id}`, { ...st, docs: {}, compDocs: {} }, { expirationTtl: 60 * 86400 });
   const alert = await getJSON(kv, "settings", {});
   if (alert.ntfyTopic) {
@@ -442,6 +491,7 @@ export function buildReport(st, cutShort = false) {
   const fetchedTotal = st.fetched.length + Object.keys(st.docs).length;
   return { id: st.id, status: st.status, stopped: st.stopped, cutShort, model: st.model, startedAt: st.startedAt, finishedAt: st.finishedAt, calls: st.calls, steps: st.steps,
     texts: fetchedTotal, sourcesNote: st.notes, grouped: Boolean(st.problems) && !st.memoryError,
+    dropped: st.dropped || [], minLeads: MIN_LEADS,
     updates: (st.updates || []).map((u) => ({ key: u.key, title: u.title, firstDate: u.firstDate, complaints: u.complaintIds.map((id) => st.complaints.find((c) => c.id === id)).filter(Boolean).map(complaint) })).filter((u) => u.complaints.length), jobAds: st.complaints.filter((c) => c.kind === "job").length,
     complaints: st.complaints.map(complaint), problems, leads: leadsOf(st, problems, complaint), log: st.log };
 }

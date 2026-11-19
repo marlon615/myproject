@@ -15,34 +15,39 @@ A Cron Trigger fires every 5 minutes (`*/5 6-9 * * *` UTC = 1:00–4:55 a.m. in 
 one small step and saves progress in KV, so it fits the free plan. **Gemini never searches** (Google refused free search
 grounding for this key): the Scout fetches public sources itself, and Gemini only reads that text.
 
-1. **Fetch** (no Gemini) — official public sources only:
-   - **Hacker News**, through the official Algolia HN Search API: 10 searches a night (30 results each) for comments and
-     posts from the last 90 days, rotating through 30 phrases ("I wish there was…", "is there a tool…", "manual data
-     entry", "we still use spreadsheets", "copy and paste between", "chasing invoices"…).
-   - **Remotive** public jobs API: 2 searches a night (they ask for at most ~4 requests a day), US/anywhere jobs only,
-     and only titles that look like repetitive work (developers, writers and other unrelated jobs are left out and not saved).
-   - **The Muse** public jobs API (no key; it allows up to 500 requests an hour): 2 searches a night (categories Customer
-     Service and Administration and Office), only titles that look like repetitive work, US/remote only. Its robots.txt is
-     checked first; if it disallows the API (or can't be read), The Muse is skipped that night and the log says so.
-   - **Himalayas** public jobs API: 2 searches a night (data entry, administrative assistant, dispatcher…), only titles
-     that look like repetitive work, US/anywhere only.
-   - **We Work Remotely** public RSS feeds: 4 a night (customer support, sales & marketing, management & finance, all
-     other), only titles that look like repetitive work (data entry, customer support, scheduling, billing, dispatch,
-     order entry, assistants…), US/anywhere only.
-   - **Reddit**: its robots.txt is checked every night. Today it disallows all automated access (and Reddit's API terms
-     require a registered app), so Reddit is skipped and the report says so. If you want Reddit, register a free official
-     Reddit app and I can add it the approved way.
-   At most 300 texts a night. Texts already read on an earlier night aren't read again.
+1. **Fetch** (no Gemini) — official public sources only, 38 fetches a night (twice the old 20), free tiers only:
+   - **Hacker News** (official Algolia HN Search API): 12 phrase searches from the last 90 days ("I wish there was…",
+     "is there a tool…", "manual data entry"…) plus 8 broad searches from the last 3 days ("invoice manual work",
+     "appointment reminders"…), 40 results each, rotating every night.
+   - **Stack Exchange** (public API, no key: 300 requests a day): the newest 100 questions on Software Recommendations
+     and on Web Applications, where people ask for software. 2 requests a night.
+   - **Remotive** jobs API: 2 searches a night (they ask for at most ~4 a day). **Himalayas** jobs API: 6 searches.
+     **We Work Remotely** RSS: 5 feeds. **Remote OK** jobs API (their terms: link back and name Remote OK; we do) and
+     **Working Nomads** jobs API: 1 each. Job boards: US/anywhere jobs whose title looks like repetitive work only
+     (developers, writers and other unrelated jobs are left out and not saved).
+   - Stack Exchange, Remote OK and Working Nomads are asked only if their robots.txt allows it (checked each night).
+   - **Reddit**: robots.txt checked every night; today it disallows automated access, so it's skipped and the report
+     says so. (Jobicy and The Muse were tried and removed: both refused requests from Cloudflare.)
+   **At least 150 texts a night:** if the fetches bring fewer than 150 new texts, up to 8 more Hacker News searches run;
+   if it's still under 150, the report says how many were found. At most 300 a night (10 Gemini reading calls). Texts
+   already read on an earlier night aren't read again (the last ~12,000 are remembered). Each step takes at most 3
+   sources and stops at ~80 texts, so it stays under the free plan's 10 ms of CPU (worst case measured: ~7 ms).
 2. **Read** — Gemini (no search) reads the texts in batches of ~30 and picks complaints, wishes for software, and job
    ads for repetitive work, each with a quote. **A quote is kept only if it appears word for word in the fetched text**;
    the page it came from is the proof. "What they pay" is kept only if those words are in the text too (job ads: the pay
-   the job board lists). "Who" is what the source itself says (e.g. "Hacker News comment", or the company and job title).
-3. **Group and score** — problems scored 1–10 (people, already paying, anger, build speed); total = 30/30/20/20.
-   Job ads count as proof the company already pays for the work. Ideas from earlier reports are left out.
+   the job board lists). "Who" is the public username the source shows (e.g. "Hacker News user …"), or the company.
+3. **Group, check and score** — every idea must be:
+   - **software** (not hardware, not a service like outsourcing), **specific** (not too broad), for **one specific type
+     of buyer** (e.g. "owners of HVAC companies with 1–10 technicians", never "small businesses");
+   - with **the exact product to build**, a **suggested monthly price** (labelled as a suggestion; its reason may only
+     mention dollar amounts written in the evidence, otherwise it says "our estimate"), and
+   - **at least 3 leads**: public posts or job ads from 3 different pages showing that exact problem, each with its link.
+   Anything else is left out (the report and email say what and why). Scored 1–10 (people, already paying, anger, build
+   speed); total = 30/30/20/20. Ideas sent on any earlier report are never new again (see below).
 4. **Competitors** — for the top 5, Hacker News posts about tools for that problem are fetched, and Gemini names the
    tools they mention, again only with a word-for-word quote. A price is shown only if it's written in that post.
-5. **Report** — usually done by about 3:00 a.m.; at 4:55 a.m. at the latest. Up to 10 leads (public posts and job ads,
-   never contacted). Ideas and leads are saved for good.
+5. **Report** — usually done by about 3:30 a.m.; at 4:55 a.m. at the latest. Each idea shows its buyer, the product, the
+   suggested price and all its leads; plus up to 10 leads overall (never contacted). Ideas and leads are saved for good.
 
 **Never the same idea twice.** Every idea in every finished report (real nights and test runs) is remembered for good in
 the same SQLite database (ideas reported before this memory existed were loaded in first). An idea is "the same" as one

@@ -7,9 +7,12 @@
  *   Remotive    — its public jobs API (remotive.com/api/remote-jobs); they ask for at most ~4 requests a day: we use 2
  *                 (repetitive-work titles only)
  *   We Work Remotely — public RSS feeds by category
- *   The Muse    — its public jobs API (themuse.com/api/public/jobs, no key: up to 500 requests an hour); we use 2 a night,
- *                 and only if its robots.txt allows it
  *   Himalayas   — its public jobs API (himalayas.app/jobs/api)
+ *   Stack Exchange — its public API (api.stackexchange.com): newest questions on Software Recommendations and Web
+ *                 Applications (people asking for software); no key: 300 requests a day, we use 2 a night
+ *   Remote OK   — its public jobs API (remoteok.com/api); its terms ask for a link back and naming Remote OK as the source
+ *   Working Nomads — its public jobs API (workingnomads.com/api/exposed_jobs)
+ *   (Stack Exchange, Remote OK and Working Nomads are asked only if their robots.txt allows it.)
  *   Reddit      — only if reddit.com/robots.txt allows automated access (today it doesn't, so it's skipped and the
  *                 report says so; Reddit's API terms also require a registered app)
  * Texts are cleaned (HTML removed) and trimmed, so each run stays small.
@@ -38,8 +41,9 @@ export async function hackerNews(env, query, { since, tags = "(comment,story)", 
   const d = await (await get(u.toString())).json();
   return (d.hits || []).map((h) => {
     const isComment = (h._tags || []).includes("comment");
-    const text = clean(isComment ? h.comment_text : `${h.title || ""}. ${h.story_text || ""}`);
-    return { kind: "post", src: "Hacker News", label: isComment ? "Hacker News comment" : /^ask hn/i.test(h.title || "") ? "Ask HN post" : "Hacker News post",
+    const text = clean(String(isComment ? h.comment_text || "" : `${h.title || ""}. ${h.story_text || ""}`).slice(0, 2500));
+    const kindLabel = isComment ? "Hacker News comment" : /^ask hn/i.test(h.title || "") ? "Ask HN post" : "Hacker News post", author = String(h.author || "").replace(/[^\w.-]/g, "").slice(0, 40);
+    return { kind: "post", src: "Hacker News", label: author ? `Hacker News user ${author}` : kindLabel,
       url: `https://news.ycombinator.com/item?id=${encodeURIComponent(h.objectID)}`, title: clean(isComment ? h.story_title || "" : h.title || "").slice(0, 160), text: trim(text) };
   }).filter((x) => x.text.length > 40);
 }
@@ -47,7 +51,7 @@ export async function hackerNews(env, query, { since, tags = "(comment,story)", 
 const REPETITIVE = /data entry|customer (service|support)|support (specialist|representative|agent)|scheduling|scheduler|appointment|billing|accounts (payable|receivable)|bookkeep|collections|dispatch|admin(istrative)? assistant|office assistant|virtual assistant|receptionist|order (entry|processing)|coordinator|clerk|call center|inbound|outbound|reporting analyst|invoice/i;
 const US = /\b(usa|u\.s\.|united states|us only|us-based|north america|americas|anywhere|worldwide)\b/i;
 /** Remotive public jobs API: one search. */
-export async function remotive(env, search, { limit = 20 } = {}) {
+export async function remotive(env, search, { limit = 50 } = {}) {
   const u = new URL(`${base(env, "REMOTIVE_BASE", "https://remotive.com")}/api/remote-jobs`);
   u.searchParams.set("search", search); u.searchParams.set("limit", String(limit));
   const d = await (await get(u.toString())).json();
@@ -58,7 +62,8 @@ export async function remotive(env, search, { limit = 20 } = {}) {
 
 /** We Work Remotely RSS: jobs whose title looks like repetitive work. */
 export async function weWorkRemotely(env, category) {
-  const xml = (await (await get(`${base(env, "WWR_BASE", "https://weworkremotely.com")}/categories/${category}.rss`)).text()).slice(0, 400000);
+  const root = base(env, "WWR_BASE", "https://weworkremotely.com");
+  const xml = (await (await get(category === "all" ? `${root}/remote-jobs.rss` : `${root}/categories/${category}.rss`)).text()).slice(0, 400000);
   const out = [];
   for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
     const tag = (t) => { const x = new RegExp(`<${t}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${t}>`).exec(m[1]); return x ? x[1].trim() : ""; };
@@ -74,18 +79,6 @@ export async function weWorkRemotely(env, category) {
 const salary = (min, max, cur) => (min || max ? `${cur === "USD" || !cur ? "$" : `${cur} `}${[min, max].filter(Boolean).map((n) => Number(n).toLocaleString("en-US")).join("-")} a year` : "");
 
 const MUSE_US = /flexible \/ remote|united states|,\s*(A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\b/i;
-/** The Muse public jobs API: one category, US or remote jobs, repetitive-work titles only. */
-export async function theMuse(env, category, { page = 0 } = {}) {
-  const u = new URL(`${base(env, "MUSE_BASE", "https://www.themuse.com")}/api/public/jobs`);
-  u.searchParams.set("category", category); u.searchParams.set("page", String(page));
-  const d = await (await get(u.toString())).json();
-  return (d.results || []).map((j) => {
-    const loc = (Array.isArray(j.locations) ? j.locations.map((l) => (typeof l === "string" ? l : l?.name || "")).filter(Boolean).join("; ") : "");
-    return { kind: "job", src: "The Muse", label: "Job ad", url: String(j.refs?.landing_page || ""), title: clean(j.name).slice(0, 120), company: clean(j.company?.name).slice(0, 100), role: clean(j.name).slice(0, 100),
-      pay: "", location: loc.slice(0, 80), text: trim(clean(j.contents), 900) };
-  }).filter((x) => /^https:\/\//.test(x.url) && REPETITIVE.test(x.role) && x.text.length > 40 && (!x.location || US.test(x.location) || MUSE_US.test(x.location)));
-}
-
 /** Himalayas public jobs API: a search (or, if search isn't available, the newest jobs), repetitive-work titles only. */
 export async function himalayas(env, q, { limit = 20 } = {}) {
   const root = base(env, "HIMALAYAS_BASE", "https://himalayas.app");
@@ -97,6 +90,34 @@ export async function himalayas(env, q, { limit = 20 } = {}) {
     return { kind: "job", src: "Himalayas", label: "Job ad", url: String(j.applicationLink || j.guid || ""), title: clean(j.title).slice(0, 120), company: clean(j.companyName).slice(0, 100), role: clean(j.title).slice(0, 100),
       pay: salary(j.minSalary, j.maxSalary, j.currency).slice(0, 80), location: loc.slice(0, 80), text: trim(clean(j.description || j.excerpt), 900) };
   }).filter((x) => /^https:\/\//.test(x.url) && REPETITIVE.test(x.role) && x.text.length > 40 && (!x.location || US.test(x.location)));
+}
+
+/** Stack Exchange public API: the newest questions (with their text) on one site, e.g. softwarerecs or webapps. */
+export async function stackExchange(env, site, { pagesize = 100 } = {}) {
+  const u = new URL(`${base(env, "STACK_BASE", "https://api.stackexchange.com")}/2.3/questions`);
+  for (const [k, v] of Object.entries({ order: "desc", sort: "creation", site, pagesize: String(pagesize), filter: "withbody" })) u.searchParams.set(k, v);
+  const d = await (await get(u.toString())).json();
+  const siteName = site === "softwarerecs" ? "Software Recommendations" : site === "webapps" ? "Web Applications" : site;
+  return (d.items || []).map((q) => {
+    const author = clean(q.owner?.display_name).slice(0, 40);
+    return { kind: "post", src: "Stack Exchange", label: author ? `${siteName} user ${author}` : `${siteName} question`, url: String(q.link || ""), title: clean(q.title).slice(0, 160), text: trim(clean(`${q.title || ""}. ${q.body || ""}`)) };
+  }).filter((x) => /^https:\/\/[a-z.]*stackexchange\.com\/questions\/\d+/.test(x.url) && x.text.length > 40);
+}
+
+/** Remote OK public jobs API (the first item is their legal notice). Repetitive-work titles, US/anywhere only. */
+export async function remoteOk(env) {
+  const d = await (await get(`${base(env, "REMOTEOK_BASE", "https://remoteok.com")}/api`)).json();
+  return (Array.isArray(d) ? d : []).filter((j) => j && j.position && j.url).map((j) => ({ kind: "job", src: "Remote OK", label: "Job ad", url: String(j.url), title: clean(j.position).slice(0, 120), company: clean(j.company).slice(0, 100),
+    role: clean(j.position).slice(0, 100), pay: j.salary_min || j.salary_max ? salary(j.salary_min, j.salary_max, "USD").slice(0, 80) : "", location: clean(j.location).slice(0, 80), text: trim(clean(j.description), 900) }))
+    .filter((x) => /^https:\/\//.test(x.url) && REPETITIVE.test(x.role) && x.text.length > 40 && (!x.location || US.test(x.location) || MUSE_US.test(x.location)));
+}
+
+/** Working Nomads public jobs API. Repetitive-work titles, US/anywhere only. */
+export async function workingNomads(env) {
+  const d = await (await get(`${base(env, "WN_BASE", "https://www.workingnomads.com")}/api/exposed_jobs/`)).json();
+  return (Array.isArray(d) ? d : []).map((j) => ({ kind: "job", src: "Working Nomads", label: "Job ad", url: String(j.url || ""), title: clean(j.title).slice(0, 120), company: clean(j.company_name).slice(0, 100),
+    role: clean(j.title).slice(0, 100), pay: "", location: clean(j.location).slice(0, 80), text: trim(clean(j.description), 900) }))
+    .filter((x) => /^https:\/\//.test(x.url) && REPETITIVE.test(x.role) && x.text.length > 40 && (!x.location || US.test(x.location) || MUSE_US.test(x.location)));
 }
 
 /** Reddit public JSON — only when reddit.com/robots.txt allows it for this agent (checked every night). */

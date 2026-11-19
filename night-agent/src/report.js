@@ -22,6 +22,9 @@ export function page(title, body) {
 }
 export const nav = `<nav><a href="/">Dashboard</a><a href="/history">Reports</a><a href="/ideas">Ideas</a><a href="/leads">Leads</a><a href="/jobs">Job ads</a><a href="/settings">Settings</a></nav>`;
 const who = (w) => w || "Poster (details not confirmed)";
+/** Buyer, product and suggested price of an idea (older ideas saved before these existed show "—"). */
+const ideaFacts = (p) => `<div class="card" style="margin:8px 0;padding:10px 12px"><div><b>Buyer:</b> ${esc(p.buyer || "—")}</div><div><b>Build:</b> ${esc(p.product || "—")}</div>
+  <div><b>Suggested price:</b> ${p.price ? `$${esc(p.price)}/month <span class="muted">(suggested, not a quote: ${esc(p.priceWhy || "our estimate")})</span>` : "—"}</div></div>`;
 const buildBtn = (id) => `<form method="post" action="/idea/${esc(encodeURIComponent(id))}/build" style="margin-top:10px"><button>Yes, build this</button></form>`;
 const link = (s) => `<a href="${esc(s.url)}" rel="noopener noreferrer nofollow" target="_blank">${esc(s.domain || "source")}</a>${s.verified === true ? `<span class="tag ok" title="The quote's words were found on this page">quote found on page</span>` : ""}`;
 const bars = (s) => `<div class="bars">${[["How many people have it", s.people], ["Already pay for a fix", s.pays], ["How angry they are", s.anger], ["How fast to build", s.buildSpeed]].map(([k, v]) => `<span>${k}</span><span class="bar"><i style="width:${v * 10}%"></i></span><b>${v}</b>`).join("")}</div>`;
@@ -31,8 +34,8 @@ export function reportPage(r, { notice = "" } = {}) {
   const status = r.stopped ? `<div class="status stopped">⚠️ Stopped early: ${esc(r.stopped.message)} <span class="muted">(${esc(jamaicaTime(r.stopped.at))} Jamaica time)</span></div>`
     : r.cutShort ? `<div class="status stopped">The night ended before every step finished. This report has what was done.</div>` : `<div class="status done">✅ Finished ${esc(jamaicaTime(r.finishedAt))} Jamaica time.</div>`;
   const problems = r.problems.map((p, i) => `<section class="card"><div class="top"><h2>${i + 1}. ${esc(p.title)}</h2><span class="score">${p.total}<span class="muted">/10</span></span></div>
-    <p>${esc(p.summary)}</p><p class="muted"><b>Who:</b> ${esc(p.who)} · <b>${p.complaints.length}</b> complaint${p.complaints.length === 1 ? "" : "s"} with proof</p>${bars(p.scores)}<p class="muted"><b>Why these scores:</b> ${esc(p.why)}</p>
-    <h3>What people said</h3>${p.complaints.map((c) => `<blockquote>“${esc(c.quote)}”<div class="muted">— ${esc(who(c.who))}${c.pays && c.pays !== "unknown" ? ` · pays: ${esc(c.pays)}` : ""}</div><div class="src">${c.kind === "job" ? `<span class="tag warn">Job ad</span> ` : "Proof: "}${c.sources.map(link).join(" · ")}</div></blockquote>`).join("")}
+    <p>${esc(p.summary)}</p>${ideaFacts(p)}${bars(p.scores)}<p class="muted"><b>Why these scores:</b> ${esc(p.why)}</p>
+    <h3>Leads (${p.complaints.length}): people and companies with this exact problem</h3><p class="muted">Public posts and job ads, each with its proof link. Never contacted.</p>${p.complaints.map((c) => `<blockquote>“${esc(c.quote)}”<div class="muted">— ${esc(who(c.who))}${c.pays && c.pays !== "unknown" ? ` · pays: ${esc(c.pays)}` : ""}</div><div class="src">${c.kind === "job" ? `<span class="tag warn">Job ad</span> ` : "Proof: "}${c.sources.map(link).join(" · ")}</div></blockquote>`).join("")}
     <h3>Competitors</h3>${p.competitors.length ? p.competitors.map((c) => `<div><b>${esc(c.name)}</b> — ${c.price ? `${esc(c.price)} <span class="src">(${c.priceSources.map(link).join(", ")})</span>` : `<span class="muted">price not found</span>`}
       ${c.dislikes ? `<div class="muted">What people say: ${esc(c.dislikes)} <span class="src">(${c.dislikeSources.map(link).join(", ")})</span></div>` : ""}<div class="src">Source: ${c.sources.map(link).join(", ")}</div></div>`).join("<hr>")
       : `<p class="muted">${r.problems.indexOf(p) < 5 ? "No competitor facts with proof were found." : "Only the top 5 problems are checked for competitors."}</p>`}${buildBtn(`${r.id}-${p.key}`)}</section>`).join("");
@@ -44,6 +47,7 @@ export function reportPage(r, { notice = "" } = {}) {
     ${leadsCard(r.leads || [], "Leads from this night")}
     ${jobAdsCard(r)}
     ${updatesCard(r)}
+    ${droppedCard(r)}
     <details class="card"><summary>Night log</summary><ul class="muted">${r.log.map((l) => `<li>${esc(jamaicaTime(l.at))}: ${esc(l.msg)}</li>`).join("")}</ul></details>`);
 }
 
@@ -74,6 +78,13 @@ export function authPage(mode, err = "") {
 const QUALIFIED_NOTE = "Qualified = a word-for-word quote in the ad shows a company paying for repetitive work software could do, so the Scout kept it as proof.";
 const jobLine = (a, night) => `<li style="margin-bottom:8px">${a.qualified ? `<span class="tag ok">✓ Qualified</span>` : `<span class="tag nq">Not qualified</span>`} <b>${esc(a.company || "Company not given")}</b> — ${esc(a.role || "role not given")}
   <div class="src"><a href="${esc(a.url)}" rel="noopener noreferrer nofollow" target="_blank">${esc(a.source || "job ad")}</a>${a.pay ? ` · ${esc(a.pay)}` : ""} · found ${esc(a.firstFound)}${night && a.firstRun !== night ? " (first found then; seen again this night)" : ""}${a.timesSeen > 1 ? ` · seen on ${a.timesSeen} runs` : ""}</div></li>`;
+
+/** Groups that weren't ideas (hardware, too broad, no clear buyer, under 3 leads), so it's clear why they're missing. */
+function droppedCard(r) {
+  if (!r.dropped?.length) return "";
+  return `<details class="card"><summary>Left out tonight (${r.dropped.length})</summary><p class="muted">Every idea must be software for one specific buyer, with an exact product, a suggested price and at least ${r.minLeads || 3} leads with proof.</p>
+    <ul class="muted">${r.dropped.map((d) => `<li>${esc(d.title)}: ${esc(d.why)}</li>`).join("")}</ul></details>`;
+}
 
 /** Ideas already reported on an earlier night that got new proof tonight (never shown as new ideas). */
 function updatesCard(r) {
@@ -115,7 +126,7 @@ export function dashboardPage({ r, email, totals, jobs }) {
   return page("Night Agent", `${head}${stats}<div class="card"><div class="top"><h2>Last night: ${esc(prettyNight(r.id.slice(0, 10)))}${r.id.endsWith("-test") ? " (test)" : ""}</h2><a href="/night/${esc(r.id)}">Full report</a></div>
     ${r.stopped ? `<p class="status stopped">⚠️ Stopped early: ${esc(r.stopped.message)}</p>` : `<p class="status done">✅ ${r.cutShort ? "Ran out of time before finishing" : "Finished"}</p>`}
     <p>${r.texts ?? r.searches ?? 0} public texts read · ${r.complaints.length} pieces of evidence with proof · ${r.problems.length} new ideas · ${(r.leads || []).length} leads · ${r.calls} Gemini calls</p><p class="muted">Email: ${esc(email)}</p></div>
-    ${r.problems.slice(0, 3).map((p, i) => `<section class="card"><div class="top"><h2>${i + 1}. ${esc(p.title)}</h2><span class="score">${p.total}<span class="muted">/10</span></span></div><p>${esc(p.summary)}</p>
+    ${r.problems.slice(0, 3).map((p, i) => `<section class="card"><div class="top"><h2>${i + 1}. ${esc(p.title)}</h2><span class="score">${p.total}<span class="muted">/10</span></span></div><p>${esc(p.summary)}</p>${ideaFacts(p)}<p class="muted">${p.complaints.length} leads with proof</p>
       ${p.complaints.slice(0, 1).map((c) => `<blockquote>“${esc(c.quote)}”<div class="src">${c.kind === "job" ? `<span class="tag warn">Job ad</span> ` : "Proof: "}${c.sources.map(link).join(" · ")}</div></blockquote>`).join("")}<a href="/idea/${esc(encodeURIComponent(`${r.id}-${p.key}`))}">See the idea</a>${buildBtn(`${r.id}-${p.key}`)}</section>`).join("")}`);
 }
 
@@ -128,12 +139,12 @@ export function ideasPage({ ideas, months, month, built }) {
   const list = [...ideas].sort((a, b) => b.total - a.total);
   return page("Night Agent · ideas", `<h1>All ideas</h1>${nav}<p class="muted">Every idea the Scout has found, saved for good. ${esc(month || "")}</p>${monthNav("/ideas", months, month)}
     ${list.length ? list.map((x) => `<section class="card"><div class="top"><h2><a href="/idea/${esc(encodeURIComponent(x.id))}">${esc(x.title)}</a></h2><span class="score">${x.total}<span class="muted">/10</span></span></div>
-      <p>${esc(x.summary)}</p><p class="muted">${esc(prettyNight(x.night.slice(0, 10)))} · ${x.complaints.length} proof${x.complaints.length === 1 ? "" : "s"} · ${x.competitors.length} competitor${x.competitors.length === 1 ? "" : "s"}${built[x.id] ? ` · <span class="tag ok">chosen to build</span>` : ""}</p>${buildBtn(x.id)}</section>`).join("") : `<div class="card">No ideas saved yet.</div>`}`);
+      <p>${esc(x.summary)}</p>${x.buyer ? `<p class="muted"><b>Buyer:</b> ${esc(x.buyer)} · <b>Suggested:</b> $${esc(x.price)}/month</p>` : ""}<p class="muted">${esc(prettyNight(x.night.slice(0, 10)))} · ${x.complaints.length} proof${x.complaints.length === 1 ? "" : "s"} · ${x.competitors.length} competitor${x.competitors.length === 1 ? "" : "s"}${built[x.id] ? ` · <span class="tag ok">chosen to build</span>` : ""}</p>${buildBtn(x.id)}</section>`).join("") : `<div class="card">No ideas saved yet.</div>`}`);
 }
 
 export function ideaPage(x, built) {
   return page(`Night Agent · ${x.title}`, `<h1>${esc(x.title)}</h1>${nav}<section class="card"><div class="top"><span class="muted">Found ${esc(prettyNight(x.night.slice(0, 10)))} · <a href="/night/${esc(x.night)}">that night's report</a></span><span class="score">${x.total}<span class="muted">/10</span></span></div>
-    <p>${esc(x.summary)}</p><p class="muted"><b>Who:</b> ${esc(x.who)}</p>${bars(x.scores)}<p class="muted"><b>Why these scores:</b> ${esc(x.why)}</p>
+    <p>${esc(x.summary)}</p>${ideaFacts(x)}${bars(x.scores)}<p class="muted"><b>Why these scores:</b> ${esc(x.why)}</p>
     <h3>What people said</h3>${x.complaints.map((c) => `<blockquote>“${esc(c.quote)}”<div class="muted">— ${esc(who(c.who))}${c.pays && c.pays !== "unknown" ? ` · pays: ${esc(c.pays)}` : ""}</div><div class="src">${c.kind === "job" ? `<span class="tag warn">Job ad</span> ` : "Proof: "}${c.sources.map(link).join(" · ")}</div></blockquote>`).join("")}
     <h3>Competitors</h3>${x.competitors.length ? x.competitors.map((c) => `<div><b>${esc(c.name)}</b> — ${c.price ? `${esc(c.price)} <span class="src">(${c.priceSources.map(link).join(", ")})</span>` : `<span class="muted">price not found</span>`}${c.dislikes ? `<div class="muted">What people say: ${esc(c.dislikes)} <span class="src">(${c.dislikeSources.map(link).join(", ")})</span></div>` : ""}</div>`).join("<hr>") : `<p class="muted">None found with proof.</p>`}
     ${built ? `<p><span class="tag ok">Chosen to build ${esc(built.slice(0, 10))}</span> <a href="/idea/${esc(encodeURIComponent(x.id))}/prompt">See the build prompt</a></p>` : buildBtn(x.id)}</section>`);

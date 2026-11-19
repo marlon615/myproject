@@ -15,7 +15,8 @@ export function buildPrompt(idea) {
 THE PROBLEM
 ${idea.title}
 ${idea.summary}
-Who has it: ${idea.who || "see the quotes below"}
+Who would buy it: ${idea.buyer || idea.who || "see the quotes below"}
+${idea.product ? `What to build: ${idea.product}\n` : ""}${idea.price ? `Suggested price: $${idea.price}/month (a suggestion, not market data: ${idea.priceWhy || "estimate"})\n` : ""}
 
 EVIDENCE (real quotes from public posts and job ads, with their sources — this is all we know)
 ${quotes}
