@@ -18,6 +18,11 @@ Each run does one small step and saves progress in KV, so it fits the free plan:
    Google reviews, Product Hunt, TikTok/YouTube comments that show up in search, G2/Capterra. Business types rotate
    (restaurants, HVAC, dental offices, property managers, e-commerce sellers, … 30 in all), and a search used before is
    never used again.
+   Plus **4 job-ad searches** (Indeed, LinkedIn Jobs, ZipRecruiter, SimplyHired, Glassdoor, company career pages, through
+   Google Search): companies paying people to do repetitive work by hand — data entry, chasing invoices, answering calls,
+   scheduling, taking orders, making reports. Each ad is treated as a proven, paid need: the duties are quoted from the
+   ad, the ad is linked as proof, and the company name and pay are shown only when the source backs them. Job sites are
+   never visited directly (they don't allow bots); the ads come from Google's search results. 16 searches a night in all.
 2. **Proof** — only quotes that Google's grounding tied to a web page are kept, with that page as the proof. Anything
    the model wrote without a source is thrown away. Each source link is turned into its real address, and where the
    page can be read, the quote is checked on it ("quote found on page").
@@ -29,7 +34,8 @@ Each run does one small step and saves progress in KV, so it fits the free plan:
 5. **Report** — saved when done (usually by about 2:30 a.m.), or at 4:55 a.m. with whatever was finished.
    Ideas from earlier reports are left out (the model is told them, and a word-overlap check catches near-repeats).
 
-**Leads.** Up to 10 a night: public posts where someone asked for software like this, each with its link and the idea
+**Leads.** Up to 10 a night: public posts where someone asked for software like this, and job ads for work software
+could do, each with its link and the idea
 it belongs to. Fewer if fewer were found (never padded). Nobody is contacted in stage 1, and no names are collected.
 
 **Rules it follows.** Public information only, never logs into any site. The only time it opens a site's page itself
@@ -37,7 +43,7 @@ it belongs to. Fewer if fewer were found (never padded). Nobody is contacted in 
 so Reddit quotes are linked but not checked). "Who wrote it" and "what they pay" are shown only when Google's grounding
 backs them too; otherwise "details not confirmed".
 
-**Limits.** One Gemini call per step (at most one every 5 minutes; about 18 a night). If Gemini says a limit is reached
+**Limits.** One Gemini call per step (at most one every 5 minutes; about 22 a night). If Gemini says a limit is reached
 (429), or a model has no free grounding, or the key doesn't work, the Scout stops for the night and the report says so
 in plain words, showing whatever it had already found. About 50 KV writes a night (free: 1,000 a day). Each step's own
 work measured a few milliseconds of CPU in tests (free: 10 ms per run).

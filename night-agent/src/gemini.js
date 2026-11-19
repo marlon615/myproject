@@ -68,14 +68,19 @@ const norm = (s) => String(s || "").toLowerCase().replace(/[‘’]/g, "'").repl
  * The grounding sources Google attached to a line of the answer: every support whose segment overlaps the line.
  * Returns [] when Google didn't attach any — then the line has no proof and is left out.
  */
+const unlabel = (s) => s.replace(/^\s*[*-]?\s*\**[a-z]+\**\s*:\s*/, "");
+const numbers = (s) => s.match(/\d+(?:[.,]\d+)?/g) || [];
 export function supportedSources(answer, line) {
-  const l = norm(line);
-  if (l.length < 8) return [];
-  const idx = new Set();
+  const l = unlabel(norm(line));
+  if (l.length < 3) return [];
+  const idx = new Set(), nums = numbers(l);
   for (const s of answer.supports) {
-    const t = norm(s.text);
-    if (t.length < 8) continue;
-    if (t.includes(l) || l.includes(t) || overlap(l, t) >= 0.6) for (const i of s.chunks) idx.add(i);
+    const t = unlabel(norm(s.text));
+    if (t.length < 3) continue;
+    // Any number in the line (a price, a count) must appear in the backing text itself: no made-up numbers.
+    if (nums.length && !nums.every((n) => t.includes(n))) continue;
+    const loose = l.split(" ").filter((w) => w.length > 3).length >= 4 && overlap(l, t) >= 0.6; // only for real sentences
+    if (t.includes(l) || (l.length >= 12 && l.includes(t) && t.length >= 12) || loose) for (const i of s.chunks) idx.add(i);
   }
   return [...idx].map((i) => answer.sources[i]).filter(Boolean);
 }

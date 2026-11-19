@@ -15,15 +15,15 @@ export function buildEmail(r, night, st, site) {
     return { subject: `Night Agent: no report for ${day}`, text: `No morning report for ${day}.\n${why}\n\nDashboard: ${site}/`, html: `<p>No morning report for ${esc(day)}.</p><p>${esc(why)}</p><p><a href="${esc(site)}/">Open your dashboard</a></p>` };
   }
   const top = r.problems.slice(0, 3), leads = r.leads || [];
-  const did = `${r.searches} of ${r.searchesPlanned} searches · ${r.complaints.length} complaints with proof · ${r.problems.length} new idea${r.problems.length === 1 ? "" : "s"} · ${r.calls} Gemini calls${r.stopped ? ` · stopped early: ${r.stopped.message}` : r.cutShort ? " · ran out of time before finishing" : ""}`;
+  const did = `${r.searches} of ${r.searchesPlanned} searches · ${r.complaints.length} pieces of evidence with proof${r.jobAds ? ` (${r.jobAds} job ad${r.jobAds === 1 ? "" : "s"})` : ""} · ${r.problems.length} new idea${r.problems.length === 1 ? "" : "s"} · ${r.calls} Gemini calls${r.stopped ? ` · stopped early: ${r.stopped.message}` : r.cutShort ? " · ran out of time before finishing" : ""}`;
   const subject = top.length ? `Night Agent: ${top.length} idea${top.length === 1 ? "" : "s"} for ${day}${r.stopped ? " (stopped early)" : ""}` : `Night Agent: no new ideas for ${day}${r.stopped ? " (stopped early)" : ""}`;
-  const proofText = (c) => `"${short(c.quote, 160)}" — ${who(c.who)} (${c.sources[0]?.url})`;
+  const proofText = (c) => `${c.kind === "job" ? "[Job ad] " : ""}"${short(c.quote, 160)}" — ${who(c.who)} (${c.sources[0]?.url})`;
   const text = [`Night Agent — ${day}`, "", "OVERNIGHT", did, "",
     top.length ? "TOP IDEAS" : "No new ideas with proof tonight.",
     ...top.flatMap((p, i) => [`${i + 1}. ${p.title} — ${p.total}/10`, `   ${short(p.summary, 220)}`, ...p.complaints.slice(0, 2).map((c) => `   Proof: ${proofText(c)}`),
       ...(p.competitors[0] ? [`   Competitor: ${p.competitors[0].name}${p.competitors[0].price ? `, ${p.competitors[0].price}` : ""}`] : []), `   Build it: ${site}/idea/${encodeURIComponent(`${r.id}-${p.key}`)}`, ""]),
-    leads.length ? `LEADS (${leads.length}, public posts — not contacted)` : "No leads tonight.",
-    ...leads.map((l, i) => `${i + 1}. ${who(l.who)}: "${short(l.quote, 120)}" ${l.sources[0]?.url}${l.idea ? ` [${l.idea}]` : ""}`), "",
+    leads.length ? `LEADS (${leads.length}, public posts and job ads — not contacted)` : "No leads tonight.",
+    ...leads.map((l, i) => `${i + 1}. ${l.kind === "job" ? "[Job ad] " : ""}${who(l.who)}: "${short(l.quote, 120)}" ${l.sources[0]?.url}${l.idea ? ` [${l.idea}]` : ""}`), "",
     `Full report and dashboard: ${site}/night/${r.id}`].join("\n");
   const a = (s) => `<a href="${esc(s.url)}" style="color:#1f4e8c">${esc(s.domain || "source")}</a>`;
   const html = `<div style="font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#1c1d1a;max-width:640px">
@@ -31,11 +31,11 @@ export function buildEmail(r, night, st, site) {
 <p style="margin:0 0 14px;color:#53584f"><b>Overnight:</b> ${esc(did)}</p>
 ${top.length ? `<h3 style="margin:16px 0 6px">Top ideas</h3>` + top.map((p, i) => `<div style="margin:0 0 14px;padding:12px;border:1px solid #e2ddd2;border-radius:10px">
 <b>${i + 1}. ${esc(p.title)}</b> — <b style="color:#1f4e8c">${p.total}/10</b><br><span style="color:#53584f">${esc(short(p.summary, 220))}</span>
-${p.complaints.slice(0, 2).map((c) => `<div style="margin-top:6px">“${esc(short(c.quote, 160))}” <span style="color:#53584f">— ${esc(who(c.who))}</span> · ${c.sources.slice(0, 1).map(a).join("")}</div>`).join("")}
+${p.complaints.slice(0, 2).map((c) => `<div style="margin-top:6px">${c.kind === "job" ? "<b>Job ad:</b> " : ""}“${esc(short(c.quote, 160))}” <span style="color:#53584f">— ${esc(who(c.who))}</span> · ${c.sources.slice(0, 1).map(a).join("")}</div>`).join("")}
 ${p.competitors[0] ? `<div style="margin-top:6px;color:#53584f">Competitor: ${esc(p.competitors[0].name)}${p.competitors[0].price ? `, ${esc(p.competitors[0].price)}` : ""} · ${p.competitors[0].sources.slice(0, 1).map(a).join("")}</div>` : ""}
 <div style="margin-top:8px"><a href="${esc(site)}/idea/${encodeURIComponent(`${r.id}-${p.key}`)}" style="color:#1f4e8c;font-weight:700">Yes, build this →</a></div></div>`).join("") : `<p>No new ideas with proof tonight.</p>`}
 <h3 style="margin:16px 0 6px">Leads${leads.length ? ` (${leads.length})` : ""}</h3>
-${leads.length ? `<p style="margin:0 0 6px;color:#53584f;font-size:13px">Public posts where someone asked for this. Not contacted.</p><ol style="padding-left:20px;margin:0">${leads.map((l) => `<li style="margin-bottom:6px">${esc(who(l.who))}: “${esc(short(l.quote, 120))}” · ${l.sources.slice(0, 1).map(a).join("")}${l.idea ? ` <span style="color:#53584f">(${esc(l.idea)})</span>` : ""}</li>`).join("")}</ol>` : `<p>No leads tonight.</p>`}
+${leads.length ? `<p style="margin:0 0 6px;color:#53584f;font-size:13px">Public posts and job ads showing this need. Not contacted.</p><ol style="padding-left:20px;margin:0">${leads.map((l) => `<li style="margin-bottom:6px">${l.kind === "job" ? "<b>Job ad</b> · " : ""}${esc(who(l.who))}: “${esc(short(l.quote, 120))}” · ${l.sources.slice(0, 1).map(a).join("")}${l.idea ? ` <span style="color:#53584f">(${esc(l.idea)})</span>` : ""}</li>`).join("")}</ol>` : `<p>No leads tonight.</p>`}
 <p style="margin-top:18px"><a href="${esc(site)}/night/${esc(r.id)}" style="color:#1f4e8c;font-weight:700">Open the full report and your dashboard</a></p>
 <p style="color:#8a8f86;font-size:12px">Every quote links to the public page it came from. Nothing without proof is included.</p></div>`;
   return { subject, text, html };

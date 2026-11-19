@@ -15,6 +15,37 @@ export const PHRASES = ["\"I wish there was an app\"", "\"is there a tool that\"
   "\"looking for software\" frustrated", "\"switched from\" \"because\" software", "\"anyone know a tool\""];
 export const PLACES = ["site:reddit.com", "forum", "app store reviews", "Google reviews software", "site:producthunt.com", "TikTok OR YouTube comments", "Capterra OR G2 reviews \"cons\""];
 
+// Public job ads: companies paying people to do repetitive work that software could do (a proven, paid need).
+export const JOB_TASKS = ["\"data entry\"", "\"accounts receivable\" \"collections calls\"", "\"answer phones\" receptionist", "\"appointment scheduling\" coordinator",
+  "\"order entry\" clerk", "\"weekly reports\" Excel coordinator", "\"dispatcher\" scheduling", "\"invoice processing\" clerk", "\"copy data\" between systems", "\"inbound calls\" \"take orders\""];
+export const JOB_PLACES = ["site:indeed.com", "site:linkedin.com/jobs", "site:ziprecruiter.com", "site:simplyhired.com", "careers \"apply now\"", "site:glassdoor.com/job-listing"];
+/** This night's job-ad searches (4), rotating tasks, places and business types; never the same search twice. */
+export function nightJobQueries(nightNo, used = new Set(), count = 4) {
+  const out = [];
+  for (let k = 0; out.length < count && k < 400; k++) {
+    const q = `${JOB_PLACES[(nightNo * 2 + k) % JOB_PLACES.length]} ${JOB_TASKS[(nightNo * 3 + k) % JOB_TASKS.length]} ${VERTICALS[(nightNo * 5 + k * 7) % VERTICALS.length]} job`;
+    if (!used.has(q) && !out.includes(q)) out.push(q);
+  }
+  return out;
+}
+
+export const jobPrompt = (q) => `You are researching repetitive work that US companies pay people to do by hand, which software could do instead.
+Use Google Search to find REAL, current public job ads (Indeed, LinkedIn Jobs, ZipRecruiter, company career pages and other public job boards) matching: ${q}
+
+Rules:
+- Only include job ads you actually found in the search results. Never invent companies, tasks or pay.
+- TASKS must be copied word for word from the ad's duties (one or two sentences about the repetitive work: data entry, chasing invoices, answering calls, scheduling, taking orders, making reports and similar).
+- Prefer US companies. Give up to 5 ads. If you found none, write NONE.
+
+Write each ad exactly like this, and nothing else:
+JOB
+COMPANY: <company name as shown in the ad>
+ROLE: <job title>
+TASKS: <the repetitive duties, copied from the ad>
+PAY: <pay as listed in the ad, or "not listed">
+WHERE: <site, e.g. indeed.com>
+END`;
+
 /** This night's searches (12): business types rotate by night, and searches already used are skipped. */
 export function nightQueries(nightNo, used = new Set(), count = 12) {
   const out = [];
@@ -74,7 +105,8 @@ export const clusterSchema = {
   },
   required: ["problems"],
 };
-export const clusterPrompt = (complaints, past) => `Here are complaints and wishes about software that real people posted (each has an id).
+export const clusterPrompt = (complaints, past) => `Here are complaints and wishes about software that real people posted, and public job ads where companies pay people to do repetitive work by hand (each has an id).
+Job ads (marked JOB AD) are proof of a paid need: the company already spends a salary on this work, so count them as strong evidence for "pays".
 Group them into distinct PROBLEMS that a solo developer could build software for. A problem needs at least one complaint.
 Score each problem from 1 to 10:
 - people: how many people seem to have it (more complaints, bigger groups of businesses = higher)
@@ -85,8 +117,8 @@ Base every score on the complaints given, and say why in one or two sentences ("
 Problems already reported on earlier nights (don't report these again; if a new problem is the same as one of them, set "repeatOf" to that title):
 ${past.length ? past.map((t) => `- ${t}`).join("\n") : "- (none yet)"}
 
-Complaints:
-${complaints.map((c) => `[${c.id}] (${c.who}; ${c.where}; pays: ${c.pays}) "${c.quote}"`).join("\n")}`;
+Complaints and job ads:
+${complaints.map((c) => `[${c.id}] ${c.kind === "job" ? "JOB AD " : ""}(${c.who || "poster"}; ${c.where}; pays: ${c.pays}) "${c.quote}"`).join("\n")}`;
 
 /** Reads ITEM…END / COMPETITOR…END blocks. */
 export function readBlocks(text, start, fields) {

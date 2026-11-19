@@ -5,7 +5,7 @@
 const who = (w) => w || "a poster (details not confirmed)";
 
 export function buildPrompt(idea) {
-  const quotes = idea.complaints.map((c) => `- "${c.quote}" — ${who(c.who)}${c.pays && c.pays !== "unknown" ? ` (pays: ${c.pays})` : ""}\n  Source: ${c.sources.map((s) => s.url).join(" , ")}`).join("\n");
+  const quotes = idea.complaints.map((c) => `- ${c.kind === "job" ? "[Job ad: the company pays someone to do this by hand] " : ""}"${c.quote}" — ${who(c.who)}${c.pays && c.pays !== "unknown" ? ` (pays: ${c.pays})` : ""}\n  Source: ${c.sources.map((s) => s.url).join(" , ")}`).join("\n");
   const comps = idea.competitors.length ? idea.competitors.map((c) => `- ${c.name}: ${c.price ? `${c.price} (source: ${c.priceSources.map((s) => s.url).join(" , ")})` : "price not found"}`
     + `${c.dislikes ? `\n  What users dislike: ${c.dislikes} (source: ${c.dislikeSources.map((s) => s.url).join(" , ")})` : ""}\n  About it: ${c.sources.map((s) => s.url).join(" , ")}`).join("\n")
     : "- None were found with proof. Before building, search for existing products yourself and tell me what you find.";
@@ -17,7 +17,7 @@ ${idea.title}
 ${idea.summary}
 Who has it: ${idea.who || "see the quotes below"}
 
-EVIDENCE (real quotes from public posts, with their sources — this is all we know)
+EVIDENCE (real quotes from public posts and job ads, with their sources — this is all we know)
 ${quotes}
 
 NIGHT AGENT SCORES (1–10, a judgement based only on the evidence above)

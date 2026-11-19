@@ -13,7 +13,7 @@
  * reached, the Scout stops for the night and the report says so.
  */
 import { ask, listModels, GeminiError, supportedSources } from "./gemini.js";
-import { nightQueries, searchPrompt, competitorPrompt, clusterPrompt, clusterSchema, readBlocks } from "./plan.js";
+import { nightQueries, nightJobQueries, searchPrompt, jobPrompt, competitorPrompt, clusterPrompt, clusterSchema, readBlocks } from "./plan.js";
 import { jamaica, similar, getJSON, putJSON, domainOf } from "./util.js";
 
 const MAX_CALLS_PER_STEP = 1, RESOLVE_PER_STEP = 10, VERIFY_PER_STEP = 2, STEP_MS = 3 * 60 * 1000, TOP = 5;
@@ -22,9 +22,11 @@ export const LAST_SLOT = { hour: 4, minute: 55 }; // the night's last run (Jamai
 
 const STOP_WORDS = { limit: "Gemini's free daily limit was reached", location: "Gemini refused requests from this server's location", key: "There's no working Gemini API key", model: "No usable Gemini model was available", "no-grounding": "Google Search grounding isn't available on the free tier for the available models", errors: "Gemini kept failing" };
 
+/** 12 complaint searches with 4 job-ad searches mixed in (one job search after every 3 complaint searches). */
+const mix = (qs, jobs) => qs.flatMap((q, i) => [{ q, done: false }, ...(i % 3 === 2 && jobs[(i - 2) / 3] ? [{ q: jobs[(i - 2) / 3], done: false, kind: "job" }] : [])]);
 function newNight(id, nightNo, past) {
   return { id, nightNo, startedAt: new Date().toISOString(), status: "running", model: null, triedModels: [], stopped: null, calls: 0, steps: 0, errorsInRow: 0,
-    queries: nightQueries(nightNo, new Set(past.queries || [])).map((q) => ({ q, done: false })), complaints: [], sources: {}, problems: null, competitors: {}, compQueue: null, log: [] };
+    queries: mix(nightQueries(nightNo, new Set(past.queries || [])), nightJobQueries(nightNo, new Set(past.queries || []))), complaints: [], sources: {}, problems: null, competitors: {}, compQueue: null, log: [] };
 }
 const note = (st, msg) => { st.log.push({ at: new Date().toISOString(), msg }); if (st.log.length > 60) st.log.shift(); };
 function stop(st, kind, message) {
@@ -75,16 +77,16 @@ export async function runStep(env, { now = Date.now(), manual = false } = {}) {
     while (!st.stopped && calls < MAX_CALLS_PER_STEP && timeLeft()) {
       const q = st.queries.find((x) => !x.done);
       if (!q) break;
-      const r = await gem(searchPrompt(q.q), { search: true });
+      const r = await gem(q.kind === "job" ? jobPrompt(q.q) : searchPrompt(q.q), { search: true });
       if (!r) { if (!st.stopped) { q.done = true; q.error = true; } break; }
-      q.done = true; q.found = addComplaints(st, r, q.q);
-      note(st, `Searched “${q.q}”: ${q.found} complaint${q.found === 1 ? "" : "s"} with proof.`);
+      q.done = true; q.found = q.kind === "job" ? addJobs(st, r, q.q) : addComplaints(st, r, q.q);
+      note(st, `Searched ${q.kind === "job" ? "job ads" : ""} “${q.q}”: ${q.found} ${q.kind === "job" ? "job ad" : "complaint"}${q.found === 1 ? "" : "s"} with proof.`.replace("Searched  “", "Searched “"));
     }
     // 3. Group and score.
     if (!st.stopped && st.queries.every((x) => x.done) && !st.problems && calls < MAX_CALLS_PER_STEP && timeLeft()) {
       if (!st.complaints.length) { st.problems = []; note(st, "No complaints with proof were found tonight."); }
       else {
-        const r = await gem(clusterPrompt(st.complaints.map(({ id, quote, who, where, pays }) => ({ id, quote, who, where, pays })), (past.problems || []).slice(-150).map((p) => p.title)), { schema: clusterSchema, temperature: 0.1 });
+        const r = await gem(clusterPrompt(st.complaints.map(({ id, quote, who, where, pays, kind }) => ({ id, quote, who, where, pays, kind })), (past.problems || []).slice(-150).map((p) => p.title)), { schema: clusterSchema, temperature: 0.1 });
         if (r) { st.problems = cleanProblems(st, r.text, past); st.compQueue = st.problems.slice(0, TOP).map((p) => p.key); note(st, `Grouped into ${st.problems.length} new problem${st.problems.length === 1 ? "" : "s"}.`); }
       }
     }
@@ -131,6 +133,30 @@ function addComplaints(st, r, query) {
     const whoOk = it.who && supportedSources(r, it._lines.who || it.who).length > 0;
     const paysOk = it.pays && !/^unknown$/i.test(it.pays) && supportedSources(r, it._lines.pays || it.pays).length > 0;
     st.complaints.push({ id: `c${st.complaints.length + 1}`, quote: it.quote.slice(0, 500), who: whoOk ? it.who.slice(0, 160) : "", where: (it.where || "").slice(0, 120), pays: paysOk ? it.pays.slice(0, 200) : "unknown", sources: uris, query });
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Job ads: a company paying someone to do repetitive work by hand. Kept only if Google's grounding ties the quoted duties
+ * to the ad; the company name, title and pay are shown only if backed too. The ad's page is the proof.
+ */
+function addJobs(st, r, query) {
+  let n = 0;
+  for (const it of readBlocks(r.text, "JOB", ["company", "role", "tasks", "pay", "where"])) {
+    if (!it.tasks || it.tasks.length < 15) continue;
+    const src = supportedSources(r, it._lines.tasks || it.tasks);
+    if (!src.length) continue; // duties not tied to an ad → left out
+    if (st.complaints.some((c) => similar(c.quote, it.tasks) > 0.8)) continue;
+    const ok = (k) => it[k] && supportedSources(r, it._lines[k] || it[k]).length > 0;
+    const company = ok("company") ? it.company.slice(0, 100) : "", role = ok("role") ? it.role.slice(0, 100) : "";
+    const pay = ok("pay") && !/not listed/i.test(it.pay) ? it.pay.slice(0, 80) : "";
+    const uris = [];
+    for (const s of src.slice(0, 2)) { if (!st.sources[s.uri]) st.sources[s.uri] = { title: s.title }; uris.push(s.uri); }
+    st.complaints.push({ id: `c${st.complaints.length + 1}`, kind: "job", quote: it.tasks.slice(0, 500), company, role,
+      who: `${company || "A company (name not confirmed)"} is hiring${role ? ` ${/^[aeiou]/i.test(role) ? "an" : "a"} ${role}` : ""}`, where: (it.where || "job ad").slice(0, 80),
+      pays: pay ? `${pay} (job ad)` : "pays a salary for this work (job ad)", sources: uris, query });
     n++;
   }
   return n;
@@ -256,7 +282,7 @@ async function finish(env, st, past, cutShort) {
   if (report.problems.length) {
     const bucket = await getJSON(kv, `ideas:${month}`, []);
     const ideas = report.problems.map((p) => ({ id: `${st.id}-${p.key}`, night: st.id, title: p.title, summary: p.summary, who: p.who, total: p.total, scores: p.scores, why: p.why,
-      complaints: p.complaints.slice(0, 6).map((c) => ({ quote: c.quote, who: c.who, pays: c.pays, sources: c.sources.slice(0, 2) })),
+      complaints: p.complaints.slice(0, 6).map((c) => ({ kind: c.kind, quote: c.quote, who: c.who, pays: c.pays, sources: c.sources.slice(0, 2) })),
       competitors: p.competitors.map((c) => ({ name: c.name, price: c.price, priceSources: c.priceSources, dislikes: c.dislikes, dislikeSources: c.dislikeSources, sources: c.sources })), saved: now }));
     await putJSON(kv, `ideas:${month}`, [...bucket.filter((x) => x.night !== st.id), ...ideas]);
   }
@@ -280,12 +306,12 @@ async function finish(env, st, past, cutShort) {
 
 export function buildReport(st, cutShort = false) {
   const src = (uri) => { const s = st.sources[uri] || {}; return { url: s.url || uri, domain: s.domain || s.title || domainOf(uri), verified: s.verified ?? null }; };
-  const complaint = (c) => ({ id: c.id, quote: c.quote, who: c.who, where: c.where, pays: c.pays, sources: c.sources.map(src) });
+  const complaint = (c) => ({ id: c.id, kind: c.kind || "post", quote: c.quote, who: c.who, where: c.where, pays: c.pays, sources: c.sources.map(src) });
   const problems = (st.problems || []).map((p) => ({ ...p, complaints: p.complaintIds.map((id) => st.complaints.find((c) => c.id === id)).filter(Boolean).map(complaint),
     competitors: (st.competitors[p.key] || []).map((c) => ({ ...c, sources: c.sources.map(src), priceSources: c.priceSources.map(src), dislikeSources: c.dislikeSources.map(src) })) }));
   return { id: st.id, status: st.status, stopped: st.stopped, cutShort, model: st.model, startedAt: st.startedAt, finishedAt: st.finishedAt, calls: st.calls, steps: st.steps,
     searches: st.queries.filter((q) => q.done && !q.error).length, searchesPlanned: st.queries.length, grouped: Boolean(st.problems),
-    complaints: st.complaints.map(complaint), problems, leads: leadsOf(st, problems, complaint), log: st.log };
+    jobAds: st.complaints.filter((c) => c.kind === "job").length, complaints: st.complaints.map(complaint), problems, leads: leadsOf(st, problems, complaint), log: st.log };
 }
 
 /**
