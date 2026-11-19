@@ -16,15 +16,21 @@ one small step and saves progress in KV, so it fits the free plan. **Gemini neve
 grounding for this key): the Scout fetches public sources itself, and Gemini only reads that text.
 
 1. **Fetch** (no Gemini) — official public sources only:
-   - **Hacker News**, through the official Algolia HN Search API: 5 searches a night for comments and posts from the last
-     60 days ("I wish there was…", "is there a tool…", "manual data entry", "we still use spreadsheets"…), rotating.
+   - **Hacker News**, through the official Algolia HN Search API: 10 searches a night (30 results each) for comments and
+     posts from the last 90 days, rotating through 30 phrases ("I wish there was…", "is there a tool…", "manual data
+     entry", "we still use spreadsheets", "copy and paste between", "chasing invoices"…).
    - **Remotive** public jobs API: 2 searches a night (they ask for at most ~4 requests a day), US/anywhere jobs only.
-   - **We Work Remotely** public RSS feeds: 2 a night, only titles that look like repetitive work (data entry, customer
-     support, scheduling, billing, dispatch, order entry, assistants…), US/anywhere only.
+   - **Jobicy** public jobs API: 2 tag searches a night (data entry, customer support, bookkeeping, billing…), US jobs only
+     (they ask for at most about 1 request an hour). Pay comes from the job board's own salary field.
+   - **Himalayas** public jobs API: 2 searches a night (data entry, administrative assistant, dispatcher…), only titles
+     that look like repetitive work, US/anywhere only.
+   - **We Work Remotely** public RSS feeds: 4 a night (customer support, sales & marketing, management & finance, all
+     other), only titles that look like repetitive work (data entry, customer support, scheduling, billing, dispatch,
+     order entry, assistants…), US/anywhere only.
    - **Reddit**: its robots.txt is checked every night. Today it disallows all automated access (and Reddit's API terms
      require a registered app), so Reddit is skipped and the report says so. If you want Reddit, register a free official
      Reddit app and I can add it the approved way.
-   Texts already read on an earlier night aren't read again.
+   At most 300 texts a night. Texts already read on an earlier night aren't read again.
 2. **Read** — Gemini (no search) reads the texts in batches of ~30 and picks complaints, wishes for software, and job
    ads for repetitive work, each with a quote. **A quote is kept only if it appears word for word in the fetched text**;
    the page it came from is the proof. "What they pay" is kept only if those words are in the text too (job ads: the pay
@@ -33,10 +39,10 @@ grounding for this key): the Scout fetches public sources itself, and Gemini onl
    Job ads count as proof the company already pays for the work. Ideas from earlier reports are left out.
 4. **Competitors** — for the top 5, Hacker News posts about tools for that problem are fetched, and Gemini names the
    tools they mention, again only with a word-for-word quote. A price is shown only if it's written in that post.
-5. **Report** — usually done by about 2:00 a.m.; at 4:55 a.m. at the latest. Up to 10 leads (public posts and job ads,
+5. **Report** — usually done by about 3:00 a.m.; at 4:55 a.m. at the latest. Up to 10 leads (public posts and job ads,
    never contacted). Ideas and leads are saved for good.
 
-**Limits.** At most one Gemini call per step, about 8 a night. If Gemini refuses (limit, no free quota, retired model,
+**Limits.** At most one Gemini call per step, at most 12 a night (10 reading batches, 1 grouping, 1 competitors). If Gemini refuses (limit, no free quota, retired model,
 missing key), the Scout tries the next model where that makes sense, otherwise stops for the night and says why.
 About 30 KV writes a night (free: 1,000 a day). Each step's own work measured 1–2 ms of CPU in tests (free: 10 ms).
 

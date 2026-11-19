@@ -3,9 +3,11 @@
  *   { kind: "post" | "job", src, url, title, text, company?, role?, pay?, location? }
  * Every document keeps its own public link, which is the proof for anything quoted from it.
  *
- *   Hacker News — the official Algolia HN Search API (hn.algolia.com/api), comments and posts from the last 60 days
+ *   Hacker News — the official Algolia HN Search API (hn.algolia.com/api), comments and posts from the last 90 days
  *   Remotive    — its public jobs API (remotive.com/api/remote-jobs); they ask for at most ~4 requests a day: we use 2
  *   We Work Remotely — public RSS feeds by category
+ *   Jobicy      — its public jobs API (jobicy.com/api/v2/remote-jobs, US jobs); they ask for ≤1 request an hour: we use 2 a night
+ *   Himalayas   — its public jobs API (himalayas.app/jobs/api)
  *   Reddit      — only if reddit.com/robots.txt allows automated access (today it doesn't, so it's skipped and the
  *                 report says so; Reddit's API terms also require a registered app)
  * Texts are cleaned (HTML removed) and trimmed, so each run stays small.
@@ -65,6 +67,31 @@ export async function weWorkRemotely(env, category) {
     if (out.length >= 15) break;
   }
   return out.filter((x) => x.text.length > 40);
+}
+
+const salary = (min, max, cur) => (min || max ? `${cur === "USD" || !cur ? "$" : `${cur} `}${[min, max].filter(Boolean).map((n) => Number(n).toLocaleString("en-US")).join("-")} a year` : "");
+
+/** Jobicy public jobs API: one tag search, US jobs only. */
+export async function jobicy(env, tag, { count = 20 } = {}) {
+  const u = new URL(`${base(env, "JOBICY_BASE", "https://jobicy.com")}/api/v2/remote-jobs`);
+  u.searchParams.set("count", String(count)); u.searchParams.set("geo", "usa"); u.searchParams.set("tag", tag);
+  const d = await (await get(u.toString())).json();
+  return (d.jobs || []).map((j) => ({ kind: "job", src: "Jobicy", label: "Job ad", url: String(j.url || ""), title: clean(j.jobTitle).slice(0, 120), company: clean(j.companyName).slice(0, 100), role: clean(j.jobTitle).slice(0, 100),
+    pay: salary(j.annualSalaryMin, j.annualSalaryMax, j.salaryCurrency).slice(0, 80), location: clean(j.jobGeo).slice(0, 80), text: trim(clean(j.jobDescription || j.jobExcerpt), 900) }))
+    .filter((x) => /^https:\/\//.test(x.url) && x.text.length > 40 && (!x.location || US.test(x.location)));
+}
+
+/** Himalayas public jobs API: a search (or, if search isn't available, the newest jobs), repetitive-work titles only. */
+export async function himalayas(env, q, { limit = 20 } = {}) {
+  const root = base(env, "HIMALAYAS_BASE", "https://himalayas.app");
+  let d;
+  try { d = await (await get(`${root}/jobs/api/search?q=${encodeURIComponent(q)}&limit=${limit}`)).json(); }
+  catch { d = await (await get(`${root}/jobs/api?limit=${limit}&offset=0`)).json(); }
+  return (d.jobs || []).map((j) => {
+    const loc = (Array.isArray(j.locationRestrictions) ? j.locationRestrictions.map((x) => (typeof x === "string" ? x : x?.name || "")).join(", ") : "") || "";
+    return { kind: "job", src: "Himalayas", label: "Job ad", url: String(j.applicationLink || j.guid || ""), title: clean(j.title).slice(0, 120), company: clean(j.companyName).slice(0, 100), role: clean(j.title).slice(0, 100),
+      pay: salary(j.minSalary, j.maxSalary, j.currency).slice(0, 80), location: loc.slice(0, 80), text: trim(clean(j.description || j.excerpt), 900) };
+  }).filter((x) => /^https:\/\//.test(x.url) && REPETITIVE.test(x.role) && x.text.length > 40 && (!x.location || US.test(x.location)));
 }
 
 /** Reddit public JSON — only when reddit.com/robots.txt allows it for this agent (checked every night). */

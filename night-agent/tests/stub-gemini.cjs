@@ -25,6 +25,13 @@ const REMOTIVE = { "job-count": 2, jobs: [
     description: "<p>Call customers daily to follow up on unpaid invoices and record every payment promise in the spreadsheet.</p><p>Other duties as assigned.</p>" },
   { id: 2, url: "https://remotive.com/remote-jobs/finance/clerk-de-2", title: "Data Entry Clerk", company_name: "Berlin GmbH", candidate_required_location: "Germany", salary: "", description: "<p>Enter data into SAP every day for our Berlin office team.</p>" },
 ] };
+const JOBICY = { apiVersion: "2", jobCount: 1, jobs: [{ id: 11, url: "https://jobicy.com/jobs/11-customer-service-scheduler", jobTitle: "Customer Service Scheduler", companyName: "Lone Star HVAC Services", jobGeo: "USA",
+  annualSalaryMin: 38000, annualSalaryMax: 44000, salaryCurrency: "USD", jobDescription: "<p>Answer inbound calls from customers and book their service appointments in our calendar.</p>" }] };
+const HIMALAYAS = { offset: 0, limit: 20, totalCount: 2, jobs: [
+  { title: "Accounts Payable Clerk", companyName: "Fresh Fields Grocers", applicationLink: "https://himalayas.app/companies/fresh-fields/jobs/accounts-payable-clerk", minSalary: 40000, maxSalary: 46000, currency: "USD", locationRestrictions: ["United States"],
+    description: "<p>Enter vendor invoices into QuickBooks and match them against purchase orders every day.</p>" },
+  { title: "Staff Machine Learning Engineer", companyName: "AI Co", applicationLink: "https://himalayas.app/companies/ai-co/jobs/staff-ml", locationRestrictions: [], description: "<p>Train large models on our GPU cluster for the research team.</p>" },
+] };
 const RSS = `<?xml version="1.0"?><rss><channel>
 <item><title>Acme Logistics: Order Entry Specialist</title><region>USA Only</region><link>https://weworkremotely.com/remote-jobs/acme-logistics-order-entry-specialist</link><description><![CDATA[<p>Type phone and email orders from restaurants into our order system and confirm delivery dates by phone.</p>]]></description></item>
 <item><title>Cool Startup: Senior Rust Engineer</title><region>Anywhere in the World</region><link>https://weworkremotely.com/remote-jobs/cool-startup-senior-rust-engineer</link><description><![CDATA[<p>Build distributed systems in Rust for our platform team.</p>]]></description></item>
@@ -39,6 +46,8 @@ function analyze(prompt) {
     else if (/double books/.test(d.text)) items.push({ docId: d.id, quote: "I hate my scheduling software, it double books my techs every single week and support never answers.", paysQuote: "they pay $999 a month" });
     else if (/unpaid invoices/.test(d.text)) items.push({ docId: d.id, quote: "Call customers daily to follow up on unpaid invoices and record every payment promise in the spreadsheet." });
     else if (/Type phone and email orders/.test(d.text)) items.push({ docId: d.id, quote: "Type phone and email orders from restaurants into our order system and confirm delivery dates by phone." });
+    else if (/Answer inbound calls/.test(d.text)) items.push({ docId: d.id, quote: "Answer inbound calls from customers and book their service appointments in our calendar." });
+    else if (/Enter vendor invoices/.test(d.text)) items.push({ docId: d.id, quote: "Enter vendor invoices into QuickBooks and match them against purchase orders every day." });
     else if (/Nice weather/.test(d.text)) items.push({ docId: d.id, quote: "I would pay anything for an AI receptionist that answers every call for my salon." }); // invented → must be dropped
   }
   return { items };
@@ -78,6 +87,8 @@ http.createServer((rq, rs) => {
     if (u.pathname === "/search.json") return send(200, { data: { children: [] } });
     if (u.pathname === "/api/v1/search_by_date") { const q = u.searchParams.get("query") || ""; return send(200, { hits: / software$/.test(q) && !q.includes('"') ? HN_TOOLS : HN }); }
     if (u.pathname === "/api/remote-jobs") return send(200, REMOTIVE);
+    if (u.pathname === "/api/v2/remote-jobs") return send(200, JOBICY);
+    if (u.pathname === "/jobs/api/search" || u.pathname === "/jobs/api") return send(200, HIMALAYAS);
     if (/^\/categories\/.+\.rss$/.test(u.pathname)) return send(200, RSS, "application/rss+xml");
     if (u.pathname.startsWith("/ntfy/")) { calls.push({ ntfy: u.pathname, body: data, title: rq.headers.title }); return send(200, { id: "x" }); }
     if (u.pathname === "/emails" && rq.method === "POST") { calls.push({ email: JSON.parse(data || "{}"), auth: rq.headers.authorization }); return send(rq.headers.authorization === "Bearer re_test" ? 200 : 401, rq.headers.authorization === "Bearer re_test" ? { id: "email_1" } : { name: "validation_error", message: "API key is invalid" }); }

@@ -136,7 +136,7 @@ const TEST_EMAIL_CRON = "*/2 * * * *"; // only while a one-off test email is bei
  *  report is finished, it's emailed once. Uses the test report (…-test), never tonight's real one. */
 async function liveTest(env, time) {
   const st = await runStep(env, { now: time, manual: true });
-  if (st.status !== "running") return reportEmailNow(env, st.id);
+  if (st.status !== "running" && env.TEST_EMAIL === "1") return reportEmailNow(env, st.id); // emailed only when asked for
   return null;
 }
 
