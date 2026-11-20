@@ -3,6 +3,8 @@
  * collected, and anonymous counts of how the app is used. The first visit sets the passcode;
  * after that it asks for it (5 wrong tries per 15 minutes). The session lasts 12 hours, in this tab only.
  */
+import { MAX_REPS, TIER_LABELS, cleanReps, proPrice, tierFor } from "./pricing.js";
+
 const root = document.getElementById("console");
 const TOKEN = "marlon.console";
 const getToken = () => { try { return sessionStorage.getItem(TOKEN) || ""; } catch { return ""; } };
@@ -185,6 +187,7 @@ function newBuyerForm(onCreated) {
   const other = el("input", { type: "number", id: "con-devices-other", min: "1", max: "1000", step: "1", inputmode: "numeric", placeholder: "How many?", hidden: true, "aria-label": "Number of devices" });
   const amount = el("input", { type: "text", id: "con-amount", inputmode: "decimal", autocomplete: "off", placeholder: "0.00", required: true });
   const error = el("p", { class: "con-error", role: "alert", hidden: true });
+  const tierHint = el("p", { class: "con-note con-tier-hint", hidden: true });
   const submit = el("button", { type: "submit", class: "btn btn-primary", disabled: true }, "Create link");
   const picked = () => choices.map((c) => c.querySelector("input")).find((i) => i.checked)?.value || "";
   const devices = () => { const v = picked(); if (v === "other") { const n = Number(other.value); return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : null; } return v ? Number(v) : null; };
@@ -193,6 +196,9 @@ function newBuyerForm(onCreated) {
     devicesLegend.textContent = kind() === "team" ? "How many sales reps (rep phones)?" : "How many devices is it for?";
     other.hidden = picked() !== "other";
     other.disabled = other.hidden; // a number left in it doesn't count (or block the form) once another choice is picked
+    const n = devices(), t = n ? tierFor(n) : null;
+    tierHint.hidden = !(kind() === "team" && t);
+    if (t) tierHint.textContent = t.pct ? `Team discount for ${n} reps: ${t.pct}% (${t.label}).` : `Team discount for ${n} rep${n === 1 ? "" : "s"}: none (${t.label}).`;
     submit.disabled = !(name.value.trim() && devices() !== null && paid() !== null);
   };
   const form = el("form", { class: "card con-card con-new", "aria-labelledby": "con-h-new", novalidate: true, oninput: update, onchange: update, onsubmit: async (e) => {
@@ -209,7 +215,7 @@ function newBuyerForm(onCreated) {
   el("h2", { id: "con-h-new" }, "New buyer link"),
   el("fieldset", { class: "con-field" }, el("legend", {}, "Solo or Team?"), el("div", { class: "con-chips" }, kinds)),
   el("label", { class: "con-field" }, "Buyer's name (for a team: the company)", name),
-  el("fieldset", { class: "con-field con-devices" }, devicesLegend, el("div", { class: "con-chips" }, choices), other),
+  el("fieldset", { class: "con-field con-devices" }, devicesLegend, el("div", { class: "con-chips" }, choices), other, tierHint),
   el("label", { class: "con-field" }, "How much did they pay?", el("span", { class: "con-money" }, el("span", { "aria-hidden": "true" }, "$"), amount)),
   el("p", { class: "con-note" }, "The link works on the first phones that open it, up to this number. Any other phone is blocked and told to contact you. A team also gets a boss link for the boss's phone."),
   error, submit);
@@ -282,39 +288,85 @@ function phoneList(b, list, refresh, { boss = false } = {}) {
 }
 
 /**
- * Marlon Pro for one company: on/off and its discount %. Price: $25 per rep per month (a solo business counts as
- * 1 rep), minus the discount. Pro features show only on the phones (and boss dashboard) of companies with Pro on.
+ * Marlon Pro for one company. Switching it on first asks how many reps they have; the automatic team discount for that
+ * number (the same table as plain Marlon, js/pricing.js) is applied, then any special deal % on top. The monthly total
+ * is shown step by step and changes as soon as the number of reps (or the special deal) changes.
  */
 function proBox(b, refresh) {
-  const reps = b.kind === "team" ? b.devices : 1;
-  const gross = reps * 2500;
-  const discount = el("input", { type: "number", class: "con-pro-discount", inputmode: "decimal", min: "0", max: "100", step: "0.5", value: String(b.discountPct || 0), "aria-label": `Discount % for ${b.name}` });
+  const reps = el("input", { type: "number", class: "con-pro-reps", inputmode: "numeric", min: "1", max: String(MAX_REPS), step: "1", value: String(b.proReps || (b.kind === "team" ? b.devices : 1)), "aria-label": `Number of reps for ${b.name}` });
+  const discount = el("input", { type: "number", class: "con-pro-discount", inputmode: "decimal", min: "0", max: "100", step: "0.5", value: String(b.discountPct || 0), "aria-label": `Special deal % for ${b.name}` });
+  const breakdown = el("ul", { class: "con-pro-lines num", "aria-live": "polite" });
   const price = el("p", { class: "con-pro-price num" });
-  const showPrice = () => {
-    const pct = Math.min(100, Math.max(0, Number(discount.value) || 0));
-    const net = Math.round(gross * (1 - pct / 100));
-    price.textContent = `${reps} rep${reps === 1 ? "" : "s"} × $25.00 = ${money(gross)}${pct ? ` − ${pct}% = ${money(net)}` : ""} a month`;
+  const save = el("button", { type: "button", class: "btn btn-primary con-pro-save", hidden: true }, "Save changes");
+  const readReps = () => cleanReps(reps.value);
+  const readDeal = () => { const v = Number(discount.value || 0); return Number.isFinite(v) && v >= 0 && v <= 100 ? v : null; };
+  const lines = (pp) => [
+    [`${pp.reps} rep${pp.reps === 1 ? "" : "s"} × $25.00`, money(pp.grossCents)],
+    [pp.tierPct ? `Team discount ${pp.tierPct}% (${pp.tierLabel})` : `Team discount: none for ${pp.tierLabel}`, pp.tierPct ? `−${money(pp.tierCents)}` : money(0)],
+    ...(pp.extraPct ? [[`Special deal ${pp.extraPct}% (on top)`, `−${money(pp.extraCents)}`]] : []),
+  ];
+  const summary = (pp) => `${lines(pp).map(([a, v]) => `${a}: ${v}`).join("\n")}\nMonthly total: ${money(pp.netCents)}`;
+  const show = () => {
+    const r = readReps(), d = readDeal();
+    if (r === null || d === null) {
+      breakdown.replaceChildren();
+      price.textContent = r === null ? "Type how many reps they have (1 or more)." : "The special deal must be between 0 and 100 %.";
+      save.disabled = true;
+      return;
+    }
+    const pp = proPrice(r, d);
+    breakdown.replaceChildren(...lines(pp).map(([a, v]) => el("li", {}, el("span", {}, a), el("span", {}, v))));
+    price.replaceChildren(el("span", {}, "Monthly total"), el("strong", {}, money(pp.netCents)));
+    save.disabled = false;
+    save.hidden = !b.pro || (r === (b.proReps || 0) && d === (b.discountPct || 0));
   };
-  discount.addEventListener("input", showPrice);
-  showPrice();
-  const save = async (pro) => {
-    const pct = Number(discount.value);
-    if (!Number.isFinite(pct) || pct < 0 || pct > 100) { alert("The discount must be between 0 and 100 %."); return; }
-    if (pro && !b.pro && !confirm(`Switch Marlon Pro on for ${b.name}?\n\n${price.textContent}.\n\nTheir phones${b.kind === "team" ? " and boss dashboard" : ""} show the Pro features the next time they're online.`)) return;
-    if (!pro && b.pro && !confirm(`Switch Marlon Pro off for ${b.name}?\n\nThe Pro features disappear from their phones the next time they're online. Their invoices, returns and credit notes are kept.`)) return;
-    const r = await api("/api/console/pro", { method: "POST", auth: true, body: { id: b.id, pro, discountPct: pct } }).catch(() => ({ ok: false, data: {} }));
-    if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
+  reps.addEventListener("input", show);
+  discount.addEventListener("input", show);
+  const send = async (body) => {
+    const r = await api("/api/console/pro", { method: "POST", auth: true, body: { id: b.id, ...body } }).catch(() => ({ ok: false, data: {} }));
+    if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return false; }
     refresh();
+    return true;
   };
+  const switchOn = async () => {
+    const d = readDeal();
+    if (d === null) { alert("The special deal must be between 0 and 100 %."); return; }
+    const answer = prompt(`How many reps does ${b.name} have?`, String(b.proReps || (b.kind === "team" ? b.devices : 1)));
+    if (answer === null) return;
+    const r = cleanReps(answer.trim());
+    if (r === null) { alert("Type how many reps they have: a whole number, 1 or more."); return; }
+    reps.value = String(r);
+    show();
+    const pp = proPrice(r, d);
+    if (!confirm(`Switch Marlon Pro on for ${b.name}?\n\n${summary(pp)}\n\nTheir phones${b.kind === "team" ? " and boss dashboard" : ""} show the Pro features the next time they're online.`)) return;
+    await send({ pro: true, reps: r, discountPct: d });
+  };
+  const switchOff = async () => {
+    if (!confirm(`Switch Marlon Pro off for ${b.name}?\n\nThe Pro features disappear from their phones the next time they're online. Their invoices, returns and credit notes are kept.`)) return;
+    await send({ pro: false, discountPct: readDeal() ?? 0 });
+  };
+  save.addEventListener("click", async () => { const r = readReps(), d = readDeal(); if (r !== null && d !== null) await send({ pro: true, reps: r, discountPct: d }); });
+  show();
   return el("div", { class: b.pro ? "con-pro is-on" : "con-pro", "data-pro": b.pro ? "on" : "off" },
     el("div", { class: "con-pro-head" },
       el("strong", {}, "Marlon Pro"),
       el("span", { class: b.pro ? "con-badge con-badge-pro" : "con-badge con-badge-off" }, b.pro ? `On since ${dateText(b.proSince)}` : "Off")),
-    el("label", { class: "con-field con-pro-field" }, "Discount %", discount),
-    price,
+    el("div", { class: "con-pro-fields" },
+      b.pro ? el("label", { class: "con-field con-pro-field" }, "Reps", reps) : null,
+      el("label", { class: "con-field con-pro-field" }, el("span", {}, "Special deal % ", el("small", {}, "(optional, on top)")), discount)),
+    b.pro ? breakdown : el("p", { class: "con-note" }, "Switching Pro on asks how many reps they have, then applies the team discount for that number automatically."),
+    b.pro ? price : null,
     el("div", { class: "con-actions" },
-      el("button", { type: "button", class: b.pro ? "btn btn-ghost con-danger con-pro-toggle" : "btn btn-primary con-pro-toggle", onclick: () => save(!b.pro) }, b.pro ? "Switch Pro off" : "Switch Pro on"),
-      b.pro ? el("button", { type: "button", class: "btn con-pro-save", onclick: () => save(true) }, "Save discount") : null));
+      el("button", { type: "button", class: b.pro ? "btn btn-ghost con-danger con-pro-toggle" : "btn btn-primary con-pro-toggle", onclick: () => (b.pro ? switchOff() : switchOn()) }, b.pro ? "Switch Pro off" : "Switch Pro on"),
+      save));
+}
+
+/** The automatic team discounts (plain Marlon and Marlon Pro use the same table). */
+function tiersCard(tiers) {
+  return el("section", { class: "card con-card con-tiers", "aria-labelledby": "con-h-tiers" },
+    el("h2", { id: "con-h-tiers" }, "Team discounts"),
+    el("p", { class: "con-note" }, "Applied automatically by number of reps, for plain Marlon and Marlon Pro. A special deal % is applied on top."),
+    el("table", { class: "con-tier-table" }, el("tbody", {}, (tiers || TIER_LABELS).map((t) => el("tr", {}, el("td", {}, t.label), el("td", { class: "num" }, t.pct ? `${t.pct}% off` : "No discount"))))));
 }
 
 function buyerCard(b, refresh) {
@@ -403,6 +455,7 @@ function buyersSection(data, refresh) {
     el("section", { class: "con-buyers", "aria-labelledby": "con-h-buyers" },
       el("h2", { id: "con-h-buyers" }, "Buyers"),
       data.buyers.length ? data.buyers.map((b) => buyerCard(b, () => refresh())) : el("p", { class: "con-note" }, "No buyers yet. Create a link above for each person who buys Marlon.")),
+    tiersCard(data.teamTiers),
     contactForm(data.contact, () => refresh()),
     el("p", { class: "con-note con-terms" }, el("a", { href: "/terms", target: "_blank", rel: "noopener" }, "Marlon terms and conditions (with the Marlon Pro section)")),
   ];

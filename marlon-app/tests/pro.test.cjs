@@ -1,8 +1,9 @@
 /**
  * Marlon Pro, end to end, with the real Worker (wrangler dev, local SQLite), the real app at iPhone size and a stand-in
  * for Google's Gemini API (so nothing leaves this machine):
- *   - the maker's console: Pro on/off and a discount % per company; $25 per rep per month (solo = 1 rep), minus the
- *     discount; "Pro each month"; a company without Pro sees no Pro features and the server refuses Pro requests;
+ *   - the maker's console: switching Pro on asks how many reps; $25 per rep per month minus the automatic team discount
+ *     for that many reps (one table with plain Marlon), minus a special deal % on top; the total updates as the reps
+ *     change; "Pro each month"; a company without Pro sees no Pro features and the server refuses Pro requests;
  *   - Return → credit note: products, quantities, reasons, the store signs, CN-0001…; PDF; the credit comes off the
  *     store's next invoice automatically (capped at the invoice, the rest carries over); every receipt, QR page and
  *     signing link shows it; a signed invoice keeps its credit; deleting an invoice gives the credit back; offline;
@@ -150,14 +151,26 @@ async function shelfJpeg(page) {
     // ── Console: Pro on/off and the discount ──────────────────────────────────────────────────────────────────
     let list = await buyers();
     check(list.buyers.every((b) => b.pro === false) && list.proMonthlyCents === 0, "a new company starts without Pro");
-    const bad = await post("/api/console/pro", { id: solo.buyer.id, pro: true, discountPct: 150 }, token);
-    check(bad.status === 400, "a discount over 100 % is refused", `HTTP ${bad.status}`);
-    const noAuth = await post("/api/console/pro", { id: solo.buyer.id, pro: true, discountPct: 0 });
+    // One table of team discounts for plain Marlon and Marlon Pro.
+    const pricing = await import(path.join(APP, "public", "js", "pricing.js"));
+    const edges = [[1, 0], [4, 0], [5, 10], [9, 10], [10, 15], [24, 15], [25, 20], [49, 20], [50, 25], [99, 25], [100, 30], [101, 30], [5000, 30]];
+    check(edges.every(([n, pct]) => pricing.tierFor(n).pct === pct), "team discount tiers: 1–4 reps 0%, 5–9 10%, 10–24 15%, 25–49 20%, 50–99 25%, 100+ 30% (every edge checked)",
+      edges.map(([n]) => `${n}:${pricing.tierFor(n).pct}%`).join(" "));
+    const p7 = pricing.proPrice(7, 5);
+    check(p7.grossCents === 17500 && p7.tierCents === 1750 && p7.extraCents === 788 && p7.netCents === 14962 && pricing.proPrice(100, 100).netCents === 0,
+      "a special deal comes off after the team discount (7 reps: $175.00 − 10% = $157.50 − 5% = $149.62), so the two never pass 100%");
+    const bad = await post("/api/console/pro", { id: solo.buyer.id, pro: true, reps: 1, discountPct: 150 }, token);
+    check(bad.status === 400, "a special deal over 100 % is refused", `HTTP ${bad.status}`);
+    const noReps = await post("/api/console/pro", { id: solo.buyer.id, pro: true, discountPct: 0 }, token);
+    check(noReps.status === 400 && /how many reps/.test((await noReps.json()).error), "Pro can't be switched on without saying how many reps", `HTTP ${noReps.status}`);
+    const badReps = await post("/api/console/pro", { id: solo.buyer.id, pro: true, reps: 2.5, discountPct: 0 }, token);
+    check(badReps.status === 400, "the number of reps must be a whole number, 1 or more", `HTTP ${badReps.status}`);
+    const noAuth = await post("/api/console/pro", { id: solo.buyer.id, pro: true, reps: 1, discountPct: 0 });
     check(noAuth.status === 401, "only the maker's console can switch Pro on", `HTTP ${noAuth.status}`);
-    const sp = await (await post("/api/console/pro", { id: solo.buyer.id, pro: true, discountPct: 10 }, token)).json();
-    const tp = await (await post("/api/console/pro", { id: team.buyer.id, pro: true, discountPct: 0 }, token)).json();
-    check(sp.buyer.pro && sp.buyer.discountPct === 10 && sp.buyer.proMonthlyCents === 2250 && tp.buyer.proMonthlyCents === 7500,
-      "price: $25 per rep per month minus the company's discount (solo with 10 % = $22.50; a 3-rep team = $75.00)", `${sp.buyer.proMonthlyCents} / ${tp.buyer.proMonthlyCents}`);
+    const sp = await (await post("/api/console/pro", { id: solo.buyer.id, pro: true, reps: 1, discountPct: 10 }, token)).json();
+    const tp = await (await post("/api/console/pro", { id: team.buyer.id, pro: true, reps: 3, discountPct: 0 }, token)).json();
+    check(sp.buyer.pro && sp.buyer.discountPct === 10 && sp.buyer.proMonthlyCents === 2250 && tp.buyer.proMonthlyCents === 7500 && tp.buyer.proTierPct === 0,
+      "price: solo (1 rep) with a 10% special deal = $22.50; a 3-rep team (no team discount under 5 reps) = $75.00", `${sp.buyer.proMonthlyCents} / ${tp.buyer.proMonthlyCents}`);
     list = await buyers();
     check(list.proMonthlyCents === 9750, "'Pro each month' adds up every company with Pro on ($97.50)", String(list.proMonthlyCents));
 
@@ -167,13 +180,45 @@ async function shelfJpeg(page) {
     await con.evaluate((t) => sessionStorage.setItem("marlon.console", t), token);
     await con.reload();
     await con.waitForSelector(".con-pro");
-    const plainCard = con.locator(".con-buyer", { hasText: "No Pro Shop" });
-    check(await plainCard.locator('.con-pro[data-pro="off"]').count() === 1 && /1 rep × \$25\.00 = \$25\.00 a month/.test(await plainCard.locator(".con-pro-price").textContent()),
-      "the console shows each company's Pro switch and price", await plainCard.locator(".con-pro-price").textContent());
-    await plainCard.locator(".con-pro-discount").fill("20");
-    check(/\$25\.00 − 20% = \$20\.00 a month/.test(await plainCard.locator(".con-pro-price").textContent()), "typing a discount shows the price after the discount straight away");
-    await plainCard.locator(".con-pro-discount").fill("0");
     check(/Pro each month/.test(await con.locator(".con-tiles").nth(1).textContent()) && /\$97\.50/.test(await con.locator(".con-tiles").nth(1).textContent()), "the console shows 'Pro each month' ($97.50)");
+    const tierRows = await con.locator(".con-tier-table tr").allTextContents();
+    check(tierRows.length === 6 && /1–4 reps\s*No discount/.test(tierRows[0]) && /100\+ reps\s*30% off/.test(tierRows[5]), "the console shows the team discount table (used by Marlon and Marlon Pro)", tierRows.join(" | "));
+    // Switch Pro on for a company: it asks how many reps, applies their team discount and shows the total.
+    const plainCard = con.locator(".con-buyer", { hasText: "No Pro Shop" });
+    check(await plainCard.locator('.con-pro[data-pro="off"]').count() === 1 && /asks how many reps/.test(await plainCard.locator(".con-pro").textContent()), "a company without Pro shows 'Switch Pro on'");
+    const asked = [];
+    const onDialog = async (d) => { asked.push(`${d.type()}: ${d.message()}`); if (d.type() === "prompt") await d.accept("7"); else await d.accept(); };
+    con.on("dialog", onDialog);
+    await plainCard.locator(".con-pro-toggle").click();
+    await con.waitForSelector('.con-buyer:has-text("No Pro Shop") .con-pro[data-pro="on"]');
+    con.off("dialog", onDialog);
+    const card7 = con.locator(".con-buyer", { hasText: "No Pro Shop" });
+    const lines7 = (await card7.locator(".con-pro-lines").textContent()).replace(/\s+/g, " ");
+    check(/^prompt: How many reps does No Pro Shop have\?/.test(asked[0] || "") && /Team discount 10% \(5–9 reps\): −\$17\.50/.test(asked[1] || "") && /Monthly total: \$157\.50/.test(asked[1] || ""),
+      "Switch Pro on first asks how many reps, then shows the discounted monthly total before confirming", asked.map((x) => x.split("\n")[0]).join(" | "));
+    check(/7 reps × \$25\.00 ?\$175\.00/.test(lines7), "the card shows 7 reps × $25.00 = $175.00", lines7);
+    check(/Team discount 10% \(5–9 reps\)/.test(lines7) && /\$157\.50/.test(await card7.locator(".con-pro-price").textContent()), "…the automatic 10% team discount for 5–9 reps, and the monthly total $157.50");
+    await card7.locator(".con-pro-reps").fill("25");
+    check(/Team discount 20% \(25–49 reps\)/.test(await card7.locator(".con-pro-lines").textContent()) && /\$500\.00/.test(await card7.locator(".con-pro-price").textContent()) && await card7.locator(".con-pro-save").isVisible(),
+      "changing the reps to 25 updates the discount (20%) and the total ($625.00 → $500.00) straight away", await card7.locator(".con-pro-price").textContent());
+    await card7.locator(".con-pro-discount").fill("10");
+    check(/Special deal 10% \(on top\)/.test(await card7.locator(".con-pro-lines").textContent()) && /\$450\.00/.test(await card7.locator(".con-pro-price").textContent()),
+      "a special deal % comes off on top of the team discount ($500.00 − 10% = $450.00)");
+    await card7.locator(".con-pro-save").click();
+    await con.waitForFunction(() => /\$450\.00/.test(document.querySelector('.con-buyer[data-id] .con-pro.is-on .con-pro-price')?.textContent || "") || [...document.querySelectorAll(".con-buyer")].some((c) => /No Pro Shop/.test(c.textContent) && /\$450\.00/.test(c.querySelector(".con-pro-price")?.textContent || "")), null, { timeout: 5000 });
+    const saved25 = (await buyers()).buyers.find((b) => b.name === "No Pro Shop");
+    check(saved25.proReps === 25 && saved25.proTierPct === 20 && saved25.discountPct === 10 && saved25.proMonthlyCents === 45000, "saved: 25 reps, 20% team discount, 10% special deal, $450.00 a month", JSON.stringify({ r: saved25.proReps, t: saved25.proTierPct, d: saved25.discountPct, c: saved25.proMonthlyCents }));
+    await con.waitForTimeout(600); // the console redraws after saving
+    await con.locator(".con-buyer", { hasText: "No Pro Shop" }).first().scrollIntoViewIfNeeded();
+    await con.screenshot({ path: path.join(OUT, "pro-1b-console-tiers.png") });
+    // Plain Marlon uses the same table: the new-team form shows the discount for that many reps.
+    await con.locator(".con-kind", { hasText: "Team" }).click();
+    await con.locator(".con-chips label", { hasText: "Another number" }).click();
+    await con.fill("#con-devices-other", "12");
+    check(/Team discount for 12 reps: 15% \(10–24 reps\)/.test(await con.textContent(".con-tier-hint")), "plain Marlon's new-team form shows the same team discount for that number of reps");
+    await post("/api/console/pro", { id: plain.buyer.id, pro: false, discountPct: 0 }, token);
+    await con.reload();
+    await con.waitForSelector(".con-pro");
     await con.locator(".con-buyer", { hasText: "Island Fresh Distributors" }).scrollIntoViewIfNeeded();
     await con.screenshot({ path: path.join(OUT, "pro-1-console.png") });
 
@@ -400,8 +445,8 @@ async function shelfJpeg(page) {
     const T = await (await browser.newContext({ ...PHONE })).newPage();
     await T.goto(`${BASE}/terms`);
     const terms = (await T.textContent("#marlon-pro")).replace(/\s+/g, " ");
-    check(/\$25 \(US dollars\) per rep, per month/.test(terms) && /same percentage discount/.test(terms) && /billed monthly, in advance, for every rep place/.test(terms) && /cancel Marlon Pro at any time/.test(terms),
-      "the Terms page has a Marlon Pro section: price, per-rep monthly billing and cancellation");
+    check(/\$25 \(US dollars\) per rep, per month/.test(terms) && /same automatic team discount as regular Marlon/.test(terms) && /5–9 reps ?10% off/.test(terms) && /100\+ reps ?30% off/.test(terms) && /special deal .* on top of the team discount/.test(terms) && /billed monthly, in advance, for every rep place/.test(terms) && /cancel Marlon Pro at any time/.test(terms),
+      "the Terms page has a Marlon Pro section: price with the team discount table, per-rep monthly billing and cancellation");
     await T.screenshot({ path: path.join(OUT, "pro-9-terms.png"), fullPage: true });
 
     check(errors.length === 0, "no page errors anywhere", errors.join(" | "));

@@ -24,8 +24,9 @@
  *   POST /api/console/device-off (Bearer) { id, device, off } switch one phone off / on again (frees / takes a place)
  *   POST /api/console/contact    (Bearer) { contact }
  *
- * Marlon Pro (switched on per company in the console; $25 per rep per month, minus that company's discount %):
- *   POST /api/console/pro        (Bearer) { id, pro, discountPct }   Pro on/off and the discount for one company
+ * Marlon Pro (switched on per company in the console): $25 per rep per month, minus the automatic team discount for
+ * that many reps (public/js/pricing.js, the same table as plain Marlon), minus any special deal % on top:
+ *   POST /api/console/pro        (Bearer) { id, pro, reps, discountPct }   Pro on/off, the company's reps, the special deal
  *   /api/activate and /api/check also answer { pro } so phones show Pro features (remembered for offline)
  *   POST /api/team/sync          also takes { credits: [...] }: a rep's credit notes (returns) go to the boss too
  *   POST /api/pro/shelf          { key, device, image, mime, products } → { found: [{ name, count }] } (Gemini free tier)
@@ -36,13 +37,12 @@ import { FILES, RULES } from "./assets.generated.js";
 import { withTotals, normalizeUnit } from "../public/js/util.js";
 import { newVapidKeys, pushEndpointOk, sendPush } from "./webpush.js";
 import { shelfCount } from "./shelf.js";
+import { PRO_REP_CENTS, TIER_LABELS, cleanReps, proPrice } from "../public/js/pricing.js";
 
-// Marlon Pro: the price per rep per month (whole cents) and the free-tier guard for shelf photos.
-const PRO_REP_CENTS = 2500;
+// Marlon Pro: the free-tier guard for shelf photos (the price lives in public/js/pricing.js).
 const SHELF_DAILY_LIMIT = 100; // photos per company per day (keeps one company from using up the shared free quota)
 const SHELF_MAX_PRODUCTS = 120;
-/** A company's Pro price per month in whole cents: reps × $25, minus its discount % (rounded to the cent). Solo = 1 rep. */
-const proMonthlyCents = (reps, discountPct) => Math.round(Math.max(1, reps) * PRO_REP_CENTS * (1 - Math.min(100, Math.max(0, discountPct || 0)) / 100));
+
 
 const KINDS = ["open", "setup", "invoice", "voice", "print", "pdf", "picture"];
 const BOSS_PLACES = 2; // boss phones per team (on iPhone, the browser and the Home Screen icon count as two)
@@ -208,6 +208,7 @@ export class Stats extends DurableObject {
     addColumn("buyers", "pro", "INTEGER NOT NULL DEFAULT 0");
     addColumn("buyers", "discount_pct", "REAL NOT NULL DEFAULT 0");
     addColumn("buyers", "pro_since", "TEXT");
+    addColumn("buyers", "pro_reps", "INTEGER"); // how many reps Pro is billed for (asked when Pro is switched on)
     this.sql.exec(`CREATE TABLE IF NOT EXISTS team_credits (buyer TEXT NOT NULL, device TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
       updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS shelf_daily (buyer TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (buyer, day))`);
@@ -471,16 +472,20 @@ export class Stats extends DurableObject {
     return { id: b.id, name: b.name, kind: b.kind || "solo", devices: b.devices, amountCents: b.amount_cents, created: b.created, off: Boolean(b.off),
       phones: devices, active: devices.filter((d) => !d.off).length, bossKey: b.boss_key || null, bossPhones: bosses, bossPlaces: BOSS_PLACES, slots,
       invoices: b.kind === "team" ? this.sql.exec("SELECT COUNT(*) AS n FROM team_invoices WHERE buyer = ?", id).toArray()[0].n : 0,
-      pro: Boolean(b.pro), discountPct: Number(b.discount_pct) || 0, proSince: b.pro_since || null,
-      proMonthlyCents: proMonthlyCents(b.kind === "team" ? b.devices : 1, Number(b.discount_pct) || 0) };
+      ...(() => {
+        // Companies on Pro before reps were asked: their rep places (a solo business: 1 rep), so their price is unchanged.
+        const reps = cleanReps(b.pro_reps) || (b.kind === "team" ? b.devices : 1);
+        const price = proPrice(reps, Number(b.discount_pct) || 0);
+        return { pro: Boolean(b.pro), discountPct: price.extraPct, proSince: b.pro_since || null, proReps: reps, proRepsSaved: cleanReps(b.pro_reps) !== null, proTierPct: price.tierPct, proTierLabel: price.tierLabel, proPrice: price, proMonthlyCents: price.netCents };
+      })() };
   }
 
   /** Marlon Pro on or off for one company, and its discount (0–100 %). */
-  setPro(id, pro, discountPct) {
+  setPro(id, pro, discountPct, reps = null) {
     const b = this.#buyer(id);
     if (!b) return null;
     const since = pro ? (b.pro ? b.proSince : new Date().toISOString()) : null;
-    this.sql.exec("UPDATE buyers SET pro = ?, discount_pct = ?, pro_since = ? WHERE id = ?", pro ? 1 : 0, discountPct, since, id);
+    this.sql.exec("UPDATE buyers SET pro = ?, discount_pct = ?, pro_since = ?, pro_reps = COALESCE(?, pro_reps) WHERE id = ?", pro ? 1 : 0, discountPct, since, reps, id);
     return this.#buyer(id);
   }
 
@@ -501,7 +506,7 @@ export class Stats extends DurableObject {
     const list = this.sql.exec("SELECT id FROM buyers ORDER BY created DESC").toArray().map((r) => this.#buyer(r.id));
     const totalCents = this.sql.exec("SELECT COALESCE(SUM(amount_cents), 0) AS t FROM buyers").toArray()[0].t;
     const proMonthly = list.filter((b) => b.pro && !b.off).reduce((t, b) => t + b.proMonthlyCents, 0);
-    return { buyers: list, totalCents, proMonthlyCents: proMonthly, proRepCents: PRO_REP_CENTS, contact: this.contact() };
+    return { buyers: list, totalCents, proMonthlyCents: proMonthly, proRepCents: PRO_REP_CENTS, teamTiers: TIER_LABELS, contact: this.contact() };
   }
 
   /** Deletes a buyer or team completely: its phones, rep links, boss phones, passcode, sessions and team invoices. */
@@ -1072,8 +1077,13 @@ async function api(request, env, path) {
     const id = hex32(body.id);
     const pct = typeof body.discountPct === "number" ? body.discountPct : Number(String(body.discountPct ?? "0").replace(/[%\s]/g, "") || 0);
     if (!id) return json({ error: "bad request" }, 400);
-    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return json({ error: "The discount must be between 0 and 100 %." }, 400);
-    const buyer = await stub.setPro(id, Boolean(body.pro), Math.round(pct * 100) / 100);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return json({ error: "The special deal must be between 0 and 100 %." }, 400);
+    const reps = body.reps === undefined || body.reps === null ? null : cleanReps(body.reps);
+    if (body.reps !== undefined && body.reps !== null && reps === null) return json({ error: "Type how many reps they have (a whole number, 1 or more)." }, 400);
+    const cur = (await stub.buyers()).buyers.find((x) => x.id === id);
+    if (!cur) return json({ error: "not found" }, 404);
+    if (body.pro && reps === null && !cur.pro && !cur.proRepsSaved) return json({ error: "Say how many reps they have before switching Pro on." }, 400);
+    const buyer = await stub.setPro(id, Boolean(body.pro), Math.round(pct * 100) / 100, reps);
     return buyer ? json({ buyer }) : json({ error: "not found" }, 404);
   }
   if (path === "/api/console/contact" && request.method === "POST") {

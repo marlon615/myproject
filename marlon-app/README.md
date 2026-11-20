@@ -104,10 +104,13 @@ in the same Durable Object; solo businesses still send nothing.
 
 Same app, no separate version: Pro features appear only for companies with **Pro switched on** in the maker's console.
 
-- **Price:** $25 per rep per month (a solo business counts as 1 rep), minus that company's **discount %** (typed per
-  company in the console). Each company's card in the console has a **Marlon Pro** box (switch on/off, discount, the
-  monthly price worked out), and a **Pro each month** tile adds up every company with Pro on. Marlon takes no payment
-  itself: the maker collects it, as with regular Marlon.
+- **Price:** $25 per rep per month, minus the **automatic team discount** for that many reps, minus any **special
+  deal %** on top (applied to the price after the team discount). One table, `public/js/pricing.js`, is used by plain
+  Marlon and Marlon Pro (console, Worker and tests): 1–4 reps 0%, 5–9 10%, 10–24 15%, 25–49 20%, 50–99 25%, 100+ 30%.
+  **Switch Pro on** asks how many reps the company has; its card then shows the reps (editable), the team discount, the
+  special deal and the monthly total, which changes as soon as the reps change. A **Pro each month** tile adds up every
+  company with Pro on, and a **Team discounts** card shows the table. Marlon takes no payment itself: the maker
+  collects it, as with regular Marlon.
 - **How phones know:** `/api/activate` and `/api/check` answer `{ pro }`; the phone remembers it, so Pro works offline,
   and a change reaches the phone the next time it's online. Pro-only server requests (shelf photo) are refused for
   companies without Pro, and the boss dashboard shows its Pro sections only for Pro companies.

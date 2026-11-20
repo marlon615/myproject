@@ -88,7 +88,17 @@
     .con-pro.is-on { border-color: #2f7a52; background: #eef7f1; }
     .con-pro-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .con-pro-field { max-width: 160px; }
-    .con-pro-price { margin: 0; font-weight: 700; }
+    .con-pro-fields { display: flex; gap: 10px; flex-wrap: wrap; }
+    .con-pro-fields small { font-weight: 500; color: var(--muted); }
+    .con-pro-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: .92rem; color: var(--ink-2); }
+    .con-pro-lines li, .con-pro-price { display: flex; justify-content: space-between; gap: 12px; }
+    .con-pro-lines li span:last-child, .con-pro-price strong { flex: none; white-space: nowrap; }
+    .con-pro-price { margin: 0; padding-top: 6px; border-top: 1px solid var(--line); font-weight: 700; }
+    .con-pro-price strong { font-family: var(--font-display); font-size: 1.35rem; color: #17633f; }
+    .con-tier-table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+    .con-tier-table td { padding: 7px 4px; border-bottom: 1px solid var(--line); }
+    .con-tier-table td:last-child { text-align: right; font-weight: 650; }
+    .con-tier-hint { margin: 6px 0 0; color: #17633f; font-weight: 650; }
     .con-sub { margin: 4px 0 0; font-size: .82rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
     .con-created h3 { margin: 6px 0 0; font-size: .95rem; }
     .con-replinks { display: grid; gap: 10px; }

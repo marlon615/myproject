@@ -27,6 +27,9 @@
     .terms ul { padding-left: 20px; margin: 6px 0; }
     .terms .price { margin: 10px 0; padding: 14px 16px; border-radius: var(--radius-sm); background: var(--brand-soft); color: var(--ink); font-weight: 650; }
     .terms .price strong { font-family: var(--font-display); font-size: 1.6rem; color: var(--brand); }
+    .terms .tiers { width: 100%; max-width: 340px; margin: 8px 0 4px; border-collapse: collapse; font-size: 15px; }
+    .terms .tiers td { padding: 6px 4px; border-bottom: 1px solid var(--line); color: var(--ink); }
+    .terms .tiers td:last-child { text-align: right; font-weight: 650; }
     .terms .contact { margin-top: 22px; font-size: 14.5px; color: var(--muted); text-align: center; }
   </style>
 </head>
@@ -44,7 +47,17 @@
       <p class="price"><strong>$25</strong> (US dollars) per rep, per month</p>
       <ul>
         <li>A solo business (one business on its own phone, without reps) counts as one rep.</li>
-        <li>If you have a percentage discount on regular Marlon, the same percentage discount applies to Marlon Pro.</li>
+        <li>Teams get the same automatic team discount as regular Marlon, by number of reps:
+          <table class="tiers"><tbody>
+            <tr><td>1–4 reps</td><td>No discount</td></tr>
+            <tr><td>5–9 reps</td><td>10% off</td></tr>
+            <tr><td>10–24 reps</td><td>15% off</td></tr>
+            <tr><td>25–49 reps</td><td>20% off</td></tr>
+            <tr><td>50–99 reps</td><td>25% off</td></tr>
+            <tr><td>100+ reps</td><td>30% off</td></tr>
+          </tbody></table>
+        </li>
+        <li>A special deal agreed with you is applied on top of the team discount (to the price after the team discount).</li>
         <li>Your monthly Pro price, with any discount, is confirmed to you before Pro is switched on for your company.</li>
       </ul>
 
