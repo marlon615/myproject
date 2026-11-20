@@ -160,8 +160,46 @@ export function withTotals(inv) {
     price: parseAmount(it.price),
     total: lineTotal(it.qty, it.price),
   }));
-  return { ...inv, items, total: sumTotals(items) };
+  const subtotal = sumTotals(items);
+  // Marlon Pro: a credit from credit notes (returned goods) comes off the items' subtotal, never below zero.
+  const credit = cleanCreditOn(inv.credit, subtotal);
+  if (!credit) { const out = { ...inv, items, total: subtotal }; delete out.credit; delete out.subtotal; return out; }
+  return { ...inv, items, subtotal, credit, total: (toCents(subtotal) - toCents(credit.amount)) / 100 };
 }
+
+/** { amount, notes: [{ id, number, amount }] } capped at the subtotal, or null when there's no credit. */
+export function cleanCreditOn(raw, subtotal) {
+  if (!raw || typeof raw !== "object") return null;
+  const notes = (Array.isArray(raw.notes) ? raw.notes : []).map((n) => ({ id: String(n?.id ?? ""), number: Number(n?.number) || null, amount: Math.max(0, toCents(n?.amount) / 100) }))
+    .filter((n) => n.amount > 0);
+  const cents = Math.min(notes.reduce((t, n) => t + toCents(n.amount), 0), toCents(subtotal));
+  return cents > 0 ? { amount: cents / 100, notes } : null;
+}
+
+/**
+ * The one rule for how credit comes off an invoice: credit notes in the order given (oldest first), each up to what's
+ * left on it, never more than the subtotal. available: [{ id, number, left }] → { amount, notes } | null.
+ */
+export function allocateCredit(available, subtotal) {
+  let need = toCents(subtotal);
+  const notes = [];
+  for (const c of available || []) {
+    if (need <= 0) break;
+    const take = Math.min(toCents(c.left), need);
+    if (take <= 0) continue;
+    notes.push({ id: c.id, number: c.number, amount: take / 100 });
+    need -= take;
+  }
+  return notes.length ? { amount: notes.reduce((t, n) => t + toCents(n.amount), 0) / 100, notes } : null;
+}
+
+/** "CN-0007" — a credit note's number. */
+export const creditNo = (n) => `CN-${String(Math.max(0, Math.floor(Number(n) || 0))).padStart(4, "0")}`;
+/** "Credit note CN-0003" or "Credit notes CN-0003, CN-0004" — the line shown above the total. */
+export const creditLabel = (credit) => {
+  const nums = (credit?.notes || []).map((n) => creditNo(n.number)).filter((x) => x !== "CN-0000");
+  return nums.length > 1 ? `Credit notes ${nums.join(", ")}` : `Credit note${nums.length ? ` ${nums[0]}` : ""}`;
+};
 
 /** Items that are ticked but have no unit price yet. */
 export const itemsMissingPrice = (inv) => (inv.items || []).filter((it) => parseAmount(it.price) === null);

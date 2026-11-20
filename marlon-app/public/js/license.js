@@ -9,6 +9,9 @@
  * still switched on (the maker can switch off one phone or a whole buyer); a switched-off phone stays blocked,
  * even offline, until it's switched on again.
  *
+ * Marlon Pro: the server's answer also says whether the company has Pro ({ pro }). It's remembered on the phone, so
+ * Pro features keep working offline; when it changes (the maker switched Pro on or off) "license:pro" is dispatched.
+ *
  * Phones in the browser see an install page first (the personal link travels with the installed app):
  *   iPhone:  a home-screen app has its own storage, separate from Safari, so activating in Safari would use two
  *            places; the home-screen app activates (or "use it here" in Safari, which takes a place).
@@ -89,7 +92,7 @@ export async function ensureAccess(container) {
     if (saved.state === "off") return recheckOff(saved);
     cleanUrl();
     checkLater(saved); // when online: is this phone still switched on? (never holds up opening the app)
-    return { ok: true, team: Boolean(saved.team), company: saved.company || "", repName: saved.repName || "" };
+    return { ok: true, team: Boolean(saved.team), company: saved.company || "", repName: saved.repName || "", pro: Boolean(saved.pro) };
   }
   if (!urlKey) return show("nolink", await contactText());
   if (iosBrowser()) return showInstall(urlKey, "ios");
@@ -107,9 +110,9 @@ async function activate(key) {
     return show("offline", "", () => location.reload());
   }
   if (r.ok) {
-    await settings.set("license", { key, device, state: "on", team: Boolean(r.team), company: r.company || "", repName: r.repName || "", at: new Date().toISOString() });
+    await settings.set("license", { key, device, state: "on", team: Boolean(r.team), company: r.company || "", repName: r.repName || "", pro: Boolean(r.pro), at: new Date().toISOString() });
     cleanUrl();
-    return { ok: true, activated: true, team: Boolean(r.team), company: r.company || "", repName: r.repName || "" };
+    return { ok: true, activated: true, team: Boolean(r.team), company: r.company || "", repName: r.repName || "", pro: Boolean(r.pro) };
   }
   await settings.set("licenseContact", r.contact || "");
   return show(r.reason === "full" ? "full" : "off", r.contact || "");
@@ -120,9 +123,9 @@ async function recheckOff(saved) {
   try {
     const r = await call("/api/check", { key: saved.key, device: saved.device });
     if (r.ok) {
-      await settings.set("license", { ...saved, state: "on", team: Boolean(r.team) });
+      await settings.set("license", { ...saved, state: "on", team: Boolean(r.team), pro: Boolean(r.pro) });
       cleanUrl();
-      return { ok: true, team: Boolean(r.team) };
+      return { ok: true, team: Boolean(r.team), pro: Boolean(r.pro) };
     }
     await settings.set("licenseContact", r.contact || "");
   } catch { /* offline: stays blocked */ }
@@ -134,7 +137,12 @@ function checkLater(saved) {
     if (navigator.onLine === false) return;
     try {
       const r = await call("/api/check", { key: saved.key, device: saved.device });
-      if (r.ok) { if (Boolean(r.team) !== Boolean(saved.team)) await settings.set("license", { ...saved, team: Boolean(r.team) }); return; }
+      if (r.ok) {
+        const pro = Boolean(r.pro), proChanged = pro !== Boolean(saved.pro);
+        if (Boolean(r.team) !== Boolean(saved.team) || proChanged) { saved = { ...saved, team: Boolean(r.team), pro }; await settings.set("license", saved); }
+        if (proChanged) document.dispatchEvent(new CustomEvent("license:pro", { detail: { pro } }));
+        return;
+      }
       if (r.reason === undefined) return;
       await settings.set("license", { ...saved, state: "off" });
       await settings.set("licenseContact", r.contact || "");

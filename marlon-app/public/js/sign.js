@@ -6,7 +6,7 @@
  */
 import { SignaturePad } from "./signature.js";
 import { makeReceiptFile } from "./share.js";
-import { h, invoiceNo, money, prettyDate, qtyWithUnit, signedByText, tidy } from "./util.js";
+import { h, invoiceNo, money, prettyDate, qtyWithUnit, signedByText, tidy, creditLabel } from "./util.js";
 
 const root = document.getElementById("sg");
 const token = (location.pathname.match(/^\/s\/([0-9a-f]{64})$/) || [])[1] || "";
@@ -35,7 +35,10 @@ function invoiceView(inv) {
     h("table", { class: "sg-items" },
       h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Item"), h("th", { scope: "col", class: "n" }, "Qty"), h("th", { scope: "col", class: "n" }, "Price"), h("th", { scope: "col", class: "n" }, "Total"))),
       h("tbody", {}, ...inv.items.map((it) => h("tr", {}, h("td", {}, it.name), h("td", { class: "n" }, qtyWithUnit(it.qty, it.unit)), h("td", { class: "n" }, money(it.price)), h("td", { class: "n" }, money(it.total))))),
-      h("tfoot", {}, h("tr", {}, h("th", { scope: "row", colspan: "3" }, "Total"), h("td", { class: "n sg-total" }, money(inv.total))))));
+      h("tfoot", {},
+        ...(inv.credit ? [h("tr", {}, h("th", { scope: "row", colspan: "3" }, "Subtotal"), h("td", { class: "n" }, money(inv.subtotal))),
+          h("tr", { class: "sg-credit" }, h("th", { scope: "row", colspan: "3" }, creditLabel(inv.credit)), h("td", { class: "n" }, `-${money(inv.credit.amount)}`))] : []),
+        h("tr", {}, h("th", { scope: "row", colspan: "3" }, "Total"), h("td", { class: "n sg-total" }, money(inv.total))))));
 }
 
 /** The invoice as the receipt/PDF code expects it, with the signature and who signed when. */

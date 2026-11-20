@@ -53,3 +53,8 @@ html, body { background: #ebe8df; color: #1a1c19; color-scheme: light; }
   .sheet { box-shadow: none; border-radius: 0; padding: 0; }
   .view-actions { display: none; }
 }
+
+/* Marlon Pro: credit from credit notes (returned goods) taken off the invoice */
+.credit-lines { display: grid; gap: 4px; margin: 10px 0 0; padding-top: 10px; border-top: 1px dashed #cfc8b8; }
+.credit-line { display: flex; justify-content: space-between; gap: 12px; margin: 0; font-size: 15px; color: #454a43; }
+.credit-line:last-child { color: #17633f; font-weight: 700; }

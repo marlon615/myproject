@@ -100,6 +100,39 @@ In the console a team shows its boss phones and each rep phone by name. Switch o
 and can't send) or the whole company (the boss and every rep are blocked). Team invoices are kept on the server,
 in the same Durable Object; solo businesses still send nothing.
 
+## Marlon Pro
+
+Same app, no separate version: Pro features appear only for companies with **Pro switched on** in the maker's console.
+
+- **Price:** $25 per rep per month (a solo business counts as 1 rep), minus that company's **discount %** (typed per
+  company in the console). Each company's card in the console has a **Marlon Pro** box (switch on/off, discount, the
+  monthly price worked out), and a **Pro each month** tile adds up every company with Pro on. Marlon takes no payment
+  itself: the maker collects it, as with regular Marlon.
+- **How phones know:** `/api/activate` and `/api/check` answer `{ pro }`; the phone remembers it, so Pro works offline,
+  and a change reaches the phone the next time it's online. Pro-only server requests (shelf photo) are refused for
+  companies without Pro, and the boss dashboard shows its Pro sections only for Pro companies.
+- **Return → credit note** (rep's phone, offline too): store, each returned product with quantity and reason
+  (expired / damaged), the store signs, and a numbered credit note is created (CN-0001, CN-0002… per phone; the boss
+  sees which rep issued each). Share it as a PDF. Its amount comes off that store's **next invoice automatically**:
+  invoices dated on or after the credit note, oldest credit first, never more than the invoice (the rest carries over).
+  The invoice shows "Subtotal / Credit note CN-0001 −$X / Total" on screen, receipts, the PDF, the QR page (an optional
+  11th field in the link; invoices without a credit keep the old link) and Send-for-signature copies. A signed, paid or
+  sent-for-signature invoice keeps the credit it had; deleting an invoice gives its credit back. Credit notes go to the
+  boss with the team sync, and into backups.
+- **Shelf photo:** the rep photographs a shelf; Marlon shows which of the company's products are on it and how many.
+  The photo is shrunk on the phone (about 200 KB) and sent through `/api/pro/shelf` to Google's **Gemini API on the free
+  tier** (`GEMINI_API_KEY` secret on this Worker; no billing is set up). Names that aren't the company's products are
+  dropped. Offline, photos wait on the phone and are checked once online. Limit: 100 photos per company per day. If
+  Google's free daily limit is reached, the rep is told to try tomorrow; without a key, shelf photo says it isn't set up.
+  Cost: $0 within Google's free limit; Marlon never turns on paid use.
+- **Accountant summary** (boss dashboard; a solo business's own dashboard → Pro tab): by quarter (Jan–Mar …) and for the
+  year ending 31 December: invoices, gross sales, returns (credit notes), net sales, received, not yet paid. **Download
+  for accountant (CSV)** (summary + every invoice and credit-note line, with the rep) or **Print / Save as PDF**, with
+  the note that the accountant still checks it.
+- **Returns reports:** by store, by product (with expired / damaged) and, for teams, by rep, plus every credit note.
+- **Terms:** `/terms` has a Marlon Pro section (price, per-rep monthly billing, cancellation), linked from Settings,
+  the boss dashboard and the console.
+
 ## The maker's console
 
 **Buyers:**

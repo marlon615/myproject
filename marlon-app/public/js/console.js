@@ -281,6 +281,42 @@ function phoneList(b, list, refresh, { boss = false } = {}) {
     } }, d.off ? "Switch on" : "Switch off"))));
 }
 
+/**
+ * Marlon Pro for one company: on/off and its discount %. Price: $25 per rep per month (a solo business counts as
+ * 1 rep), minus the discount. Pro features show only on the phones (and boss dashboard) of companies with Pro on.
+ */
+function proBox(b, refresh) {
+  const reps = b.kind === "team" ? b.devices : 1;
+  const gross = reps * 2500;
+  const discount = el("input", { type: "number", class: "con-pro-discount", inputmode: "decimal", min: "0", max: "100", step: "0.5", value: String(b.discountPct || 0), "aria-label": `Discount % for ${b.name}` });
+  const price = el("p", { class: "con-pro-price num" });
+  const showPrice = () => {
+    const pct = Math.min(100, Math.max(0, Number(discount.value) || 0));
+    const net = Math.round(gross * (1 - pct / 100));
+    price.textContent = `${reps} rep${reps === 1 ? "" : "s"} × $25.00 = ${money(gross)}${pct ? ` − ${pct}% = ${money(net)}` : ""} a month`;
+  };
+  discount.addEventListener("input", showPrice);
+  showPrice();
+  const save = async (pro) => {
+    const pct = Number(discount.value);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) { alert("The discount must be between 0 and 100 %."); return; }
+    if (pro && !b.pro && !confirm(`Switch Marlon Pro on for ${b.name}?\n\n${price.textContent}.\n\nTheir phones${b.kind === "team" ? " and boss dashboard" : ""} show the Pro features the next time they're online.`)) return;
+    if (!pro && b.pro && !confirm(`Switch Marlon Pro off for ${b.name}?\n\nThe Pro features disappear from their phones the next time they're online. Their invoices, returns and credit notes are kept.`)) return;
+    const r = await api("/api/console/pro", { method: "POST", auth: true, body: { id: b.id, pro, discountPct: pct } }).catch(() => ({ ok: false, data: {} }));
+    if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
+    refresh();
+  };
+  return el("div", { class: b.pro ? "con-pro is-on" : "con-pro", "data-pro": b.pro ? "on" : "off" },
+    el("div", { class: "con-pro-head" },
+      el("strong", {}, "Marlon Pro"),
+      el("span", { class: b.pro ? "con-badge con-badge-pro" : "con-badge con-badge-off" }, b.pro ? `On since ${dateText(b.proSince)}` : "Off")),
+    el("label", { class: "con-field con-pro-field" }, "Discount %", discount),
+    price,
+    el("div", { class: "con-actions" },
+      el("button", { type: "button", class: b.pro ? "btn btn-ghost con-danger con-pro-toggle" : "btn btn-primary con-pro-toggle", onclick: () => save(!b.pro) }, b.pro ? "Switch Pro off" : "Switch Pro on"),
+      b.pro ? el("button", { type: "button", class: "btn con-pro-save", onclick: () => save(true) }, "Save discount") : null));
+}
+
 function buyerCard(b, refresh) {
   if (b.kind === "team") return teamCard(b, refresh);
   const toggleBuyer = el("button", { type: "button", class: b.off ? "btn" : "btn btn-ghost con-danger", onclick: async () => {
@@ -299,10 +335,11 @@ function buyerCard(b, refresh) {
     } }, d.off ? "Switch on" : "Switch off")))) : el("p", { class: "con-note" }, "No phone has opened this link yet.");
   return el("article", { class: b.off ? "card con-card con-buyer is-off" : "card con-card con-buyer", dataset: { id: b.id } },
     el("div", { class: "con-buyer-head" },
-      el("h3", {}, b.name, b.off ? el("span", { class: "con-badge" }, "Switched off") : null),
+      el("h3", {}, b.name, b.pro ? el("span", { class: "con-badge con-badge-pro" }, "Pro") : null, b.off ? el("span", { class: "con-badge" }, "Switched off") : null),
       el("strong", { class: "num" }, money(b.amountCents))),
     el("p", { class: "con-buyer-meta" }, `${b.active} of ${b.devices} device${b.devices === 1 ? "" : "s"} in use · created ${dateText(b.created)}`),
     phones,
+    proBox(b, refresh),
     el("details", { class: "con-buyer-link" }, el("summary", {}, "Their personal link"), linkBox(linkFor(b.id))),
     el("div", { class: "con-actions" }, toggleBuyer, deleteButton(b, refresh)));
 }
@@ -316,11 +353,12 @@ function teamCard(b, refresh) {
   } }, b.off ? "Switch company on again" : "Switch off whole company");
   return el("article", { class: b.off ? "card con-card con-buyer con-team is-off" : "card con-card con-buyer con-team", "data-id": b.id },
     el("div", { class: "con-buyer-head" },
-      el("h3", {}, b.name, el("span", { class: "con-badge con-badge-team" }, "Team"), b.off ? el("span", { class: "con-badge" }, "Switched off") : null),
+      el("h3", {}, b.name, el("span", { class: "con-badge con-badge-team" }, "Team"), b.pro ? el("span", { class: "con-badge con-badge-pro" }, "Pro") : null, b.off ? el("span", { class: "con-badge" }, "Switched off") : null),
       el("strong", { class: "num" }, money(b.amountCents))),
     el("p", { class: "con-buyer-meta" }, `${b.active} of ${b.devices} rep phone${b.devices === 1 ? "" : "s"} in use · ${b.invoices} invoice${b.invoices === 1 ? "" : "s"} sent to the boss · created ${dateText(b.created)}`),
     el("h4", { class: "con-sub" }, "Boss phone"), phoneList(b, b.bossPhones, refresh, { boss: true }),
     el("h4", { class: "con-sub" }, "Reps"), b.slots.length ? slotList(b, refresh) : phoneList(b, b.phones, refresh),
+    proBox(b, refresh),
     el("details", { class: "con-buyer-link" }, el("summary", {}, "Their links"),
       b.slots.length
         ? allRepLinks(b.name, b.slots.map((x) => `${location.origin}/?k=${x.key}`), bossLinkFor(b.bossKey))
@@ -349,6 +387,8 @@ function buyersSection(data, refresh) {
       tile("Money collected", null, `from ${fmt(data.buyers.length)} buyer${data.buyers.length === 1 ? "" : "s"}`, money(data.totalCents)),
       tile("Buyers", data.buyers.length, `${fmt(data.buyers.filter((b) => b.off).length)} switched off`),
       tile("Phones active", phonesActive, "on all buyers")),
+    el("div", { class: "con-tiles con-tiles-3" },
+      tile("Pro each month", null, `${fmt(data.buyers.filter((b) => b.pro && !b.off).length)} compan${data.buyers.filter((b) => b.pro && !b.off).length === 1 ? "y" : "ies"} with Pro on (after discounts)`, money(data.proMonthlyCents || 0))),
     newBuyerForm((r) => {
       refresh(r.bossLink
         ? el("div", { class: "card con-card con-created" }, el("h2", {}, `Team links for ${r.buyer.name}`),
@@ -364,6 +404,7 @@ function buyersSection(data, refresh) {
       el("h2", { id: "con-h-buyers" }, "Buyers"),
       data.buyers.length ? data.buyers.map((b) => buyerCard(b, () => refresh())) : el("p", { class: "con-note" }, "No buyers yet. Create a link above for each person who buys Marlon.")),
     contactForm(data.contact, () => refresh()),
+    el("p", { class: "con-note con-terms" }, el("a", { href: "/terms", target: "_blank", rel: "noopener" }, "Marlon terms and conditions (with the Marlon Pro section)")),
   ];
 }
 

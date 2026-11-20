@@ -10,11 +10,17 @@
  *             { status: "paid" | "unpaid", method: "cash" | "terms", termsDays: 0 | 7 | 14, dueDate: "YYYY-MM-DD" | null,
  *               recordedAt, paidAt: ISO | null }
  *   settings  { key, value }
+ *   credits   (Marlon Pro: returns) { id, number, store, address, date, lines[{ productId, name, qty, unit, price, total, reason }],
+ *             total, signature, signerName, signedAt, createdAt, updatedAt, appliedTo: { invoiceId: { amount, number } } }
+ *             A credit note's amount comes off that store's next invoice(s) automatically: invoices.put() works out, in
+ *             the same transaction, which credit notes an unsigned invoice uses (oldest first, never more than its
+ *             subtotal) and records it on both. A signed (or sent-for-signature) invoice keeps the credit it had.
+ *             Deleting an invoice gives its credit back.
  */
-import { parseAmount, normalizeUnit, storeKey, tidy, uid, withTotals } from "./util.js";
+import { allocateCredit, parseAmount, normalizeUnit, storeKey, tidy, toCents, uid, withTotals } from "./util.js";
 
 const DB_NAME = "marlon-invoices";
-const DB_VERSION = 1;
+const DB_VERSION = 2; // 2: + credits (Marlon Pro returns). Upgrading keeps everything already saved.
 let dbPromise = null;
 
 function openDb() {
@@ -31,6 +37,7 @@ function openDb() {
         s.createIndex("number", "number");
       }
       if (!db.objectStoreNames.contains("settings")) db.createObjectStore("settings", { keyPath: "key" });
+      if (!db.objectStoreNames.contains("credits")) db.createObjectStore("credits", { keyPath: "id" }).createIndex("date", "date");
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -184,7 +191,7 @@ export const invoices = {
     clean.updatedAt = nowISO();
     clean.createdAt = clean.createdAt || clean.updatedAt;
     if (!clean.id) clean.id = uid("inv_");
-    return run(["invoices", "settings"], "readwrite", async (s) => {
+    return run(["invoices", "settings", "credits"], "readwrite", async (s) => {
       const old = await done(s.invoices.get(clean.id));
       if (!("payment" in inv) && old?.payment) clean.payment = old.payment;
       // Signed by the buyer through a link: the invoice is locked for good. Only the private payment status may change.
@@ -199,12 +206,18 @@ export const invoices = {
         clean.number = n;
         await done(s.settings.put({ key: "nextNumber", value: n + 1 }));
       }
-      await done(s.invoices.put(clean));
-      return clean;
+      const withCredit = await applyCredits(s, clean, old);
+      await done(s.invoices.put(withCredit));
+      return withCredit;
     });
   },
   async remove(id) {
-    await run("invoices", "readwrite", (s) => done(s.invoices.delete(id)));
+    await run(["invoices", "credits"], "readwrite", async (s) => {
+      await done(s.invoices.delete(id));
+      for (const cn of await done(s.credits.getAll())) { // its credit goes back to the credit note(s)
+        if (cn.appliedTo?.[id]) { delete cn.appliedTo[id]; cn.updatedAt = nowISO(); await done(s.credits.put(cn)); }
+      }
+    });
   },
   /**
    * Records how this one invoice is being paid (each invoice is separate, with its own due date), or changes it,
@@ -236,6 +249,91 @@ export const invoices = {
       else { cur.count++; if (!cur.address && inv.address) cur.address = inv.address; }
     }
     return [...map.values()];
+  },
+};
+
+// ── Credit notes (Marlon Pro: returns) ──────────────────────────────────
+
+/** What's left on a credit note, in whole cents (optionally not counting what one invoice uses). */
+const creditLeftCents = (cn, exceptInvoice = null) =>
+  toCents(cn.total) - Object.entries(cn.appliedTo || {}).reduce((t, [inv, a]) => t + (inv === exceptInvoice ? 0 : toCents(a.amount)), 0);
+
+/**
+ * Credit notes of this store with something left (not counting what `invoiceId` already uses), oldest first. Only the
+ * store's NEXT invoices: a credit note never goes onto an invoice dated before it (unless that invoice already uses it).
+ */
+function availableCredit(all, store, invoiceId, invoiceDate = null) {
+  const key = storeKey(store);
+  if (!key) return [];
+  return all.filter((cn) => storeKey(cn.store) === key && (!invoiceDate || (cn.date || "") <= invoiceDate || cn.appliedTo?.[invoiceId]))
+    .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || "") || (a.number || 0) - (b.number || 0))
+    .map((cn) => ({ id: cn.id, number: cn.number, left: creditLeftCents(cn, invoiceId) / 100 }))
+    .filter((c) => c.left > 0);
+}
+
+/**
+ * Inside invoices.put's transaction: which credit notes this invoice uses. A signed invoice, one waiting on a
+ * signature link, or one already marked paid keeps exactly the credit it had (what the customer saw doesn't change).
+ */
+async function applyCredits(s, clean, old) {
+  const all = await done(s.credits.getAll());
+  if (!all.length && !clean.credit) return clean;
+  const frozen = old && (old.signature || ["sent", "opened"].includes(old.remote?.state) || old.payment?.status === "paid");
+  if (frozen) return withTotals({ ...clean, credit: old.credit || null });
+  const subtotal = withTotals({ ...clean, credit: null }).total;
+  const credit = clean.items.length ? allocateCredit(availableCredit(all, clean.store, clean.id, clean.date), subtotal) : null;
+  for (const cn of all) {
+    const had = cn.appliedTo?.[clean.id];
+    const use = credit?.notes.find((n) => n.id === cn.id);
+    if (!had && !use) continue;
+    if (had && use && toCents(had.amount) === toCents(use.amount) && had.number === clean.number) continue;
+    cn.appliedTo = { ...(cn.appliedTo || {}) };
+    if (use) cn.appliedTo[clean.id] = { amount: use.amount, number: clean.number };
+    else delete cn.appliedTo[clean.id];
+    cn.updatedAt = nowISO();
+    await done(s.credits.put(cn));
+  }
+  return withTotals({ ...clean, credit });
+}
+
+export const credits = {
+  /** All credit notes, newest first. */
+  async all() {
+    const rows = await run("credits", "readonly", (s) => done(s.credits.getAll()));
+    return rows.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.number || 0) - (a.number || 0));
+  },
+  async get(id) { return (await run("credits", "readonly", (s) => done(s.credits.get(id)))) || null; },
+  /** Credit notes this store still has credit on for an invoice dated `date` (not counting what `invoiceId` uses): [{ id, number, left }]. */
+  async availableFor(store, invoiceId = null, date = null) {
+    if (!storeKey(store)) return [];
+    return availableCredit(await run("credits", "readonly", (s) => done(s.credits.getAll())), store, invoiceId, date);
+  },
+  /** What's left on a credit note, in dollars. */
+  left: (cn) => Math.max(0, creditLeftCents(cn)) / 100,
+  /**
+   * A new numbered credit note (CN-0001, CN-0002… on this phone). lines: [{ productId, name, qty, unit, price, reason }].
+   * The store's signature is required. Resolves with the saved credit note.
+   */
+  async create({ store, address = "", date, lines, signature, signerName = "" }) {
+    const clean = tidy(store).replace(/\n/g, " ");
+    if (!clean) throw new Error("Type the store's name first.");
+    const items = (lines || []).map((l) => ({ productId: l.productId ?? null, name: tidy(l.name).replace(/\n/g, " "), qty: parseAmount(l.qty), unit: normalizeUnit(l.unit),
+      price: parseAmount(l.price), reason: l.reason === "damaged" ? "damaged" : "expired" })).filter((l) => l.name && l.qty > 0);
+    if (!items.length) throw new Error("Add at least one returned product with its quantity.");
+    if (items.some((l) => l.price === null)) throw new Error("Every returned product needs a price, so the credit can be worked out.");
+    if (!signature) throw new Error("The store needs to sign first.");
+    const t = withTotals({ items });
+    const at = nowISO();
+    return run(["credits", "settings"], "readwrite", async (s) => {
+      const row = await done(s.settings.get("nextCreditNumber"));
+      const number = Math.max(1, Number(row?.value) || 1);
+      await done(s.settings.put({ key: "nextCreditNumber", value: number + 1 }));
+      const cn = { id: uid("cn_"), number, store: clean, address: tidy(address), date: date || at.slice(0, 10),
+        lines: t.items.map((it, i) => ({ ...it, reason: items[i].reason })), total: t.total,
+        signature, signerName: tidy(signerName).replace(/\n/g, " ").slice(0, 80), signedAt: at, createdAt: at, updatedAt: at, appliedTo: {} };
+      await done(s.credits.put(cn));
+      return cn;
+    });
   },
 };
 
@@ -282,9 +380,9 @@ const PRIVATE_SETTINGS = new Set(["pin", "printer", "currentId", "deviceId", "us
 
 /** Everything needed to restore on another phone (the dashboard PIN and printer are left out). */
 export async function exportBackup() {
-  const [p, inv, st] = await Promise.all([products.all({ includeHidden: true }), invoices.all(), settings.all()]);
+  const [p, inv, st, cn] = await Promise.all([products.all({ includeHidden: true }), invoices.all(), settings.all(), credits.all()]);
   const safeSettings = Object.fromEntries(Object.entries(st).filter(([k]) => !PRIVATE_SETTINGS.has(k)));
-  return { app: "marlon-invoices", version: 1, exportedAt: nowISO(), products: p, invoices: inv, settings: safeSettings };
+  return { app: "marlon-invoices", version: 1, exportedAt: nowISO(), products: p, invoices: inv, settings: safeSettings, ...(cn.length ? { credits: cn } : {}) };
 }
 
 /**
@@ -296,7 +394,18 @@ export async function importBackup(data) {
     throw new Error("That file isn't a backup from this app.");
   }
   const counts = { invoicesAdded: 0, invoicesUpdated: 0, productsAdded: 0 };
-  await run(["products", "invoices", "settings"], "readwrite", async (s) => {
+  await run(["products", "invoices", "settings", "credits"], "readwrite", async (s) => {
+    let maxCredit = 0;
+    for (const cn of Array.isArray(data.credits) ? data.credits : []) {
+      if (!cn || typeof cn.id !== "string" || !Array.isArray(cn.lines)) continue;
+      const cur = await done(s.credits.get(cn.id));
+      if (!cur || (cn.updatedAt || "") > (cur.updatedAt || "")) await done(s.credits.put(cn));
+      maxCredit = Math.max(maxCredit, Number(cn.number) || 0);
+    }
+    if (maxCredit) {
+      const r = await done(s.settings.get("nextCreditNumber"));
+      await done(s.settings.put({ key: "nextCreditNumber", value: Math.max(Number(r?.value) || 1, maxCredit + 1) }));
+    }
     for (const p of data.products) {
       if (!p || typeof p.id !== "string" || typeof p.name !== "string") continue;
       const cur = await done(s.products.get(p.id));
@@ -314,7 +423,7 @@ export async function importBackup(data) {
     const next = Math.max(Number(row?.value) || 1, maxNumber + 1);
     await done(s.settings.put({ key: "nextNumber", value: next }));
     for (const [k, v] of Object.entries(data.settings || {})) {
-      if (PRIVATE_SETTINGS.has(k) || k === "nextNumber") continue;
+      if (PRIVATE_SETTINGS.has(k) || k === "nextNumber" || k === "nextCreditNumber") continue;
       const cur = await done(s.settings.get(k));
       if (!cur) await done(s.settings.put({ key: k, value: v }));
     }
@@ -324,10 +433,11 @@ export async function importBackup(data) {
 
 /** Deletes every invoice, product and setting on this phone, then re-seeds the starting products. */
 export async function eraseEverything() {
-  await run(["products", "invoices", "settings"], "readwrite", async (s) => {
+  await run(["products", "invoices", "settings", "credits"], "readwrite", async (s) => {
     await done(s.products.clear());
     await done(s.invoices.clear());
     await done(s.settings.clear());
+    await done(s.credits.clear());
   });
   return init();
 }

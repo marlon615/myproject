@@ -7,10 +7,12 @@
  *   items   = item *( "*" item ),  item = text "," qty [unit] "," price
  *   unit    = "d" (dozen) | "b" (bag) | "p" (pounds); none = each
  *   flags   = "" | "s" (signed by the customer)
+ *   [ ~ credit ]  only when a credit note's credit comes off the invoice (Marlon Pro): amount "," numbers ("3.4")
+ *                 Invoices without a credit keep exactly the 10 fields above.
  * Every business has its own products, so they travel by name. (Version 1 links, without the phone, still read.)
  * Text QR: invoiceToText() — a plain-text invoice for phones with no internet.
  */
-import { business, invoiceNo, lineTotal, money, normalizeUnit, parseISODate, prettyDate, qtyWithUnit, sumTotals, withTotals } from "./util.js";
+import { business, creditLabel, creditNo, invoiceNo, lineTotal, money, normalizeUnit, parseISODate, prettyDate, qtyWithUnit, sumTotals, withTotals } from "./util.js";
 
 export const PAYLOAD_VERSION = "2";
 
@@ -61,6 +63,7 @@ export function encodePayload(inv) {
     items,
     num(t.total) || "0",
     t.signature ? "s" : "",
+    ...(t.credit ? [`${num(t.credit.amount)},${t.credit.notes.map((n) => Math.max(0, Math.floor(Number(n.number) || 0))).join(".")}`] : []),
   ].join("~");
 }
 
@@ -80,7 +83,14 @@ export function parseInvoiceHash(hash) {
     if (!s || s.length > MAX_PAYLOAD) return null;
     let f = s.split("~");
     if (f[0] === "1" && f.length === 9) f = ["2", f[1], "", ...f.slice(2)]; // older links: no phone
-    if (f.length !== 10 || f[0] !== PAYLOAD_VERSION) return null;
+    if ((f.length !== 10 && f.length !== 11) || f[0] !== PAYLOAD_VERSION) return null;
+    let credit = null;
+    if (f.length === 11) {
+      const cm = /^(\d{1,12}(?:\.\d{1,4})?),(\d{1,7}(?:\.\d{1,7}){0,49})$/.exec(f[10]);
+      if (!cm) return null;
+      credit = { amount: Number(cm[1]), notes: cm[2].split(".").map((n) => ({ number: Number(n) })) };
+      f = f.slice(0, 10);
+    }
     const sellerPhone = dec(f[2]);
     f = [f[0], f[1], ...f.slice(3)];
 
@@ -115,7 +125,9 @@ export function parseInvoiceHash(hash) {
     const total = strictNum(f[7]);
     if (total === undefined) return null;
     if (f[8] !== "" && f[8] !== "s") return null;
-    return { v: 2, seller, sellerPhone, number, date, store, address, items, total, computedTotal: sumTotals(items), signed: f[8] === "s" };
+    const computed = sumTotals(items);
+    return { v: 2, seller, sellerPhone, number, date, store, address, items, total, signed: f[8] === "s",
+      ...(credit ? { credit, subtotal: computed, computedTotal: Math.max(0, Math.round((computed - credit.amount) * 100) / 100) } : { computedTotal: computed }) };
   } catch {
     return null;
   }
@@ -135,7 +147,9 @@ export function invoiceToText(inv) {
     lines.push(it.name, `  ${qtyWithUnit(it.qty, it.unit)} x ${it.price === null ? "(no price)" : money(it.price)} = ${money(it.total)}`);
   }
   if (!t.items.length) lines.push("(no items)");
-  lines.push(rule, `TOTAL: ${money(t.total)}`);
+  lines.push(rule);
+  if (t.credit) lines.push(`Subtotal: ${money(t.subtotal)}`, `${creditLabel(t.credit)}: -${money(t.credit.amount)}`);
+  lines.push(`TOTAL: ${money(t.total)}`);
   lines.push(`${t.items.length} item${t.items.length === 1 ? "" : "s"} - Signed by customer: ${t.signature ? "Yes" : "No"}`);
   return lines.join("\n");
 }

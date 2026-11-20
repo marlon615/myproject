@@ -2,7 +2,8 @@
  * The invoice screen: one invoice at a time, saved on the phone as you type.
  * Routes: "#/" (or none) = invoice, "#/owner" = private owner dashboard (dashboard.js).
  */
-import { init as initDb, invoices, products, profile, settings } from "./db.js";
+import { init as initDb, credits, invoices, products, profile, settings } from "./db.js";
+import { setupPro } from "./pro.js";
 import { runSetup } from "./setup.js";
 import { track } from "./usage.js";
 import { ensureAccess } from "./license.js";
@@ -10,6 +11,7 @@ import { startTeamSync } from "./team.js";
 import {
   business, setBusiness, UNITS, UNIT_NAMES, debounce, defaultUnitFor, fillUsualPrice, h, invoiceNo, itemsMissingPrice, lineTotal, money,
   normalizeUnit, parseAmount, priceInputText, qtyText, signedOnText, storeKey, sumTotals, todayISO, uid, withTotals,
+  allocateCredit, cleanCreditOn, creditLabel, toCents,
 } from "./util.js";
 import { alertSheet, choiceSheet, confirmSheet, toast } from "./ui.js";
 import { cancelLink, enablePush, isRemoteSigned, isWaiting, pushState, remoteStatus, sendForSignature, shareLink, startRemoteWatch } from "./remote.js";
@@ -31,7 +33,7 @@ const el = {
   main: $("invoice-screen"), dash: $("dashboard"), setup: $("setup"), gate: $("gate"), company: $("company-name"), no: $("invoice-no"), signedBadge: $("signed-badge"),
   store: $("store"), storeList: $("store-list"), address: $("address"), date: $("date"),
   list: $("prod-list"), addForm: $("prod-add"), addName: $("prod-add-name"),
-  grandTotal: $("grand-total"), grandCount: $("grand-count"), grandAmount: $("grand-amount"),
+  grandTotal: $("grand-total"), grandCount: $("grand-count"), grandAmount: $("grand-amount"), creditRows: $("credit-rows"), proBar: $("pro-bar"),
   signCard: $("sign-card"), signCanvas: $("sign-canvas"), signStatus: $("sign-status"), signTip: $("sign-tip"), signClear: $("sign-clear"),
   signDone: $("sign-done"), finish: $("finish-btn"), signPad: $("sign-pad"),
   remoteStatus: $("remote-status"), sendSign: $("send-sign-btn"), remoteHint: $("remote-hint"),
@@ -56,6 +58,7 @@ const state = {
   qrMode: "link",
   savedAt: null,
   paymentSet: false,  // this invoice's payment is recorded (owner only: it's never shown on this screen)
+  creditAvail: [],    // Marlon Pro: this store's credit notes with credit left [{ id, number, left }] (db.js applies them on save)
 };
 const rows = new Map(); // productId → { li, cb, qty, price, total, detail, product }
 let pad = null;
@@ -118,6 +121,9 @@ async function start() {
   refreshStores();
 
   wireEvents();
+  // Marlon Pro: Return (credit notes) and Shelf photo, only when the company has Pro on (remembered for offline).
+  setupPro({ bar: el.proBar, pro: access.pro, getStore: () => el.store.value.trim(), getAddress: () => el.address.value.trim(),
+    onCreditCreated: () => refreshCredit() });
   startRemoteWatch(); // invoices sent for signature: news comes in by itself (it stops when nothing is waiting)
   initDashboard(el.dash, hooks);
   window.addEventListener("hashchange", route);
@@ -156,6 +162,7 @@ function signalReady() {
 async function newDraft(from = null) {
   state.inv = { signature: null, signedAt: null };
   state.paymentSet = false;
+  state.paidCredit = false;
   state.lines = new Map();
   state.extra = [];
   el.store.value = from?.store || "";
@@ -167,15 +174,19 @@ async function newDraft(from = null) {
   await settings.remove("currentId");
   pad.clear();
   thanks.reset();
+  state.creditAvail = [];
   renderAll();
+  refreshCredit();
   if (from) scheduleSave();
 }
 
 async function loadInvoice(inv) {
   state.inv = { id: inv.id, number: inv.number, createdAt: inv.createdAt, signature: inv.signature || null, signedAt: inv.signedAt || null,
     seller: inv.seller, sellerAddress: inv.sellerAddress, sellerPhone: inv.sellerPhone, // the business as it was then
-    remote: inv.remote || null, signerName: inv.signerName || null }; // sent for signature: its link and status
+    remote: inv.remote || null, signerName: inv.signerName || null, // sent for signature: its link and status
+    credit: inv.credit || null }; // Marlon Pro: credit from credit notes taken off this invoice
   state.paymentSet = Boolean(inv.payment);
+  state.paidCredit = inv.payment?.status === "paid"; // a paid invoice keeps the credit it had
   state.lines = new Map();
   state.extra = [];
   el.store.value = inv.store || "";
@@ -185,6 +196,7 @@ async function loadInvoice(inv) {
   state.nextNumber = await invoices.peekNextNumber();
   state.savedAt = inv.updatedAt ? new Date(inv.updatedAt) : null;
   renderAll();
+  refreshCredit();
   await pad.fromDataURL(state.inv.signature);
   if (state.inv.signature) thanks.showSigned(); else thanks.reset();
   renderSignState();
@@ -209,8 +221,27 @@ function currentItems() {
   return items;
 }
 
+// ── Marlon Pro: credit from credit notes ─────────────────────────────────
+// db.js decides on every save which credit notes an unsigned invoice uses; this screen shows the same thing live.
+// A signed invoice (or one waiting on a signature link) keeps the credit it had.
+const creditFrozen = () => Boolean(state.inv.signature) || remoteLocked() || state.paidCredit;
+function currentCredit(subtotal) {
+  return creditFrozen() ? cleanCreditOn(state.inv.credit, subtotal) : allocateCredit(state.creditAvail, subtotal);
+}
+let creditSeq = 0;
+async function refreshCredit() {
+  const seq = ++creditSeq;
+  const avail = await credits.availableFor(el.store.value, state.inv.id || null, el.date.value || todayISO()).catch(() => []);
+  if (seq !== creditSeq) return;
+  state.creditAvail = avail;
+  renderTotals();
+  scheduleQr();
+}
+const scheduleCredit = debounce(refreshCredit, 250);
+
 /** The invoice as it stands now (number shown even before the first save). */
 function draft() {
+  const items = currentItems();
   return withTotals({
     ...state.inv,
     seller: state.inv.seller ?? business.name,
@@ -220,7 +251,8 @@ function draft() {
     store: el.store.value.trim(),
     address: el.address.value.trim(),
     date: el.date.value || todayISO(),
-    items: currentItems(),
+    items,
+    credit: currentCredit(sumTotals(items)),
   });
 }
 
@@ -238,7 +270,7 @@ async function saveNow() {
     const first = !state.inv.number;
     const saved = await invoices.put({ ...d, number: state.inv.number || undefined });
     if (first) track("invoice");
-    Object.assign(state.inv, { id: saved.id, number: saved.number, createdAt: saved.createdAt });
+    Object.assign(state.inv, { id: saved.id, number: saved.number, createdAt: saved.createdAt, credit: saved.credit || null });
     state.savedAt = new Date(saved.updatedAt);
     await settings.set("currentId", saved.id); // prices stay on this invoice only: the next one starts fresh
     renderNumber();
@@ -255,6 +287,7 @@ async function flushSave() {
 }
 
 function changed() {
+  scheduleCredit();
   renderTotals();
   renderSaveStatus(true);
   scheduleSave();
@@ -283,7 +316,14 @@ function renderSaveStatus(pending = false) {
 
 function renderTotals() {
   const items = currentItems();
-  const total = sumTotals(items);
+  const subtotal = sumTotals(items);
+  const credit = currentCredit(subtotal);
+  const total = credit ? (toCents(subtotal) - toCents(credit.amount)) / 100 : subtotal;
+  el.creditRows.hidden = !credit;
+  el.creditRows.replaceChildren(...(credit ? [
+    h("p", { class: "credit-row" }, h("span", {}, "Subtotal"), h("span", { class: "num" }, money(subtotal))),
+    h("p", { class: "credit-row is-credit" }, h("span", {}, creditLabel(credit), h("small", {}, "returned goods")), h("span", { class: "num" }, `-${money(credit.amount)}`)),
+  ] : []));
   el.grandAmount.textContent = money(total);
   el.grandCount.textContent = items.length ? itemsText(items.length) : "No items yet";
   el.barAmount.textContent = money(total);
@@ -989,6 +1029,8 @@ async function route() {
     refreshStores();
   } else {
     state.paymentSet = Boolean(open?.payment);
+    state.paidCredit = open?.payment?.status === "paid";
+    if (open) state.inv.credit = open.credit || null;
     renderSignState();
     state.nextNumber = await invoices.peekNextNumber();
     renderNumber();

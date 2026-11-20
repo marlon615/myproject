@@ -343,6 +343,7 @@ export function buildEscPos(model, { paper = 58, signatureRaster = null, qrRaste
     lr(`  ${it.qtyText} x ${it.priceText}`, it.totalText);
   }
   rule("=");
+  if (model.credit) { lr("Subtotal", model.credit.subtotalText); lr(model.credit.label, model.credit.amountText); }
   bold(true);
   size(0x01);
   lr("TOTAL", model.totalText);

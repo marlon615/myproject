@@ -437,3 +437,47 @@
 #dashboard .dash-badge.is-remote.is-opened { color: #1d4f91; background: #e3edfb; }
 #dashboard .dash-badge.is-remote.is-signed { padding-left: 6px; background: var(--brand-soft); color: var(--brand); }
 #dashboard .dash-badge.is-remote.is-expired { color: var(--danger); background: var(--danger-soft); }
+
+/* ── Marlon Pro tab: accountant summary and returns ─────────────────────── */
+#dashboard .dash-note { margin: 4px 0 10px; color: var(--ink-2); font-size: 14.5px; }
+#dashboard .pro-acct-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#dashboard .pro-acct-head .section-title { margin: 0; }
+#dashboard .pro-year { width: auto; min-width: 128px; }
+#dashboard .pro-quarters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+#dashboard .pro-q { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); min-width: 0; box-shadow: var(--shadow); }
+#dashboard .pro-q.is-year { grid-column: 1 / -1; border-color: var(--brand); background: var(--brand-soft); }
+#dashboard .pro-q-head { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; color: var(--ink-2); }
+#dashboard .pro-q-head strong { color: var(--ink); }
+#dashboard .pro-q-net { margin: 6px 0 0; font-family: var(--font-display); font-size: clamp(19px, 5.4vw, 26px); font-weight: 700; overflow-wrap: anywhere; }
+#dashboard .pro-q-label { margin: 0 0 6px; font-size: 11.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+#dashboard .pro-q-rows { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin: 0; font-size: 13.5px; }
+#dashboard .pro-q-rows dt { color: var(--ink-2); }
+#dashboard .pro-q-rows dd { margin: 0; text-align: right; font-weight: 650; }
+#dashboard .pro-acct-note { margin: 12px 0 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--accent-soft); border-left: 4px solid var(--accent); font-size: 14px; font-weight: 600; }
+#dashboard .pro-acct-actions { display: grid; gap: 8px; margin-top: 12px; }
+#dashboard .pro-h3 { margin: 14px 2px 6px; font-size: 12.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
+#dashboard .dash-table { width: 100%; border-collapse: collapse; font-size: 14.5px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+#dashboard .dash-table th, #dashboard .dash-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: right; vertical-align: top; }
+#dashboard .dash-table th:first-child, #dashboard .dash-table td:first-child { text-align: left; }
+#dashboard .dash-table th { font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); background: var(--paper-2); }
+#dashboard .pro-sub { display: block; font-size: 12px; color: var(--muted); }
+#dashboard .pro-cns { display: grid; gap: 8px; }
+#dashboard .pro-cn { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+#dashboard .pro-cn > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; cursor: pointer; list-style: none; min-height: var(--tap); }
+#dashboard .pro-cn > summary::-webkit-details-marker { display: none; }
+#dashboard .pro-cn > summary span { display: grid; gap: 2px; min-width: 0; }
+#dashboard .pro-cn > summary small { color: var(--muted); font-size: 13px; }
+#dashboard .pro-cn[open] { padding-bottom: 12px; }
+#dashboard .pro-cn .cn-card { border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+#dashboard .pro-cn > .btn { margin: 0 14px; width: calc(100% - 28px); }
+
+@media print {
+  body[data-print] .brand-bar, body[data-print] #invoice-screen, body[data-print] .dash-header, body[data-print] .dash-tabs,
+  body[data-print] .pro-acct-actions, body[data-print] .pro-year { display: none !important; }
+  body[data-print="dash-accountant"] .dash-panel > *:not(#dash-accountant) { display: none !important; }
+  body[data-print] { background: #fff; color: #000; }
+  body[data-print] .pro-q { break-inside: avoid; box-shadow: none; }
+}
+
+#dashboard .dash-terms { margin: 26px 0 0; text-align: center; font-size: 14px; }
+#dashboard .dash-terms a { color: var(--ink-2); }

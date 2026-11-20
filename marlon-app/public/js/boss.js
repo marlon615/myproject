@@ -10,7 +10,10 @@
  *    "Switch off" a rep (e.g. they left): their phone stops working, their invoices stay under their name, and the
  *    same link is free for a new rep ("Give to new rep").
  *  - Refreshes every 30 seconds while open. Offline, it shows what it last loaded (and says when that was).
+ *  - Marlon Pro (when the company has Pro on): the accountant summary (by quarter and for the year, to download or
+ *    print for the accountant) and returns (credit notes) by store, by product and by rep.
  */
+import { accountantSummary, reportYears, returnsBreakdown, summaryCsv } from "./pro-report.js";
 const root = document.getElementById("boss");
 const KEY = /^[0-9a-f]{32}$/;
 const STORE = "marlon.boss";        // { boss, device } on this phone
@@ -199,7 +202,84 @@ async function load() {
   refreshTimer = setTimeout(load, 30000);
 }
 
-const view = { rep: "all", status: "all" };
+const view = { rep: "all", status: "all", year: null };
+
+// ── Marlon Pro ───────────────────────────────────────────────────────────
+const cnNo = (n) => `CN-${String(n || 0).padStart(4, "0")}`;
+const creditText = (c) => `${(c.notes || []).length > 1 ? "Credit notes" : "Credit note"} ${(c.notes || []).map((x) => cnNo(x.number)).join(", ")}`;
+
+/** Sales by quarter and for the year (to 31 December), ready for the accountant: download (CSV) or print / PDF. */
+function accountantSection(data, repName, offline) {
+  const credits = data.credits || [];
+  const years = reportYears(data.invoices, credits);
+  const year = years.includes(view.year) ? view.year : years[0];
+  const s = accountantSummary({ invoices: data.invoices, credits, year });
+  const yearSel = el("select", { id: "boss-acct-year", "aria-label": "Year", onchange: (e) => { view.year = Number(e.target.value); render(data, offline); } },
+    years.map((y) => el("option", { value: String(y) }, `Year ${y}`)));
+  yearSel.value = String(year);
+  const card = (title, sub, q, big = false) => el("div", { class: `boss-q${big ? " is-year" : ""}`, "data-q": title },
+    el("div", { class: "boss-q-head" }, el("strong", {}, title), el("span", {}, sub)),
+    el("p", { class: "boss-q-net num" }, money(q.net)), el("p", { class: "boss-q-label" }, "Net sales"),
+    el("dl", { class: "boss-q-rows" },
+      el("dt", {}, "Gross sales"), el("dd", { class: "num" }, money(q.gross)),
+      el("dt", {}, "Returns"), el("dd", { class: "num" }, q.returns ? `−${money(q.returns)}` : money(0)),
+      el("dt", {}, "Received"), el("dd", { class: "num" }, money(q.received)),
+      el("dt", {}, "Not yet paid"), el("dd", { class: "num" }, money(q.unpaid)),
+      el("dt", {}, "Invoices"), el("dd", { class: "num" }, String(q.invoices))));
+  const csv = () => summaryCsv({ company: data.company, year, invoices: data.invoices, credits, repName: (k) => repName.get(k) || "" });
+  return el("section", { class: "card boss-card boss-pro-card", id: "boss-accountant" },
+    el("div", { class: "boss-rep-head" }, el("h2", {}, "Accountant summary"), yearSel),
+    el("p", { class: "boss-note" }, `${data.company} · sales for ${year}, by quarter and for the year ending 31 December ${year}.`),
+    el("div", { class: "boss-quarters" }, s.quarters.map((q) => card(q.q, q.months, q)), card(`Year ${year}`, "Jan – Dec", s.total, true)),
+    el("p", { class: "boss-acct-note", role: "note" }, "Prepared by Marlon from your reps' invoices and credit notes. Your accountant still needs to check it before you file your taxes."),
+    el("div", { class: "boss-actions boss-no-print" },
+      el("button", { type: "button", class: "btn btn-primary", id: "boss-csv", onclick: () => downloadText(csv(), `${slug(data.company)}-sales-${year}.csv`, "text/csv") }, "Download for accountant (CSV)"),
+      el("button", { type: "button", class: "btn", id: "boss-print", onclick: () => printOnly("boss-accountant") }, "Print / Save as PDF")));
+}
+
+/** Returns (credit notes) by store, by product and by rep, and every credit note. */
+function returnsSection(data, repName) {
+  const credits = [...(data.credits || [])].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.number || 0) - (a.number || 0));
+  const rb = returnsBreakdown(credits, (k) => repName.get(k) || "a rep");
+  const table = (id, head, rows) => el("table", { class: "boss-table", id }, el("thead", {}, el("tr", {}, head.map((x) => el("th", {}, x)))), el("tbody", {}, rows));
+  return el("section", { class: "card boss-card boss-pro-card", id: "boss-returns" },
+    el("h2", {}, "Returns"),
+    el("p", { class: "boss-note" }, credits.length ? `${rb.notes} credit note${rb.notes === 1 ? "" : "s"} · ${money(rb.total)} credited. Each one comes off that store's next invoice automatically.` : "No returns yet. When a rep logs a return, the store signs and a numbered credit note appears here."),
+    credits.length ? [
+      el("h3", { class: "boss-h3" }, "By store"),
+      table("boss-ret-store", ["Store", "Credit notes", "Amount"], rb.byStore.map((x) => el("tr", {}, el("td", {}, x.store), el("td", { class: "num" }, String(x.notes)), el("td", { class: "num" }, money(x.amount))))),
+      el("h3", { class: "boss-h3" }, "By product"),
+      table("boss-ret-product", ["Product", "Returned", "Amount"], rb.byProduct.map((x) => el("tr", {}, el("td", {}, x.name),
+        el("td", { class: "num" }, x.qtyText, el("small", { class: "boss-sub" }, [x.expired ? `${x.expired} expired` : "", x.damaged ? `${x.damaged} damaged` : ""].filter(Boolean).join(", "))), el("td", { class: "num" }, money(x.amount))))),
+      el("h3", { class: "boss-h3" }, "By rep"),
+      table("boss-ret-rep", ["Rep", "Credit notes", "Amount"], rb.byRep.map((x) => el("tr", {}, el("td", {}, x.rep), el("td", { class: "num" }, String(x.notes)), el("td", { class: "num" }, money(x.amount))))),
+      el("details", { class: "boss-cn-list" }, el("summary", {}, `All credit notes (${credits.length})`),
+        el("ul", { class: "boss-list" }, credits.map((c) => el("li", { class: "boss-inv boss-cn", "data-id": c.id },
+          el("div", { class: "boss-inv-head" }, el("strong", {}, `${cnNo(c.number)} · ${c.store || "No store name"}`), el("strong", { class: "num" }, money(c.total))),
+          el("p", { class: "boss-inv-meta" }, `${dateText(c.date)} · by ${repName.get(c.rep) || "a rep"} · ${c.signed ? `signed${c.signer ? ` by ${c.signer}` : ""}` : "not signed"}`),
+          el("ul", { class: "boss-items" }, (c.lines || []).map((l) => el("li", {}, el("span", {}, `${qtyText(l.qty, l.unit)} × ${l.name} · ${l.reason === "damaged" ? "damaged" : "expired"}`), el("span", { class: "num" }, money(l.total))))),
+          el("p", { class: "boss-note" }, c.applied >= c.total ? "Fully taken off invoices." : c.applied ? `${money(c.applied)} taken off invoices so far · ${money(c.total - c.applied)} still to come off.` : "Comes off this store's next invoice.")))))] : null);
+}
+
+const slug = (s) => String(s || "marlon").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "marlon";
+async function downloadText(text, name, type) {
+  const file = new File([text], name, { type });
+  if (navigator.canShare?.({ files: [file] }) && /iPhone|iPad|Android/i.test(navigator.userAgent)) {
+    try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e?.name === "AbortError") return; }
+  }
+  const url = URL.createObjectURL(file);
+  const a = el("a", { href: url, download: name, style: "display:none" });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+/** Prints just one section (the phone's print sheet can also "Save as PDF"). */
+function printOnly(id) {
+  document.body.dataset.print = id;
+  const done = () => { delete document.body.dataset.print; window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 1500);
+}
 
 function periods(now = new Date()) {
   const today = iso(now);
@@ -229,7 +309,7 @@ function render(data, offline) {
   statusSel.value = view.status;
 
   show(
-    el("div", {}, el("h1", {}, data.company), el("p", { class: "boss-lead" }, `${all.length} invoice${all.length === 1 ? "" : "s"} from ${data.reps.length} rep${data.reps.length === 1 ? "" : "s"}`)),
+    el("div", {}, el("h1", {}, data.company, data.pro ? el("span", { class: "boss-pro-tag" }, "Pro") : null), el("p", { class: "boss-lead" }, `${all.length} invoice${all.length === 1 ? "" : "s"} from ${data.reps.length} rep${data.reps.length === 1 ? "" : "s"}`)),
     offline ? el("p", { class: "boss-error" }, `No connection: showing what was loaded at ${new Date(data.loadedAt).toLocaleString()}.`) : null,
     el("div", { class: "boss-tiles" },
       el("div", { class: "card boss-tile" }, el("p", { class: "boss-tile-label" }, "Today"), el("p", { class: "boss-tile-value num", "data-total": "today" }, money(sum(all.filter(inRange(p.today)))))),
@@ -237,6 +317,8 @@ function render(data, offline) {
       el("div", { class: "card boss-tile" }, el("p", { class: "boss-tile-label" }, "This month"), el("p", { class: "boss-tile-value num", "data-total": "month" }, money(sum(all.filter(inRange(p.month))))))),
     el("p", { class: "boss-note" }, `Not paid: ${money(sum(unpaid))} on ${unpaid.length} invoice${unpaid.length === 1 ? "" : "s"}. Weeks run Monday to Sunday.`),
     repsSection(data),
+    data.pro ? accountantSection(data, repName, offline) : null,
+    data.pro ? returnsSection(data, repName) : null,
     el("section", { class: "card boss-card" }, el("h2", {}, "By rep"),
       el("table", { class: "boss-table", id: "boss-reps" },
         el("thead", {}, el("tr", {}, el("th", {}, "Rep"), el("th", {}, "Today"), el("th", {}, "This week"), el("th", {}, "This month"))),
@@ -247,12 +329,14 @@ function render(data, offline) {
       shown.length ? el("ul", { class: "boss-list" }, shown.map((inv) => el("li", { class: "card boss-inv", "data-id": inv.id },
         el("div", { class: "boss-inv-head" }, el("strong", {}, inv.store || "No customer name"), el("strong", { class: "num" }, money(inv.total))),
         el("p", { class: "boss-inv-meta" }, `No. ${String(inv.number || "").padStart(4, "0")} · ${dateText(inv.date)} · by ${repName.get(inv.rep) || "a rep"}`),
-        el("ul", { class: "boss-items" }, inv.items.map((it) => el("li", {}, el("span", {}, `${qtyText(it.qty, it.unit)} × ${it.name}`), el("span", { class: "num" }, it.price === null ? "no price" : money(it.total))))),
+        el("ul", { class: "boss-items" }, inv.items.map((it) => el("li", {}, el("span", {}, `${qtyText(it.qty, it.unit)} × ${it.name}`), el("span", { class: "num" }, it.price === null ? "no price" : money(it.total)))),
+          inv.credit ? el("li", { class: "boss-credit" }, el("span", {}, creditText(inv.credit)), el("span", { class: "num" }, `−${money(inv.credit.amount)}`)) : null),
         el("div", { class: "boss-pay" },
           el("span", { class: `boss-badge ${isPaid(inv) ? "is-paid" : "is-unpaid"}` }, isPaid(inv) ? (inv.payment?.markedBy === "boss" ? "Paid · marked by you" : "Paid") : inv.payment?.dueDate ? `Not paid · due ${dateText(inv.payment.dueDate)}` : "Not paid"),
           isPaid(inv) ? null : el("button", { type: "button", class: "btn boss-mark-paid", onclick: (e) => markPaid(inv, repName.get(inv.rep), e.currentTarget, data) }, "Mark paid"))))) :
         el("p", { class: "boss-note" }, all.length ? "No invoices match." : "No invoices yet. They appear here as soon as your reps' phones are online.")),
     el("p", { class: "boss-note" }, `Updated ${new Date(data.loadedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. New invoices appear within about a minute of a rep's phone being online.`),
+    el("p", { class: "boss-note boss-no-print" }, el("a", { href: "/terms", target: "_blank", rel: "noopener" }, "Terms and conditions (including Marlon Pro)")),
     el("div", { class: "boss-actions" },
       el("button", { type: "button", class: "btn", onclick: () => load() }, "Refresh"),
       el("button", { type: "button", class: "btn btn-ghost", onclick: async () => { await call("/api/boss/logout", { method: "POST", auth: true }).catch(() => {}); put(TOKEN, null, sessionStorage); put(CACHE, null); start(); } }, "Lock")));

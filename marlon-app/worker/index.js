@@ -23,11 +23,26 @@
  *   POST /api/console/buyer-off  (Bearer) { id, off }        switch a whole buyer off / on again
  *   POST /api/console/device-off (Bearer) { id, device, off } switch one phone off / on again (frees / takes a place)
  *   POST /api/console/contact    (Bearer) { contact }
+ *
+ * Marlon Pro (switched on per company in the console; $25 per rep per month, minus that company's discount %):
+ *   POST /api/console/pro        (Bearer) { id, pro, discountPct }   Pro on/off and the discount for one company
+ *   /api/activate and /api/check also answer { pro } so phones show Pro features (remembered for offline)
+ *   POST /api/team/sync          also takes { credits: [...] }: a rep's credit notes (returns) go to the boss too
+ *   POST /api/pro/shelf          { key, device, image, mime, products } → { found: [{ name, count }] } (Gemini free tier)
+ *   GET  /api/boss/data          also answers { pro, credits }
  */
 import { DurableObject } from "cloudflare:workers";
 import { FILES, RULES } from "./assets.generated.js";
 import { withTotals, normalizeUnit } from "../public/js/util.js";
 import { newVapidKeys, pushEndpointOk, sendPush } from "./webpush.js";
+import { shelfCount } from "./shelf.js";
+
+// Marlon Pro: the price per rep per month (whole cents) and the free-tier guard for shelf photos.
+export const PRO_REP_CENTS = 2500;
+const SHELF_DAILY_LIMIT = 100; // photos per company per day (keeps one company from using up the shared free quota)
+const SHELF_MAX_PRODUCTS = 120;
+/** A company's Pro price per month in whole cents: reps × $25, minus its discount % (rounded to the cent). Solo = 1 rep. */
+export const proMonthlyCents = (reps, discountPct) => Math.round(Math.max(1, reps) * PRO_REP_CENTS * (1 - Math.min(100, Math.max(0, discountPct || 0)) / 100));
 
 const KINDS = ["open", "setup", "invoice", "voice", "print", "pdf", "picture"];
 const BOSS_PLACES = 2; // boss phones per team (on iPhone, the browser and the Home Screen icon count as two)
@@ -73,13 +88,43 @@ function cleanSignInvoice(raw) {
   const store = txt(raw.store, 120);
   if (!store) return { error: "Add the buyer's name first." };
   const t = withTotals({ items: items.map((it) => ({ name: txt(it.name, 80), qty: it.qty, unit: normalizeUnit(it.unit), price: it.price })) });
+  const credit = cleanCredit(raw.credit, t.total);
   return { inv: {
     id: raw.id, number: Number.isInteger(raw.number) && raw.number > 0 && raw.number < 1e7 ? raw.number : null,
     date: /^\d{4}-\d{2}-\d{2}$/.test(raw.date || "") ? raw.date : new Date().toISOString().slice(0, 10),
     seller: txt(raw.seller, 120), sellerAddress: txt(raw.sellerAddress, 300), sellerPhone: txt(raw.sellerPhone, 60),
     store, address: txt(raw.address, 300),
     items: t.items.map((it) => ({ name: it.name, qty: it.qty, unit: it.unit, price: it.price, total: it.total })), total: t.total,
+    ...(credit ? { subtotal: t.total, credit, total: Math.round((t.total - credit.amount) * 100) / 100 } : {}),
   } };
+}
+
+/**
+ * A credit (from credit notes for returned goods) taken off an invoice: { amount, notes: [{ id, number, amount }] }.
+ * Never more than the items' subtotal; null when there's none. The total is subtotal − credit.
+ */
+function cleanCredit(raw, subtotal) {
+  if (!raw || typeof raw !== "object") return null;
+  const notes = (Array.isArray(raw.notes) ? raw.notes.slice(0, 50) : []).map((n) => ({
+    id: String(n?.id ?? "").slice(0, 64), number: Number.isInteger(n?.number) && n.number > 0 && n.number < 1e7 ? n.number : null,
+    amount: typeof n?.amount === "number" && Number.isFinite(n.amount) && n.amount > 0 ? Math.round(n.amount * 100) / 100 : 0,
+  })).filter((n) => n.amount > 0);
+  const amount = Math.min(Math.round(notes.reduce((t, n) => t + n.amount * 100, 0)) / 100, subtotal);
+  return amount > 0 ? { amount, notes } : null;
+}
+
+/** A rep's credit note (returned goods), as the boss sees it. */
+function cleanCreditNote(cn) {
+  if (!cn || typeof cn !== "object" || typeof cn.id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(cn.id)) return null;
+  const txt = (v, n = 200) => String(v ?? "").slice(0, n);
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    id: cn.id, number: num(cn.number), date: /^\d{4}-\d{2}-\d{2}$/.test(cn.date || "") ? cn.date : null,
+    store: txt(cn.store, 120), address: txt(cn.address, 300), total: num(cn.total) ?? 0, signed: Boolean(cn.signed), signer: txt(cn.signer, 80),
+    lines: (Array.isArray(cn.lines) ? cn.lines.slice(0, 100) : []).map((l) => ({ name: txt(l?.name, 80), qty: num(l?.qty), unit: txt(l?.unit, 10), price: num(l?.price),
+      total: num(l?.total) ?? 0, reason: l?.reason === "damaged" ? "damaged" : "expired" })),
+    applied: num(cn.applied) ?? 0, updatedAt: txt(cn.updatedAt, 30),
+  };
 }
 
 /** Only the fields the boss dashboard shows, with sane sizes (a rep's phone sends these; nothing else is kept). */
@@ -94,6 +139,7 @@ function cleanInvoice(inv) {
     items: (Array.isArray(inv.items) ? inv.items.slice(0, 300) : []).map((it) => ({ name: txt(it?.name, 80), qty: num(it?.qty), unit: txt(it?.unit, 10), price: num(it?.price), total: num(it?.total) ?? 0 })),
     payment: p ? { status: p.status === "paid" ? "paid" : "unpaid", method: txt(p.method, 10), termsDays: num(p.termsDays), dueDate: txt(p.dueDate, 10), paidAt: txt(p.paidAt, 30), ...(p.markedBy === "boss" ? { markedBy: "boss" } : {}) } : null,
     updatedAt: txt(inv.updatedAt, 30),
+    ...(inv.credit ? { subtotal: num(inv.subtotal) ?? num(inv.total) ?? 0, credit: cleanCredit(inv.credit, num(inv.subtotal) ?? Infinity) } : {}),
   };
 }
 
@@ -158,6 +204,13 @@ export class Stats extends DurableObject {
     this.sql.exec("CREATE INDEX IF NOT EXISTS sign_links_phone ON sign_links (buyer, device, invoice_id)");
     // Web push: each seller phone's push subscription(s) (encrypted), so it hears about signatures even when Marlon is closed.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS push_subs (hash TEXT PRIMARY KEY, buyer TEXT NOT NULL, device TEXT NOT NULL, data TEXT NOT NULL, created TEXT NOT NULL)`);
+    // Marlon Pro: on/off and the discount per company, the reps' credit notes (returns), and the shelf-photo count per day.
+    addColumn("buyers", "pro", "INTEGER NOT NULL DEFAULT 0");
+    addColumn("buyers", "discount_pct", "REAL NOT NULL DEFAULT 0");
+    addColumn("buyers", "pro_since", "TEXT");
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS team_credits (buyer TEXT NOT NULL, device TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
+      updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS shelf_daily (buyer TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (buyer, day))`);
   }
 
   #meta(k) { return this.sql.exec("SELECT v FROM meta WHERE k = ?", k).toArray()[0]?.v ?? null; }
@@ -417,19 +470,44 @@ export class Stats extends DurableObject {
     const devices = all.filter((d) => d.role !== "boss"), bosses = all.filter((d) => d.role === "boss");
     return { id: b.id, name: b.name, kind: b.kind || "solo", devices: b.devices, amountCents: b.amount_cents, created: b.created, off: Boolean(b.off),
       phones: devices, active: devices.filter((d) => !d.off).length, bossKey: b.boss_key || null, bossPhones: bosses, bossPlaces: BOSS_PLACES, slots,
-      invoices: b.kind === "team" ? this.sql.exec("SELECT COUNT(*) AS n FROM team_invoices WHERE buyer = ?", id).toArray()[0].n : 0 };
+      invoices: b.kind === "team" ? this.sql.exec("SELECT COUNT(*) AS n FROM team_invoices WHERE buyer = ?", id).toArray()[0].n : 0,
+      pro: Boolean(b.pro), discountPct: Number(b.discount_pct) || 0, proSince: b.pro_since || null,
+      proMonthlyCents: proMonthlyCents(b.kind === "team" ? b.devices : 1, Number(b.discount_pct) || 0) };
+  }
+
+  /** Marlon Pro on or off for one company, and its discount (0–100 %). */
+  setPro(id, pro, discountPct) {
+    const b = this.#buyer(id);
+    if (!b) return null;
+    const since = pro ? (b.pro ? b.proSince : new Date().toISOString()) : null;
+    this.sql.exec("UPDATE buyers SET pro = ?, discount_pct = ?, pro_since = ? WHERE id = ?", pro ? 1 : 0, discountPct, since, id);
+    return this.#buyer(id);
+  }
+
+  /** A shelf photo from a Pro company's active phone: counts it against today's limit. → { ok } | { error } */
+  shelfAllow(key, device) {
+    const b = this.#activePhone(key, device);
+    if (!b) return { error: "off" };
+    if (!b.pro) return { error: "notpro" };
+    const day = todayUTC();
+    const n = this.sql.exec("SELECT n FROM shelf_daily WHERE buyer = ? AND day = ?", b.id, day).toArray()[0]?.n || 0;
+    if (n >= SHELF_DAILY_LIMIT) return { error: "daily" };
+    this.sql.exec("INSERT INTO shelf_daily (buyer, day, n) VALUES (?, ?, 1) ON CONFLICT(buyer, day) DO UPDATE SET n = n + 1", b.id, day);
+    this.sql.exec("DELETE FROM shelf_daily WHERE day < ?", addDays(day, -30));
+    return { ok: true };
   }
 
   buyers() {
     const list = this.sql.exec("SELECT id FROM buyers ORDER BY created DESC").toArray().map((r) => this.#buyer(r.id));
     const totalCents = this.sql.exec("SELECT COALESCE(SUM(amount_cents), 0) AS t FROM buyers").toArray()[0].t;
-    return { buyers: list, totalCents, contact: this.contact() };
+    const proMonthly = list.filter((b) => b.pro && !b.off).reduce((t, b) => t + b.proMonthlyCents, 0);
+    return { buyers: list, totalCents, proMonthlyCents: proMonthly, proRepCents: PRO_REP_CENTS, contact: this.contact() };
   }
 
   /** Deletes a buyer or team completely: its phones, rep links, boss phones, passcode, sessions and team invoices. */
   deleteBuyer(id) {
     if (!this.#buyer(id)) return false;
-    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
+    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions", "team_credits", "shelf_daily"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
     this.sql.exec("DELETE FROM buyers WHERE id = ?", id);
     return true;
   }
@@ -437,7 +515,8 @@ export class Stats extends DurableObject {
   /** What's left anywhere for a buyer (used by the tests to prove a delete leaves nothing). */
   leftovers(id) {
     const n = (t, col = "buyer") => this.sql.exec(`SELECT COUNT(*) AS n FROM ${t} WHERE ${col} = ?`, id).toArray()[0].n;
-    return { buyers: n("buyers", "id"), devices: n("buyer_devices"), slots: n("team_slots"), invoices: n("team_invoices"), paid: n("boss_paid"), sessions: n("boss_sessions") };
+    return { buyers: n("buyers", "id"), devices: n("buyer_devices"), slots: n("team_slots"), invoices: n("team_invoices"), paid: n("boss_paid"), sessions: n("boss_sessions"),
+      credits: n("team_credits"), shelf: n("shelf_daily") };
   }
 
   setBuyerOff(id, off) {
@@ -486,7 +565,7 @@ export class Stats extends DurableObject {
     if (d) {
       if (d.off) return { ok: false, reason: "off" };
       this.sql.exec("UPDATE buyer_devices SET last_at = ? WHERE buyer = ? AND device = ?", now, id, device);
-      return { ok: true, team: b.kind === "team", company: b.kind === "team" ? b.name : "" };
+      return { ok: true, team: b.kind === "team", company: b.kind === "team" ? b.name : "", pro: b.pro };
     }
     if (onlyKnown) return { ok: false, reason: "off" };
     // A rep's personal link belongs to the first phone that opened it: any other phone is turned away.
@@ -495,7 +574,7 @@ export class Stats extends DurableObject {
     if (b.active >= b.devices) return { ok: false, reason: "full" };
     const slotName = slot ? b.slots.find((x) => x.key === slot)?.name || "" : "";
     this.sql.exec("INSERT INTO buyer_devices (buyer, device, label, first_at, last_at, slot_key, boss_name) VALUES (?, ?, ?, ?, ?, ?, ?)", id, device, label, now, now, slot, slotName);
-    return { ok: true, team: b.kind === "team", company: b.kind === "team" ? b.name : "", repName: slotName };
+    return { ok: true, team: b.kind === "team", company: b.kind === "team" ? b.name : "", repName: slotName, pro: b.pro };
   }
 
   /** What a link is, without using it up (shown before switching a phone to it). */
@@ -520,7 +599,7 @@ export class Stats extends DurableObject {
     return { key, buyer: this.#buyer(id) };
   }
 
-  teamSync(key, device, repName, invoices) {
+  teamSync(key, device, repName, invoices, credits = []) {
     const { b } = this.#resolve(key);
     const id = b?.id;
     if (!b || b.kind !== "team") return { ok: false, reason: "unknown" };
@@ -539,10 +618,16 @@ export class Stats extends DurableObject {
         ON CONFLICT(buyer, id) DO UPDATE SET data = excluded.data, updated = excluded.updated, device = excluded.device`, id, device, inv.id, JSON.stringify(inv), now);
       stored.push(inv.id);
     }
+    const storedCredits = [];
+    for (const cn of credits) {
+      this.sql.exec(`INSERT INTO team_credits (buyer, device, id, data, updated) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(buyer, id) DO UPDATE SET data = excluded.data, updated = excluded.updated, device = excluded.device`, id, device, cn.id, JSON.stringify(cn), now);
+      storedCredits.push(cn.id);
+    }
     // What the boss marked paid on this phone's invoices, so the phone shows it too.
     const paid = this.sql.exec("SELECT p.id, p.paid_at FROM boss_paid p JOIN team_invoices t ON t.buyer = p.buyer AND t.id = p.id WHERE p.buyer = ? AND t.device = ?", id, device)
       .toArray().map((r) => ({ id: r.id, paidAt: r.paid_at }));
-    return { ok: true, stored, paid };
+    return { ok: true, stored, storedCredits, paid };
   }
 
   /** The boss ticks an invoice as paid (the only change the boss can make). */
@@ -623,7 +708,9 @@ export class Stats extends DurableObject {
     if (!this.#bossDeviceOk(b, s.device)) return { error: "off" };
     const invoices = this.sql.exec("SELECT device, data, updated FROM team_invoices WHERE buyer = ?", b.id).toArray()
       .map((r) => ({ ...JSON.parse(r.data), rep: r.device, receivedAt: r.updated }));
-    return { company: b.name, places: b.devices, slots: this.#bossSlots(b),
+    const credits = b.pro ? this.sql.exec("SELECT device, data, updated FROM team_credits WHERE buyer = ?", b.id).toArray()
+      .map((r) => ({ ...JSON.parse(r.data), rep: r.device, receivedAt: r.updated })) : [];
+    return { company: b.name, places: b.devices, slots: this.#bossSlots(b), pro: b.pro, credits,
       reps: b.phones.map((d, i) => ({ device: d.device, name: d.repName || `Rep ${i + 1}`, label: d.label, off: d.off, lastSeen: d.lastAt })), invoices };
   }
 
@@ -739,7 +826,7 @@ async function api(request, env, path) {
     const device = typeof body.device === "string" && /^[0-9a-f]{32}$/.test(body.device) ? body.device : null;
     if (!key || !device) return json({ ok: false, reason: "unknown", contact: await stub.contact() }, 403);
     const r = await stub.activate(key, device, deviceLabel(request.headers.get("User-Agent") || ""), { onlyKnown: path === "/api/check" });
-    return r.ok ? json({ ok: true, team: Boolean(r.team), company: r.company || "", repName: r.repName || "" }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
+    return r.ok ? json({ ok: true, team: Boolean(r.team), company: r.company || "", repName: r.repName || "", pro: Boolean(r.pro) }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
   }
   if (path === "/api/contact" && request.method === "GET") return json({ contact: await stub.contact() });
   if (path === "/api/link-info" && request.method === "POST") {
@@ -836,8 +923,29 @@ async function api(request, env, path) {
     const list = Array.isArray(body.invoices) ? body.invoices.slice(0, 50) : null;
     if (!key || !device || !list) return json({ ok: false, reason: "unknown" }, 400);
     const clean = list.map(cleanInvoice).filter(Boolean);
-    const r = await stub.teamSync(key, device, String(body.rep || "").replace(/\s+/g, " ").trim().slice(0, 60), clean);
-    return r.ok ? json({ ok: true, stored: r.stored, paid: r.paid }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
+    const credits = (Array.isArray(body.credits) ? body.credits.slice(0, 50) : []).map(cleanCreditNote).filter(Boolean);
+    const r = await stub.teamSync(key, device, String(body.rep || "").replace(/\s+/g, " ").trim().slice(0, 60), clean, credits);
+    return r.ok ? json({ ok: true, stored: r.stored, storedCredits: r.storedCredits, paid: r.paid }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
+  }
+  if (path === "/api/pro/shelf" && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 3_000_000); } catch { return json({ error: "That photo is too big. Try again." }, 400); }
+    const key = hex32(body.key), device = hex32(body.device);
+    if (!key || !device) return json({ error: "This phone isn't set up for Pro." }, 400);
+    const mime = body.mime === "image/png" ? "image/png" : body.mime === "image/webp" ? "image/webp" : "image/jpeg";
+    const image = typeof body.image === "string" && body.image.length > 100 && body.image.length < 2_900_000 && /^[A-Za-z0-9+/=]+$/.test(body.image) ? body.image : null;
+    if (!image) return json({ error: "That photo couldn't be read. Take it again." }, 400);
+    const products = [...new Set((Array.isArray(body.products) ? body.products : []).map((x) => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, 80)).filter(Boolean))].slice(0, SHELF_MAX_PRODUCTS);
+    if (!products.length) return json({ error: "Add your products first (Settings), so Marlon knows what to look for." }, 400);
+    const allow = await stub.shelfAllow(key, device);
+    if (allow.error === "off") return json({ error: "This phone is switched off.", contact: await stub.contact() }, 403);
+    if (allow.error === "notpro") return json({ error: "Shelf photo is part of Marlon Pro. Ask the seller to switch Pro on for your company." }, 403);
+    if (allow.error === "daily") return json({ error: `Your company has used today's ${SHELF_DAILY_LIMIT} shelf photos. Try again tomorrow.` }, 429);
+    const r = await shelfCount(env, { image, mime, products });
+    if (r.error === "setup") return json({ error: r.message }, 503);
+    if (r.error === "limit") return json({ error: r.message }, 429);
+    if (r.error) return json({ error: r.message }, 502);
+    return json({ ok: true, found: r.found });
   }
   if (path === "/api/boss/activate" && request.method === "POST") {
     let body;
@@ -957,6 +1065,16 @@ async function api(request, env, path) {
     if (!id || !Number.isInteger(n) || n < 1) return json({ error: "bad request" }, 400);
     const r = await stub.replaceRepLink(id, n);
     return r ? json({ buyer: r.buyer, link: `${new URL(request.url).origin}/?k=${r.key}` }) : json({ error: "not found" }, 404);
+  }
+  if (path === "/api/console/pro" && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 500); } catch { return json({ error: "bad request" }, 400); }
+    const id = hex32(body.id);
+    const pct = typeof body.discountPct === "number" ? body.discountPct : Number(String(body.discountPct ?? "0").replace(/[%\s]/g, "") || 0);
+    if (!id) return json({ error: "bad request" }, 400);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return json({ error: "The discount must be between 0 and 100 %." }, 400);
+    const buyer = await stub.setPro(id, Boolean(body.pro), Math.round(pct * 100) / 100);
+    return buyer ? json({ buyer }) : json({ error: "not found" }, 404);
   }
   if (path === "/api/console/contact" && request.method === "POST") {
     let body;

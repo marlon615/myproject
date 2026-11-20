@@ -5,7 +5,7 @@
  * print sheet.
  */
 import { parseInvoiceHash } from "./codec.js";
-import { h, invoiceNo, money, prettyDate, qtyWithUnit, thankYouText } from "./util.js";
+import { h, invoiceNo, money, prettyDate, qtyWithUnit, thankYouText, creditLabel } from "./util.js";
 import { deliverFile, makeReceiptFile } from "./share.js";
 import { toast } from "./ui.js";
 
@@ -39,6 +39,9 @@ function render() {
           h("span", { class: "item-calc num" }, `${qtyWithUnit(it.qty, it.unit)} × ${it.price === null ? "(no price)" : money(it.price)}`),
           h("span", { class: "item-amt num" }, money(it.total))))
           : h("li", { class: "item item-none" }, "No items")),
+      inv.credit ? h("div", { class: "credit-lines" },
+        h("p", { class: "credit-line" }, h("span", {}, "Subtotal"), h("span", { class: "num" }, money(inv.subtotal))),
+        h("p", { class: "credit-line" }, h("span", {}, creditLabel(inv.credit)), h("span", { class: "num" }, `-${money(inv.credit.amount)}`))) : null,
       h("div", { class: "total" },
         h("span", { class: "total-label" }, "Total", h("small", {}, `${n} item${n === 1 ? "" : "s"}`)),
         h("strong", { class: "total-amt num" }, money(inv.total))),

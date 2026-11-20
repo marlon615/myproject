@@ -5,7 +5,7 @@
  */
 import { invoiceToUrl } from "./codec.js";
 import { makeQr } from "./qr.js";
-import { business, invoiceNo, loadImage, money, prettyDate, qtyWithUnit, signedByText, thankYouText, tidy, withTotals } from "./util.js";
+import { business, creditLabel, invoiceNo, loadImage, money, prettyDate, qtyWithUnit, signedByText, thankYouText, tidy, withTotals } from "./util.js";
 
 /** Everything the receipt shows, as ready-to-print text. */
 export function receiptModel(inv) {
@@ -26,6 +26,8 @@ export function receiptModel(inv) {
       hasPrice: it.price !== null,
     })),
     totalText: money(t.total),
+    // Marlon Pro: credit from credit notes (returned goods) taken off this invoice. null when there's none.
+    credit: t.credit ? { subtotalText: money(t.subtotal), label: creditLabel(t.credit), amountText: `-${money(t.credit.amount)}` } : null,
     itemCount: t.items.length,
     signed: Boolean(t.signature) || t.signed === true, // customer copies carry the "signed" mark, not the drawing
     signature: t.signature || null,
@@ -133,6 +135,7 @@ export async function renderReceiptCanvas(inv, { paper = 58, scale = 2, includeQ
     gap(3);
   }
   rule(false);
+  if (m.credit) { lr("Subtotal", m.credit.subtotalText, font.body); lr(m.credit.label, m.credit.amountText, font.body); gap(4); }
   lr("TOTAL", m.totalText, font.total);
   text(itemCountText(m.itemCount), font.small, { color: SOFT });
 

@@ -98,6 +98,14 @@ function layout(m, sig, k) {
     ops.push({ kind: "rule", x1: margin, x2: W - margin, y, w: px(0.6), color: LINE });
   }
   y += px(12);
+  if (m.credit) {
+    text("Subtotal", font.body, col.price - px(50), y + font.body.px, "right", SOFT);
+    text(m.credit.subtotalText, font.body, col.total - px(8), y + font.body.px, "right");
+    y += Math.round(font.body.px * 1.6);
+    text(m.credit.label, font.body, col.price - px(50), y + font.body.px, "right", SOFT);
+    text(m.credit.amountText, font.body, col.total - px(8), y + font.body.px, "right");
+    y += Math.round(font.body.px * 1.6) + px(6);
+  }
   text(itemCountText(m.itemCount), font.small, margin, y + font.total.px * 0.8, "left", SOFT);
   text("TOTAL", font.total, col.price - px(50), y + font.total.px, "right");
   text(m.totalText, font.total, col.total - px(8), y + font.total.px, "right");

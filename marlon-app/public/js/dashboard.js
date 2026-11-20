@@ -4,10 +4,14 @@
  * Renders into <section id="dashboard"> of index.html. app.js calls initDashboard() once, then
  * showDashboard() / hideDashboard() as the "#/owner" route opens and closes.
  * Everything is read from db.js on this phone. Stored text is only ever rendered with h() / textContent.
+ * Marlon Pro (company has Pro on): a "Pro" tab with the accountant summary (by quarter and for the year, to download
+ * or print) and returns (credit notes) by store and by product.
  */
 import {
-  eraseEverything, exportBackup, importBackup, invoices, products, profile, requestPersistence, settings, storageStatus,
+  credits, eraseEverything, exportBackup, importBackup, invoices, products, profile, requestPersistence, settings, storageStatus,
 } from "./db.js";
+import { accountantSummary, reportYears, returnsBreakdown, summaryCsv } from "./pro-report.js";
+import { creditNoteView, shareCreditNotePdf } from "./pro.js";
 import {
   UNITS, UNIT_NAMES, business, parseAmount, priceInputText, setBusiness, h, invoiceNo, money, monthLabel, normalizeUnit, parseISODate, prettyDate, qtyText, qtyWithUnit, storeKey, tidy, toCents, todayISO,
   weekStartISO, withTotals, signedByText,
@@ -31,7 +35,8 @@ const TOP_ROWS = 5;                    // rows in Top stores / Products sold bef
 const MAX_MONTHS = 12;
 const NOTICE_SEEN_KEY = "dashboard.pinResetNoticeSeen";   // localStorage: the pinResetAt already acknowledged
 
-const TABS = [["overview", "Overview"], ["history", "History"], ["settings", "Settings"]];
+const BASE_TABS = [["overview", "Overview"], ["history", "History"], ["settings", "Settings"]];
+let TABS = BASE_TABS; // + "Pro" when the company has Marlon Pro
 const FILTERS = [["all", "All"], ["month", "This month"], ["unpaid", "Unpaid"], ["unsigned", "Not signed"]];
 const RANGES = [["month", "This month"], ["all", "All time"]];
 const KEYS = [["1", ""], ["2", "ABC"], ["3", "DEF"], ["4", "GHI"], ["5", "JKL"], ["6", "MNO"], ["7", "PQRS"], ["8", "TUV"], ["9", "WXYZ"]];
@@ -447,10 +452,12 @@ function cancelPinFlow() {
 // ── Dashboard shell ──────────────────────────────────────────────────────
 
 async function loadData() {
-  const [list, prods, paper, pinResetAt] = await Promise.all([
-    invoices.all(), products.all({ includeHidden: true }), settings.get("paper", 58), settings.get("pinResetAt", null),
+  const [list, prods, paper, pinResetAt, lic, cns] = await Promise.all([
+    invoices.all(), products.all({ includeHidden: true }), settings.get("paper", 58), settings.get("pinResetAt", null), settings.get("license", null), credits.all(),
   ]);
-  data = { invoices: list.map(withTotals), products: prods, paper: Number(paper) === 80 ? 80 : 58, pinResetAt };
+  data = { invoices: list.map(withTotals), products: prods, paper: Number(paper) === 80 ? 80 : 58, pinResetAt, pro: Boolean(lic?.pro), credits: cns };
+  TABS = data.pro ? [BASE_TABS[0], BASE_TABS[1], ["pro", "Pro"], BASE_TABS[2]] : BASE_TABS;
+  if (view.tab === "pro" && !data.pro) view.tab = "overview";
 }
 
 async function showApp() {
@@ -537,12 +544,87 @@ function scrollToPanel() {
 
 function renderPanel() {
   let content;
-  if (view.tab === "settings") content = settingsView();
+  if (view.tab === "pro" && data.pro) content = proView();
+  else if (view.tab === "settings") content = settingsView();
   else if (view.tab === "history") {
     const inv = view.detailId && data.invoices.find((x) => x.id === view.detailId);
     content = inv ? detailView(inv) : historyView();
   } else content = overviewView();
   ui.panel.replaceChildren(...content);
+}
+
+// ── Marlon Pro: accountant summary and returns ──────────────────────────
+
+const cnNo = (n) => `CN-${String(n || 0).padStart(4, "0")}`;
+function proView() {
+  const years = reportYears(data.invoices, data.credits);
+  const year = years.includes(view.proYear) ? view.proYear : years[0];
+  const s = accountantSummary({ invoices: data.invoices, credits: data.credits, year });
+  const yearSel = h("select", { class: "review-select pro-year", id: "dash-acct-year", "aria-label": "Year", onchange: (e) => { view.proYear = Number(e.target.value); renderPanel(); } },
+    years.map((y) => h("option", { value: String(y) }, `Year ${y}`)));
+  yearSel.value = String(year);
+  const card = (title, sub, q, big = false) => h("div", { class: `pro-q${big ? " is-year" : ""}`, dataset: { q: title } },
+    h("div", { class: "pro-q-head" }, h("strong", {}, title), h("span", {}, sub)),
+    h("p", { class: "pro-q-net num" }, money(q.net)), h("p", { class: "pro-q-label" }, "Net sales"),
+    h("dl", { class: "pro-q-rows" },
+      h("dt", {}, "Gross sales"), h("dd", { class: "num" }, money(q.gross)),
+      h("dt", {}, "Returns"), h("dd", { class: "num" }, q.returns ? `−${money(q.returns)}` : money(0)),
+      h("dt", {}, "Received"), h("dd", { class: "num" }, money(q.received)),
+      h("dt", {}, "Not yet paid"), h("dd", { class: "num" }, money(q.unpaid)),
+      h("dt", {}, "Invoices"), h("dd", { class: "num" }, String(q.invoices))));
+  const csv = () => summaryCsv({ company: business.name || "Marlon", year, invoices: data.invoices, credits: data.credits });
+  const rb = returnsBreakdown(data.credits);
+  const table = (id, head, rows) => h("table", { class: "dash-table", id }, h("thead", {}, h("tr", {}, head.map((x) => h("th", { scope: "col" }, x)))), h("tbody", {}, rows));
+  return [
+    h("section", { class: "dash-section pro-acct", id: "dash-accountant", "aria-labelledby": "dash-h-acct" },
+      h("div", { class: "pro-acct-head" }, h("h2", { class: "section-title", id: "dash-h-acct" }, "Accountant summary"), yearSel),
+      h("p", { class: "dash-note" }, `${business.name || "Your business"} · sales for ${year}, by quarter and for the year ending 31 December ${year}.`),
+      h("div", { class: "pro-quarters" }, s.quarters.map((q) => card(q.q, q.months, q)), card(`Year ${year}`, "Jan – Dec", s.total, true)),
+      h("p", { class: "pro-acct-note", role: "note" }, "Prepared by Marlon from the invoices and credit notes on this phone. Your accountant still needs to check it before you file your taxes."),
+      h("div", { class: "pro-acct-actions" },
+        h("button", { type: "button", class: "btn btn-primary btn-block", id: "dash-csv", onclick: () => shareText(csv(), `${(business.name || "marlon").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-sales-${year}.csv`) }, "Download for accountant (CSV)"),
+        h("button", { type: "button", class: "btn btn-block", id: "dash-print", onclick: () => printSection("dash-accountant") }, "Print / Save as PDF"))),
+    h("section", { class: "dash-section", id: "dash-returns", "aria-labelledby": "dash-h-ret" },
+      h("h2", { class: "section-title", id: "dash-h-ret" }, "Returns"),
+      h("p", { class: "dash-note" }, data.credits.length ? `${rb.notes} credit note${rb.notes === 1 ? "" : "s"} · ${money(rb.total)} credited. Each one comes off that store's next invoice automatically.` : "No returns yet. Tap “Return” on the invoice screen to log one."),
+      ...(data.credits.length ? [
+        h("h3", { class: "pro-h3" }, "By store"),
+        table("dash-ret-store", ["Store", "Credit notes", "Amount"], rb.byStore.map((x) => h("tr", {}, h("td", {}, x.store), h("td", { class: "num" }, String(x.notes)), h("td", { class: "num" }, money(x.amount))))),
+        h("h3", { class: "pro-h3" }, "By product"),
+        table("dash-ret-product", ["Product", "Returned", "Amount"], rb.byProduct.map((x) => h("tr", {}, h("td", {}, x.name),
+          h("td", { class: "num" }, x.qtyText, h("small", { class: "pro-sub" }, [x.expired ? `${x.expired} expired` : "", x.damaged ? `${x.damaged} damaged` : ""].filter(Boolean).join(", "))),
+          h("td", { class: "num" }, money(x.amount))))),
+        h("h3", { class: "pro-h3" }, `Credit notes (${data.credits.length})`),
+        h("div", { class: "pro-cns" }, data.credits.map((cn) => {
+          const left = credits.left(cn);
+          return h("details", { class: "pro-cn", dataset: { id: cn.id } },
+            h("summary", {}, h("span", {}, h("strong", {}, `${cnNo(cn.number)} · ${cn.store}`), h("small", {}, `${prettyDate(cn.date)} · ${left <= 0 ? "fully taken off invoices" : left < cn.total ? `${money(left)} still to come off` : "comes off the next invoice"}`)),
+              h("strong", { class: "num" }, money(cn.total))),
+            creditNoteView(cn),
+            h("button", { type: "button", class: "btn btn-block", onclick: (e) => shareCreditNotePdf(cn, e.currentTarget) }, "Share PDF"));
+        })),
+      ] : [])),
+  ];
+}
+
+async function shareText(text, name) {
+  const file = new File([text], name, { type: "text/csv" });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e?.name === "AbortError") return; }
+  }
+  const url = URL.createObjectURL(file);
+  const a = h("a", { href: url, download: name, style: "display:none" });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  toast("Saved to your downloads.");
+}
+
+function printSection(id) {
+  document.body.dataset.print = id;
+  const done = () => { delete document.body.dataset.print; window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 1500);
 }
 
 // ── Overview: totals ─────────────────────────────────────────────────────
@@ -1090,7 +1172,8 @@ async function deleteInvoice(inv) {
 // ── Settings ─────────────────────────────────────────────────────────────
 
 function settingsView() {
-  return [businessSection(), productsSection(), printerSection(), backupSection(), storageSection(), usageSection(), pinSection(), eraseSection()];
+  return [businessSection(), productsSection(), printerSection(), backupSection(), storageSection(), usageSection(), pinSection(), eraseSection(),
+    h("p", { class: "dash-terms" }, h("a", { href: "/terms", target: "_blank", rel: "noopener" }, "Terms and conditions (including Marlon Pro)"))];
 }
 
 /** The business's own details (from the setup screen): on the invoice screen, receipts, PDFs and QR pages. */

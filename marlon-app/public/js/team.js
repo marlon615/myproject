@@ -11,13 +11,17 @@
  * Back from the server: invoices the boss marked paid, which then show as paid on this phone too (once a minute
  * while the app is open, and with every send).
  *
+ * Marlon Pro: the rep's credit notes (returns) go to the boss the same way (number, date, store, products with
+ * quantities, prices and reasons, total, signed yes/no, how much has come off invoices). Not the signature picture.
+ *
  *   startTeamSync()          // on a team rep's phone, after the app has opened
  *   syncNow() → { sent, waiting }
  */
-import { invoices, profile, settings } from "./db.js";
+import { credits, invoices, profile, settings } from "./db.js";
 import { withTotals } from "./util.js";
 
 const SENT = "teamSent"; // invoice id → what was last sent (exactly), so only changes go again
+const SENT_CREDITS = "teamCreditsSent"; // credit note id → what was last sent
 let running = null;
 let started = false;
 let lastAsked = 0; // when this phone last asked the server what the boss marked paid
@@ -50,6 +54,17 @@ function forBoss(inv) {
     payment: t.payment ? { status: t.payment.status, method: t.payment.method || "", termsDays: t.payment.termsDays ?? null, dueDate: t.payment.dueDate || "", paidAt: t.payment.paidAt || "",
       ...(t.payment.markedBy === "boss" ? { markedBy: "boss" } : {}) } : null,
     updatedAt: t.updatedAt || "",
+    ...(t.credit ? { subtotal: t.subtotal, credit: { amount: t.credit.amount, notes: t.credit.notes.map((n) => ({ id: n.id, number: n.number, amount: n.amount })) } } : {}),
+  };
+}
+
+/** What the boss sees of a credit note (Marlon Pro returns). */
+function creditForBoss(cn) {
+  return {
+    id: cn.id, number: cn.number, date: cn.date, store: cn.store || "", address: cn.address || "", total: cn.total, signed: Boolean(cn.signature), signer: cn.signerName || "",
+    lines: cn.lines.map((l) => ({ name: l.name, qty: l.qty, unit: l.unit || "each", price: l.price, total: l.total, reason: l.reason })),
+    applied: Math.round(Object.values(cn.appliedTo || {}).reduce((t, a) => t + Math.round((a.amount || 0) * 100), 0)) / 100,
+    updatedAt: cn.updatedAt || "",
   };
 }
 
@@ -67,25 +82,38 @@ export async function syncNow() {
       const text = JSON.stringify(b);
       if (sent[b.id] !== text) pending.push({ b, text });
     }
+    const sentCredits = (await settings.get(SENT_CREDITS, {})) || {};
+    const pendingCredits = [];
+    for (const cn of await credits.all()) {
+      const b = creditForBoss(cn), text = JSON.stringify(b);
+      if (sentCredits[b.id] !== text) pendingCredits.push({ b, text });
+    }
     let done = 0;
     // Nothing to send: still ask (once a minute) whether the boss marked anything paid.
-    if (!pending.length && Date.now() - lastAsked >= ASK_EVERY) pending.push(null);
-    for (let i = 0; i < pending.length; i += 50) {
+    if (!pending.length && !pendingCredits.length && Date.now() - lastAsked >= ASK_EVERY) pending.push(null);
+    const rounds = Math.max(pending.length, pendingCredits.length);
+    for (let i = 0; i < rounds; i += 50) {
       const batch = pending.slice(i, i + 50).filter(Boolean);
+      const creditBatch = pendingCredits.slice(i, i + 50);
       let res;
       try {
         res = await fetch("/api/team/sync", {
           method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
-          body: JSON.stringify({ key: lic.key, device: lic.device, rep: me?.repName || "", invoices: batch.map((x) => x.b) }),
+          body: JSON.stringify({ key: lic.key, device: lic.device, rep: me?.repName || "", invoices: batch.map((x) => x.b), ...(creditBatch.length ? { credits: creditBatch.map((x) => x.b) } : {}) }),
         });
       } catch { break; } // no signal: try again later
       if (!res.ok) break; // switched off (the licence check blocks the app) or a server hiccup: try later
       lastAsked = Date.now();
-      const { stored = [], paid = [] } = await res.json().catch(() => ({}));
+      const { stored = [], storedCredits = [], paid = [] } = await res.json().catch(() => ({}));
       await applyBossPaid(paid);
       const now = (await settings.get(SENT, {})) || {};
       for (const x of batch) if (stored.includes(x.b.id)) { now[x.b.id] = x.text; done++; }
       await settings.set(SENT, now);
+      if (creditBatch.length) {
+        const nowC = (await settings.get(SENT_CREDITS, {})) || {};
+        for (const x of creditBatch) if (storedCredits.includes(x.b.id)) nowC[x.b.id] = x.text;
+        await settings.set(SENT_CREDITS, nowC);
+      }
     }
     return { sent: done, waiting: pending.filter(Boolean).length - done };
   })().finally(() => { running = null; });

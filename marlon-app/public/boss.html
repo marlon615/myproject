@@ -61,6 +61,33 @@
     .boss-link-input { font-size: 14px; }
     .boss-actions { display: flex; gap: 10px; flex-wrap: wrap; }
     .num { font-variant-numeric: tabular-nums; }
+    /* Marlon Pro */
+    .boss-pro-tag { display: inline-block; vertical-align: middle; margin-left: 10px; font-family: var(--font); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; padding: 4px 9px; border-radius: 999px; background: #0f1411; color: #9be3b9; }
+    .boss-pro-card { display: grid; gap: 10px; }
+    .boss-pro-card h2 { margin: 0; }
+    .boss-rep-head select { min-height: 40px; }
+    .boss-quarters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .boss-q { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper-2); min-width: 0; }
+    .boss-q.is-year { grid-column: 1 / -1; background: #eef7f1; border-color: #2f7a52; }
+    .boss-q-head { display: flex; justify-content: space-between; gap: 6px; font-size: .82rem; color: var(--ink-2); }
+    .boss-q-head strong { color: var(--ink); }
+    .boss-q-net { margin: 6px 0 0; font-family: var(--font-display); font-size: clamp(19px, 5.4vw, 26px); font-weight: 700; overflow-wrap: anywhere; }
+    .boss-q-label { margin: 0 0 6px; font-size: .74rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    .boss-q-rows { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin: 0; font-size: .84rem; }
+    .boss-q-rows dt { color: var(--ink-2); }
+    .boss-q-rows dd { margin: 0; text-align: right; font-weight: 650; }
+    .boss-acct-note { margin: 0; padding: 10px 12px; border-radius: var(--radius-sm); background: #fff7e8; border-left: 4px solid #c2702a; font-size: .9rem; font-weight: 600; color: #6b4310; }
+    .boss-h3 { margin: 6px 0 0; font-size: .8rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
+    .boss-sub { display: block; font-size: .76rem; color: var(--muted); font-weight: 500; }
+    .boss-credit { color: #17633f; font-weight: 700; }
+    .boss-cn-list summary { cursor: pointer; font-weight: 700; min-height: 40px; display: flex; align-items: center; }
+    @media (prefers-color-scheme: dark) { .boss-q.is-year { background: #16271d; } .boss-acct-note { background: #2c2213; color: #f0c48a; } .boss-credit { color: #6cc495; } }
+    @media print {
+      body[data-print] .boss-bar, body[data-print] .boss-no-print { display: none !important; }
+      body[data-print="boss-accountant"] .boss > *:not(#boss-accountant) { display: none !important; }
+      body[data-print] { background: #fff; color: #000; }
+      body[data-print] .boss-q { break-inside: avoid; }
+    }
   </style>
   <script type="module" src="/js/boss.js"></script>
 </head>
