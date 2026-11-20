@@ -294,82 +294,6 @@ function phoneList(b, list, refresh, { boss = false } = {}) {
     } }, d.off ? "Switch on" : "Switch off"))));
 }
 
-/**
- * Marlon Pro for one company. Switching it on first asks how many reps they have; the automatic team discount for that
- * number (the same table as plain Marlon, js/pricing.js) is applied, then any special deal % on top. The monthly total
- * is shown step by step and changes as soon as the number of reps (or the special deal) changes.
- */
-function proBox(b, refresh) {
-  const reps = el("input", { type: "number", class: "con-pro-reps", inputmode: "numeric", min: "1", max: String(MAX_REPS), step: "1", value: String(b.proReps || (b.kind === "team" ? b.devices : 1)), "aria-label": `Number of reps for ${b.name}` });
-  const discount = el("input", { type: "number", class: "con-pro-discount", inputmode: "decimal", min: "0", max: "100", step: "0.5", value: String(b.discountPct || 0), "aria-label": `Special deal % for ${b.name}` });
-  const breakdown = el("ul", { class: "con-pro-lines num", "aria-live": "polite" });
-  const price = el("p", { class: "con-pro-price num" });
-  const save = el("button", { type: "button", class: "btn btn-primary con-pro-save", hidden: true }, "Save changes");
-  const readReps = () => cleanReps(reps.value);
-  const readDeal = () => { const v = Number(discount.value || 0); return Number.isFinite(v) && v >= 0 && v <= 100 ? v : null; };
-  const lines = (pp) => [
-    [`${pp.reps} rep${pp.reps === 1 ? "" : "s"} × $25.00`, money(pp.grossCents)],
-    [pp.tierPct ? `Team discount ${pp.tierPct}% (${pp.tierLabel})` : `Team discount: none for ${pp.tierLabel}`, pp.tierPct ? `−${money(pp.tierCents)}` : money(0)],
-    ...(pp.extraPct ? [[`Special deal ${pp.extraPct}% (on top)`, `−${money(pp.extraCents)}`]] : []),
-  ];
-  const summary = (pp) => `${lines(pp).map(([a, v]) => `${a}: ${v}`).join("\n")}\nMonthly total: ${money(pp.netCents)}`;
-  const show = () => {
-    const r = readReps(), d = readDeal();
-    if (r === null || d === null) {
-      breakdown.replaceChildren();
-      price.textContent = r === null ? "Type how many reps they have (1 or more)." : "The special deal must be between 0 and 100 %.";
-      save.disabled = true;
-      return;
-    }
-    const pp = proPrice(r, d);
-    breakdown.replaceChildren(...lines(pp).map(([a, v]) => el("li", {}, el("span", {}, a), el("span", {}, v))));
-    price.replaceChildren(el("span", {}, "Monthly total"), el("strong", {}, money(pp.netCents)));
-    save.disabled = false;
-    save.hidden = !b.pro || (r === (b.proReps || 0) && d === (b.discountPct || 0));
-  };
-  reps.addEventListener("input", show);
-  discount.addEventListener("input", show);
-  const send = async (body) => {
-    const r = await api("/api/console/pro", { method: "POST", auth: true, body: { id: b.id, ...body } }).catch(() => ({ ok: false, data: {} }));
-    if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return null; }
-    refresh();
-    return r.data;
-  };
-  const switchOn = async () => {
-    const d = readDeal();
-    if (d === null) { alert("The special deal must be between 0 and 100 %."); return; }
-    const answer = prompt(`How many reps does ${b.name} have?`, String(b.proReps || (b.kind === "team" ? b.devices : 1)));
-    if (answer === null) return;
-    const r = cleanReps(answer.trim());
-    if (r === null) { alert("Type how many reps they have: a whole number, 1 or more."); return; }
-    reps.value = String(r);
-    show();
-    const pp = proPrice(r, d);
-    if (!confirm(`Switch Marlon Pro on for ${b.name}?\n\n${summary(pp)}\n\nTheir phones${b.kind === "team" ? " and boss dashboard" : ""} show the Pro features the next time they're online.`)) return;
-    const done = await send({ pro: true, reps: r, discountPct: d, startDate: localToday() });
-    if (done?.notice) showNotice(done.notice, b); // straight away, on this console only
-  };
-  const switchOff = async () => {
-    if (!confirm(`Switch Marlon Pro off for ${b.name}?\n\nThe Pro features disappear from their phones the next time they're online. Their invoices, returns and credit notes are kept.`)) return;
-    await send({ pro: false, discountPct: readDeal() ?? 0 });
-  };
-  save.addEventListener("click", async () => { const r = readReps(), d = readDeal(); if (r !== null && d !== null) await send({ pro: true, reps: r, discountPct: d }); });
-  show();
-  return el("div", { class: b.pro ? "con-pro is-on" : "con-pro", "data-pro": b.pro ? "on" : "off" },
-    el("div", { class: "con-pro-head" },
-      el("strong", {}, "Marlon Pro"),
-      el("span", { class: b.pro ? "con-badge con-badge-pro" : "con-badge con-badge-off" }, b.pro ? `On since ${dateText(b.proSince)}` : "Off")),
-    el("div", { class: "con-pro-fields" },
-      b.pro ? el("label", { class: "con-field con-pro-field" }, "Reps", reps) : null,
-      el("label", { class: "con-field con-pro-field" }, el("span", {}, "Special deal % ", el("small", {}, "(optional, on top)")), discount)),
-    b.pro ? breakdown : el("p", { class: "con-note" }, "Switching Pro on asks how many reps they have, then applies the team discount for that number automatically."),
-    b.pro ? price : null,
-    b.pro ? noticesList(b, refresh) : null,
-    el("div", { class: "con-actions" },
-      el("button", { type: "button", class: b.pro ? "btn btn-ghost con-danger con-pro-toggle" : "btn btn-primary con-pro-toggle", onclick: () => (b.pro ? switchOff() : switchOn()) }, b.pro ? "Switch Pro off" : "Switch Pro on"),
-      save));
-}
-
 // ── Pro payment notices: shown to the maker only; sent to the customer only by tapping WhatsApp, PDF or email ──
 
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
@@ -472,28 +396,106 @@ async function sharePdf(n) {
   return "downloaded";
 }
 
-/** The buyer's phone (with country code, for WhatsApp) and email: shown, and changed in place. */
-function contactBox(b, refresh) {
-  const phone = el("input", { type: "tel", class: "con-contact-phone", autocomplete: "off", maxlength: "40", placeholder: "+1 876 555 0123", value: b.phone || "", "aria-label": `Phone for ${b.name}` });
-  const email = el("input", { type: "email", class: "con-contact-email", autocomplete: "off", maxlength: "120", placeholder: "name@example.com", value: b.email || "", "aria-label": `Email for ${b.name}` });
-  const msg = el("p", { class: "con-error con-contact-error", role: "alert", hidden: true });
-  const save = el("button", { type: "submit", class: "btn con-contact-save" }, "Save contact");
-  return el("details", { class: "con-contact" },
-    el("summary", {}, "Contact", el("span", { class: "con-contact-sum" }, b.phone || b.email ? ` · ${[b.phone, b.email].filter(Boolean).join(" · ")}` : " · none saved")),
-    el("form", { class: "con-contact-form", novalidate: true, onsubmit: async (e) => {
-      e.preventDefault();
-      msg.hidden = true;
-      const bad = cleanPhone(phone.value).error || cleanEmail(email.value).error;
-      if (bad) { msg.textContent = bad; msg.hidden = false; return; }
-      save.disabled = true;
-      const r = await api("/api/console/buyer-contact", { method: "POST", auth: true, body: { id: b.id, phone: phone.value, email: email.value } }).catch(() => ({ ok: false, data: { error: "No connection. Try again when you're online." } }));
-      save.disabled = false;
-      if (!r.ok) { msg.textContent = r.data.error || "That didn't work. Please try again."; msg.hidden = false; return; }
-      refresh();
-    } },
-    el("label", { class: "con-field" }, el("span", {}, "Phone ", el("small", {}, "(with country code, for WhatsApp)")), phone),
-    el("label", { class: "con-field" }, "Email", email),
-    msg, save));
+// ── The customer's edit page (#buyer/<id>): tap any buyer card to open it ─────────────────────────────────────
+
+const openBuyer = (id) => { location.hash = `#buyer/${id}`; };
+/** The whole card opens the customer's page, except taps on its own buttons, links and fields. */
+function tappable(b, card) {
+  card.classList.add("is-tappable");
+  card.addEventListener("click", (e) => {
+    if (e.target.closest("button, a, input, select, textarea, summary, details, label, .con-link")) return;
+    openBuyer(b.id);
+  });
+  card.querySelector(".con-buyer-head")?.append(el("button", { type: "button", class: "btn con-edit", "aria-label": `Edit ${b.name}`, onclick: () => openBuyer(b.id) }, "Edit ›"));
+  return card;
+}
+/** On the card: contact and Pro at a glance (they're changed on the customer's page). */
+function cardSummary(b) {
+  return el("div", { class: "con-summary" },
+    el("p", {}, el("strong", {}, "Contact: "), b.phone || b.email ? [b.phone, b.email].filter(Boolean).join(" · ") : el("span", { class: "con-muted" }, "none saved")),
+    el("p", {}, el("strong", {}, "Marlon Pro: "), b.pro ? `on · ${b.proReps} rep${b.proReps === 1 ? "" : "s"} · ${money(b.proMonthlyCents)} a month` : el("span", { class: "con-muted" }, "off")),
+    el("button", { type: "button", class: "btn btn-primary btn-block con-edit-big", onclick: () => openBuyer(b.id) }, "Edit customer ›"));
+}
+
+/** Name, phone, email (Contact, at the top), then Marlon Pro (on/off, reps, special deal, the monthly total), one Save. */
+function editPage(b, back) {
+  const field = (label, input, hint = null) => el("label", { class: "con-field" }, el("span", {}, label, hint ? el("small", {}, ` ${hint}`) : null), input);
+  const name = el("input", { type: "text", id: "ed-name", maxlength: "80", autocomplete: "off", autocapitalize: "words", value: b.name });
+  const phone = el("input", { type: "tel", id: "ed-phone", maxlength: "40", autocomplete: "off", placeholder: "+1 876 555 0123", value: b.phone || "" });
+  const email = el("input", { type: "email", id: "ed-email", maxlength: "120", autocomplete: "off", placeholder: "name@example.com", value: b.email || "" });
+  const pro = el("input", { type: "checkbox", id: "ed-pro", role: "switch", checked: b.pro || null });
+  const reps = el("input", { type: "number", id: "ed-reps", inputmode: "numeric", min: "1", max: String(MAX_REPS), step: "1", value: String(b.proReps || (b.kind === "team" ? b.devices : 1)) });
+  const deal = el("input", { type: "number", id: "ed-deal", inputmode: "decimal", min: "0", max: "100", step: "0.5", value: String(b.discountPct || 0) });
+  const repsLabel = el("span", {}, "Reps");
+  const switchText = el("span", { class: "ed-switch-text" }, b.pro ? "On" : "Off");
+  const lines = el("ul", { class: "con-pro-lines num", "aria-live": "polite" });
+  const total = el("p", { class: "con-pro-price num" });
+  const proFields = el("div", { class: "ed-pro-fields" }, el("label", { class: "con-field" }, repsLabel, reps), field("Special deal %", deal, "(optional, on top of the team discount)"), lines, total);
+  const msg = el("p", { class: "con-error ed-error", role: "alert", hidden: true });
+  const save = el("button", { type: "submit", class: "btn btn-primary btn-block btn-tall ed-save" }, "Save");
+  const errorAt = (input, text) => { msg.textContent = text; msg.hidden = false; for (const x of [name, phone, email, reps, deal]) x.classList.toggle("is-wrong", x === input); input?.focus(); };
+  const show = () => {
+    proFields.hidden = !pro.checked;
+    switchText.textContent = pro.checked ? "On" : "Off";
+    repsLabel.textContent = pro.checked && !b.pro ? "How many reps do they have?" : "Reps";
+    const r = cleanReps(reps.value), d = Number(deal.value || 0);
+    if (!pro.checked) return;
+    if (r === null || !Number.isFinite(d) || d < 0 || d > 100) { lines.replaceChildren(); total.textContent = r === null ? "Type how many reps they have (1 or more)." : "The special deal must be between 0 and 100 %."; return; }
+    const pp = proPrice(r, d);
+    lines.replaceChildren(...noticeLines({ price: pp }).map(([a, v]) => el("li", {}, el("span", {}, a), el("span", {}, v))));
+    total.replaceChildren(el("span", {}, "Monthly total"), el("strong", {}, money(pp.netCents)));
+  };
+  pro.addEventListener("change", () => { show(); if (pro.checked && !b.pro) { reps.focus(); reps.select(); } });
+  reps.addEventListener("input", show);
+  deal.addEventListener("input", show);
+  const form = el("form", { class: "ed-form", novalidate: true, onsubmit: async (e) => {
+    e.preventDefault();
+    msg.hidden = true;
+    for (const x of [name, phone, email, reps, deal]) x.classList.remove("is-wrong");
+    if (!name.value.trim()) return errorAt(name, "Type the customer's name.");
+    const ph = cleanPhone(phone.value), em = cleanEmail(email.value);
+    if (ph.error) return errorAt(phone, ph.error);
+    if (em.error) return errorAt(email, em.error);
+    const r = cleanReps(reps.value), d = Number(deal.value || 0);
+    if (pro.checked && r === null) return errorAt(reps, "Type how many reps they have: a whole number, 1 or more.");
+    if (!Number.isFinite(d) || d < 0 || d > 100) return errorAt(deal, "The special deal must be between 0 and 100 %.");
+    const turningOn = pro.checked && !b.pro, turningOff = !pro.checked && b.pro;
+    if (turningOn) {
+      const pp = proPrice(r, d);
+      if (!confirm(`Switch Marlon Pro on for ${name.value.trim()}?\n\n${noticeLines({ price: pp }).map(([a, v]) => `${a}: ${v}`).join("\n")}\nMonthly total: ${money(pp.netCents)}\n\nTheir phones${b.kind === "team" ? " and boss dashboard" : ""} show the Pro features the next time they're online.`)) return;
+    }
+    if (turningOff && !confirm(`Switch Marlon Pro off for ${name.value.trim()}?\n\nThe Pro features disappear from their phones the next time they're online. Their invoices, returns and credit notes are kept.`)) return;
+    save.disabled = true;
+    save.textContent = "Saving…";
+    const res = await api("/api/console/buyer-update", { method: "POST", auth: true, body: { id: b.id, name: name.value, phone: phone.value, email: email.value, pro: pro.checked, reps: pro.checked ? r : (cleanReps(reps.value) ?? null), discountPct: d, startDate: localToday() } })
+      .catch(() => ({ ok: false, data: { error: "No connection. Try again when you're online." } }));
+    save.disabled = false;
+    save.textContent = "Save";
+    if (!res.ok) { const at = { name, phone, email, reps, deal }[res.data.field] || null; return errorAt(at, res.data.error || "That didn't work. Please try again."); }
+    await back({ stay: b.id, saved: true });
+    if (res.data.notice) showNotice(res.data.notice, res.data.buyer); // switched on just now: the payment notice, on this console only
+  } },
+  el("section", { class: "card con-card ed-section", "aria-labelledby": "ed-h-contact" },
+    el("h2", { id: "ed-h-contact" }, "Contact"),
+    field(b.kind === "team" ? "Company name" : "Customer's name", name),
+    field("Phone", phone, "(start with + and the country code, for WhatsApp)"),
+    field("Email", email),
+    b.kind === "team" ? el("p", { class: "con-note" }, "A new name shows on the boss dashboard and on rep phones set up from now on. Rep phones already set up keep the name they started with.") : null),
+  el("section", { class: "card con-card ed-section", "aria-labelledby": "ed-h-pro" },
+    el("div", { class: "ed-pro-head" },
+      el("h2", { id: "ed-h-pro" }, "Marlon Pro"),
+      el("label", { class: "ed-switch" }, pro, el("span", { class: "ed-switch-track", "aria-hidden": "true" }), switchText)),
+    el("p", { class: "con-note" }, "$25 per rep a month, minus the automatic team discount for that many reps, then any special deal."),
+    proFields,
+    b.pro ? noticesList(b, () => back({ stay: b.id })) : null),
+  el("div", { class: "ed-savebar" }, msg, save));
+  show();
+  return el("div", { class: "ed-page", dataset: { id: b.id } },
+    el("button", { type: "button", class: "btn btn-ghost ed-back", onclick: () => back() }, "‹ All buyers"),
+    el("div", { class: "ed-title" }, el("h1", {}, b.name), el("span", { class: b.kind === "team" ? "con-badge con-badge-team" : "con-badge con-badge-off" }, b.kind === "team" ? "Team" : "Solo"),
+      b.pro ? el("span", { class: "con-badge con-badge-pro" }, "Pro") : null),
+    el("p", { class: "con-note" }, `${b.kind === "team" ? `${b.devices} rep place${b.devices === 1 ? "" : "s"}` : `${b.devices} device${b.devices === 1 ? "" : "s"}`} · paid ${money(b.amountCents)} · created ${dateText(b.created)}`),
+    form);
 }
 
 /** The automatic team discounts (plain Marlon and Marlon Pro use the same table). */
@@ -520,16 +522,15 @@ function buyerCard(b, refresh) {
       if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
       refresh();
     } }, d.off ? "Switch on" : "Switch off")))) : el("p", { class: "con-note" }, "No phone has opened this link yet.");
-  return el("article", { class: b.off ? "card con-card con-buyer is-off" : "card con-card con-buyer", dataset: { id: b.id } },
+  return tappable(b, el("article", { class: b.off ? "card con-card con-buyer is-off" : "card con-card con-buyer", dataset: { id: b.id } },
     el("div", { class: "con-buyer-head" },
       el("h3", {}, b.name, b.pro ? el("span", { class: "con-badge con-badge-pro" }, "Pro") : null, b.off ? el("span", { class: "con-badge" }, "Switched off") : null),
       el("strong", { class: "num" }, money(b.amountCents))),
     el("p", { class: "con-buyer-meta" }, `${b.active} of ${b.devices} device${b.devices === 1 ? "" : "s"} in use · created ${dateText(b.created)}`),
     phones,
-    contactBox(b, refresh),
-    proBox(b, refresh),
+    cardSummary(b),
     el("details", { class: "con-buyer-link" }, el("summary", {}, "Their personal link"), linkBox(linkFor(b.id))),
-    el("div", { class: "con-actions" }, toggleBuyer, deleteButton(b, refresh)));
+    el("div", { class: "con-actions" }, toggleBuyer, deleteButton(b, refresh))));
 }
 
 function teamCard(b, refresh) {
@@ -539,20 +540,19 @@ function teamCard(b, refresh) {
     if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
     refresh();
   } }, b.off ? "Switch company on again" : "Switch off whole company");
-  return el("article", { class: b.off ? "card con-card con-buyer con-team is-off" : "card con-card con-buyer con-team", "data-id": b.id },
+  return tappable(b, el("article", { class: b.off ? "card con-card con-buyer con-team is-off" : "card con-card con-buyer con-team", "data-id": b.id },
     el("div", { class: "con-buyer-head" },
       el("h3", {}, b.name, el("span", { class: "con-badge con-badge-team" }, "Team"), b.pro ? el("span", { class: "con-badge con-badge-pro" }, "Pro") : null, b.off ? el("span", { class: "con-badge" }, "Switched off") : null),
       el("strong", { class: "num" }, money(b.amountCents))),
     el("p", { class: "con-buyer-meta" }, `${b.active} of ${b.devices} rep phone${b.devices === 1 ? "" : "s"} in use · ${b.invoices} invoice${b.invoices === 1 ? "" : "s"} sent to the boss · created ${dateText(b.created)}`),
     el("h4", { class: "con-sub" }, "Boss phone"), phoneList(b, b.bossPhones, refresh, { boss: true }),
     el("h4", { class: "con-sub" }, "Reps"), b.slots.length ? slotList(b, refresh) : phoneList(b, b.phones, refresh),
-    contactBox(b, refresh),
-    proBox(b, refresh),
+    cardSummary(b),
     el("details", { class: "con-buyer-link" }, el("summary", {}, "Their links"),
       b.slots.length
         ? allRepLinks(b.name, b.slots.map((x) => `${location.origin}/?k=${x.key}`), bossLinkFor(b.bossKey))
         : [el("p", { class: "con-note" }, "Rep link (shared, from before personal rep links):"), linkBox(linkFor(b.id)), el("p", { class: "con-note" }, "Boss link:"), linkBox(bossLinkFor(b.bossKey))]),
-    el("div", { class: "con-actions" }, toggle, deleteButton(b, refresh)));
+    el("div", { class: "con-actions" }, toggle, deleteButton(b, refresh))));
 }
 
 function contactForm(contact, refresh) {
@@ -598,7 +598,29 @@ function buyersSection(data, refresh) {
   ];
 }
 
+let lastStats = null, lastBuyers = null;
+const buyerFromHash = () => (/^#buyer\/([0-9a-f]{32})$/.exec(location.hash) || [])[1] || null;
+window.addEventListener("hashchange", () => { if (lastStats && lastBuyers) render(lastStats, lastBuyers); });
+
 function render(st, buyers, notice = null) {
+  lastStats = st; lastBuyers = buyers;
+  const editing = buyerFromHash() && buyers.buyers.find((x) => x.id === buyerFromHash());
+  if (editing) {
+    const back = async ({ stay = null, saved = false } = {}) => {
+      if (stay) {
+        const b = await api("/api/console/buyers", { auth: true }).catch(() => ({ ok: false }));
+        if (b.ok) { lastBuyers = b.data; render(st, b.data, saved ? el("div", { class: "card con-card con-saved", role: "status" }, "Saved.") : null); }
+        return;
+      }
+      history.replaceState(null, "", location.pathname + location.search);
+      render(st, lastBuyers);
+      document.querySelector(`.con-buyer[data-id="${editing.id}"]`)?.scrollIntoView({ block: "center" });
+    };
+    show(...(notice ? [notice] : []), editPage(editing, back));
+    window.scrollTo(0, 0);
+    return;
+  }
+  if (buyerFromHash()) history.replaceState(null, "", location.pathname + location.search); // that customer isn't here (deleted)
   const used = st.last30.print + st.last30.pdf + st.last30.picture;
   charts.clear();
   const refresh = (n = null) => load(n);

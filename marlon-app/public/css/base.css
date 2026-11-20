@@ -82,7 +82,7 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 input, textarea, select, button { font: inherit; color: inherit; }
 .field { display: grid; gap: 6px; }
 .field > label, .label { font-size: .8rem; font-weight: 650; letter-spacing: .02em; color: var(--ink-2); }
-.input, input[type="text"], input[type="search"], input[type="date"], input[type="tel"], input[type="password"], input[type="number"], textarea {
+.input, input[type="text"], input[type="search"], input[type="date"], input[type="tel"], input[type="email"], input[type="password"], input[type="number"], textarea {
   width: 100%;
   min-height: var(--tap);
   padding: 11px 13px;

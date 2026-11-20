@@ -4,7 +4,7 @@
  * newest version; the open app reloads itself if it's still on the splash, or offers "Refresh" otherwise.
  * VERSION is stamped by scripts/stamp-sw.cjs.
  */
-const VERSION = "31f745fe7560";
+const VERSION = "e619ddbe58e3";
 const CACHE = `marlon-app-${VERSION}`;
 
 // On Cloudflare "/index.html" redirects to "/" and "/v.html" to "/v", so the pages are cached by those URLs.
@@ -109,15 +109,20 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(req, { ignoreSearch: true }).then((hit) => hit || fetch(req).then((res) => {
-      if (res.ok && res.type === "basic") {
-        const copy = res.clone();
-        caches.open(CACHE).then((cache) => cache.put(req, copy));
-      }
-      return res;
-    })),
-  );
+  event.respondWith((async () => {
+    // Files the maker's console loads (pricing, PDF…) always come live from the server, so an update never mixes
+    // a new console with old files kept on the phone.
+    const client = event.clientId ? await self.clients.get(event.clientId).catch(() => null) : null;
+    if (client && new URL(client.url).pathname === "/console") return fetch(req);
+    const hit = await caches.match(req, { ignoreSearch: true });
+    if (hit) return hit;
+    const res = await fetch(req);
+    if (res.ok && res.type === "basic") {
+      const copy = res.clone();
+      caches.open(CACHE).then((cache) => cache.put(req, copy));
+    }
+    return res;
+  })());
 });
 
 // ── Alerts (web push): a buyer signed an invoice sent for signature, even while Marlon is closed ──

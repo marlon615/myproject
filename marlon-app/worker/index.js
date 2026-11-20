@@ -31,6 +31,8 @@
  *   POST /api/console/pro-notice (Bearer) { id, startDate }   a new payment notice at today's price (kept in the record)
  *   POST /api/console/buyer-contact (Bearer) { id, phone, email }  the buyer's phone (with country code) and email, which
  *                                fill in WhatsApp and email for payment notices
+ *   POST /api/console/buyer-update  (Bearer) { id, name, phone, email, pro, reps, discountPct, startDate }  the customer's
+ *                                edit page: everything is checked first, then saved together → { buyer, notice }
  *   /api/activate and /api/check also answer { pro } so phones show Pro features (remembered for offline)
  *   POST /api/team/sync          also takes { credits: [...] }: a rep's credit notes (returns) go to the boss too
  *   POST /api/pro/shelf          { key, device, image, mime, products } → { found: [{ name, count }] } (Gemini free tier)
@@ -499,6 +501,13 @@ export class Stats extends DurableObject {
     // Switched on just now: a payment notice with the price agreed, kept in the company's record.
     const notice = pro && !b.pro ? this.proNotice(id, startDate) : null;
     return { buyer: this.#buyer(id), notice };
+  }
+
+  /** The customer's name (already checked). */
+  renameBuyer(id, name) {
+    if (!this.#buyer(id)) return null;
+    this.sql.exec("UPDATE buyers SET name = ? WHERE id = ?", name, id);
+    return this.#buyer(id);
   }
 
   /** The buyer's phone and email (already checked). */
@@ -1129,6 +1138,30 @@ async function api(request, env, path) {
     if (em.error) return json({ error: em.error }, 400);
     const buyer = await stub.setBuyerContact(id, ph.phone, em.email);
     return buyer ? json({ buyer }) : json({ error: "not found" }, 404);
+  }
+  if (path === "/api/console/buyer-update" && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 1000); } catch { return json({ error: "bad request" }, 400); }
+    const id = hex32(body.id);
+    if (!id) return json({ error: "bad request" }, 400);
+    const cur = (await stub.buyers()).buyers.find((x) => x.id === id);
+    if (!cur) return json({ error: "not found" }, 404);
+    // Check everything first: nothing is saved unless all of it is right.
+    const name = typeof body.name === "string" ? body.name.replace(/\s+/g, " ").trim().slice(0, 80) : "";
+    if (!name) return json({ error: "Type the customer's name.", field: "name" }, 400);
+    const ph = cleanPhone(body.phone), em = cleanEmail(body.email);
+    if (ph.error) return json({ error: ph.error, field: "phone" }, 400);
+    if (em.error) return json({ error: em.error, field: "email" }, 400);
+    const pro = Boolean(body.pro);
+    const pct = typeof body.discountPct === "number" ? body.discountPct : Number(String(body.discountPct ?? "0").replace(/[%\s]/g, "") || 0);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return json({ error: "The special deal must be between 0 and 100 %.", field: "deal" }, 400);
+    const reps = body.reps === undefined || body.reps === null || body.reps === "" ? null : cleanReps(body.reps);
+    if (body.reps !== undefined && body.reps !== null && body.reps !== "" && reps === null) return json({ error: "Type how many reps they have (a whole number, 1 or more).", field: "reps" }, 400);
+    if (pro && reps === null && !cur.pro && !cur.proRepsSaved) return json({ error: "Type how many reps they have before switching Pro on.", field: "reps" }, 400);
+    await stub.renameBuyer(id, name);
+    await stub.setBuyerContact(id, ph.phone, em.email);
+    const r = await stub.setPro(id, pro, Math.round(pct * 100) / 100, reps, typeof body.startDate === "string" ? body.startDate : null);
+    return json(r);
   }
   if (path === "/api/console/pro-notice" && request.method === "POST") {
     let body;

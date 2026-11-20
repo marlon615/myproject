@@ -179,21 +179,60 @@ async function shelfJpeg(page) {
     await con.goto(`${BASE}/console`);
     await con.evaluate((t) => sessionStorage.setItem("marlon.console", t), token);
     await con.reload();
-    await con.waitForSelector(".con-pro");
+    await con.waitForSelector(".con-buyer");
     check(/Pro each month/.test(await con.locator(".con-tiles").nth(1).textContent()) && /\$97\.50/.test(await con.locator(".con-tiles").nth(1).textContent()), "the console shows 'Pro each month' ($97.50)");
     const tierRows = await con.locator(".con-tier-table tr").allTextContents();
     check(tierRows.length === 6 && /1–4 reps\s*No discount/.test(tierRows[0]) && /100\+ reps\s*30% off/.test(tierRows[5]), "the console shows the team discount table (used by Marlon and Marlon Pro)", tierRows.join(" | "));
-    // Switch Pro on for a company: it asks how many reps, applies their team discount and shows the total.
+    // ── Every buyer card opens the customer's edit page ────────────────────────────────────────────────────────
+    const cardCount = await con.locator(".con-buyer").count();
+    check(cardCount >= 3 && await con.locator(".con-buyer.is-tappable").count() === cardCount && await con.locator(".con-buyer .con-edit-big").count() === cardCount,
+      "every buyer card is tappable and has an 'Edit customer' button", `${cardCount} cards`);
     const plainCard = con.locator(".con-buyer", { hasText: "No Pro Shop" });
-    check(await plainCard.locator('.con-pro[data-pro="off"]').count() === 1 && /asks how many reps/.test(await plainCard.locator(".con-pro").textContent()), "a company without Pro shows 'Switch Pro on'");
+    check(/Marlon Pro: off/.test(await plainCard.locator(".con-summary").textContent()) && /Contact: none saved/.test(await plainCard.locator(".con-summary").textContent()), "the card shows contact and Pro at a glance (none saved · off)");
+    await plainCard.locator(".con-summary p").first().click(); // a tap on the card itself, not a button
+    await con.waitForSelector(".ed-page");
+    check(new URL(con.url()).hash === `#buyer/${plain.buyer.id}` && /No Pro Shop/.test(await con.textContent(".ed-title h1")) && await con.locator(".con-buyer").count() === 0,
+      "tapping the card opens that customer's own page", new URL(con.url()).hash);
+    const headings = await con.locator(".ed-section h2").allTextContents();
+    check(headings[0] === "Contact" && headings[1] === "Marlon Pro", "Contact is at the top of the page, then Marlon Pro", headings.join(" → "));
+    check(await con.inputValue("#ed-name") === "No Pro Shop" && await con.locator("#ed-phone").count() === 1 && await con.locator("#ed-email").count() === 1, "Contact has the name, phone and email");
+    const saveButtons = await con.locator(".ed-page button").evaluateAll((bs) => bs.filter((b) => /save/i.test(b.textContent)).length);
+    check(saveButtons === 1, "the page has one Save button", String(saveButtons));
+    check(await con.locator(".ed-pro-fields").isHidden() && !(await con.isChecked("#ed-pro")), "Pro is off: the reps and special deal are hidden");
+    await con.screenshot({ path: path.join(OUT, "pro-1e-edit-page.png") });
+    // Switching Pro on asks how many reps and shows the price as it's typed.
+    await con.click(".ed-switch");
+    check(await con.isChecked("#ed-pro") && /How many reps do they have\?/.test(await con.textContent(".ed-pro-fields")) && await con.evaluate(() => document.activeElement?.id) === "ed-reps",
+      "switching Pro on asks 'How many reps do they have?' and puts the cursor there");
+    await con.fill("#ed-reps", "7");
+    const lines7 = (await con.textContent(".con-pro-lines")).replace(/\s+/g, " ");
+    check(/7 reps × \$25\.00 a month ?\$175\.00/.test(lines7) && /Team discount 10% \(5–9 reps\)/.test(lines7) && /\$157\.50/.test(await con.textContent(".con-pro-price")),
+      "7 reps: 7 × $25.00 = $175.00, the automatic 10% team discount (5–9 reps), monthly total $157.50", lines7);
+    await con.fill("#ed-reps", "25");
+    check(/Team discount 20% \(25–49 reps\)/.test(await con.textContent(".con-pro-lines")) && /\$500\.00/.test(await con.textContent(".con-pro-price")), "changing the reps to 25 updates the discount (20%) and the total ($500.00) straight away");
+    await con.fill("#ed-deal", "10");
+    check(/Special deal 10%/.test(await con.textContent(".con-pro-lines")) && /\$450\.00/.test(await con.textContent(".con-pro-price")), "a special deal % comes off on top of the team discount ($500.00 − 10% = $450.00)");
+    await con.fill("#ed-reps", "7");
+    await con.fill("#ed-deal", "0");
+    // One Save checks everything first: a bad phone stops the whole save (Pro isn't switched on either).
+    await con.fill("#ed-phone", "876 555 0199");
+    await con.click(".ed-save");
+    check(/country code/.test(await con.textContent(".ed-error")) && await con.locator("#ed-phone.is-wrong").count() === 1 && !(await buyers()).buyers.find((b) => b.name === "No Pro Shop").pro,
+      "a phone without the country code is refused at Save, the phone box is marked, and nothing is saved (Pro stays off)");
+    await con.fill("#ed-phone", "+1 876 555 0199");
+    await con.fill("#ed-email", "owner@noproshop.example");
     const asked = [];
-    const onDialog = async (d) => { asked.push(`${d.type()}: ${d.message()}`); if (d.type() === "prompt") await d.accept("7"); else await d.accept(); };
+    const onDialog = async (d) => { asked.push(`${d.type()}: ${d.message()}`); await d.accept(); };
     con.on("dialog", onDialog);
-    await plainCard.locator(".con-pro-toggle").click();
-    await con.waitForSelector('.con-buyer:has-text("No Pro Shop") .con-pro[data-pro="on"]');
-    con.off("dialog", onDialog);
+    await con.click(".ed-save");
     // The payment notice pops up straight away, on this console only.
     await con.waitForSelector("dialog.con-notice[open]");
+    con.off("dialog", onDialog);
+    check(/^confirm: Switch Marlon Pro on for No Pro Shop\?/.test(asked[0] || "") && /Team discount 10% \(5–9 reps\): −\$17\.50/.test(asked[0] || "") && /Monthly total: \$157\.50/.test(asked[0] || ""),
+      "Save asks to confirm switching Pro on, showing the discounted monthly total", (asked[0] || "").split("\n")[0]);
+    const np1 = (await buyers()).buyers.find((b) => b.name === "No Pro Shop");
+    check(np1.pro && np1.proReps === 7 && np1.proMonthlyCents === 15750 && np1.phone === "+1 876 555 0199" && np1.email === "owner@noproshop.example",
+      "one Save stored everything together: Pro on, 7 reps, $157.50 a month, phone and email", JSON.stringify({ pro: np1.pro, r: np1.proReps, c: np1.proMonthlyCents, ph: np1.phone }));
     const localDay = await con.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; });
     const pricingMod = await import(path.join(APP, "public", "js", "pricing.js"));
     const startText = pricingMod.longDate(localDay), dueText = pricingMod.dueDayText(localDay);
@@ -204,13 +243,12 @@ async function shelfJpeg(page) {
     check(/7 reps × \$25\.00 a month ?\$175\.00/.test(nTable) && /Team discount 10% \(5–9 reps\) ?−\$17\.50/.test(nTable) && /Monthly total ?\$157\.50/.test(nTable), "…with the price breakdown (team discount included)", nTable);
     check(/only you see this/i.test(await con.textContent(".con-notice-kicker")) && /Nothing is sent until you tap a button/.test(await con.textContent("dialog.con-notice")), "the pop-up says only the maker sees it, and nothing is sent until a button is tapped");
     const waHref = await con.getAttribute(".con-send-wa", "href");
-    const waText = decodeURIComponent(waHref.replace("https://wa.me/?text=", ""));
-    check(waHref.startsWith("https://wa.me/?text=") && waText.startsWith("No Pro Shop: your monthly payment for Marlon Pro (owner dashboard plus 7 reps) is $157.50.") && /Team discount 10% \(5–9 reps\): −\$17\.50/.test(waText) && /\/terms$/.test(waText),
-      "Send by WhatsApp opens WhatsApp with the whole message ready (the maker picks the customer)", waText.split("\n")[0]);
-    const mailHref = await con.getAttribute(".con-send-email", "href");
-    const mailUrl = new URL(mailHref);
-    check(mailUrl.protocol === "mailto:" && /Marlon Pro: your monthly payment \(No Pro Shop\)/.test(mailUrl.searchParams.get("subject") || "") && /Monthly total: \$157\.50/.test(mailUrl.searchParams.get("body") || ""),
-      "Send by email opens the mail app with the subject and the message filled in", mailUrl.searchParams.get("subject"));
+    const waText = decodeURIComponent(waHref.replace(/^https:\/\/wa\.me\/\d*\?text=/, ""));
+    check(waHref.startsWith("https://wa.me/18765550199?text=") && waText.startsWith("No Pro Shop: your monthly payment for Marlon Pro (owner dashboard plus 7 reps) is $157.50.") && /Team discount 10% \(5–9 reps\): −\$17\.50/.test(waText) && /\/terms$/.test(waText),
+      "Send by WhatsApp opens WhatsApp to the number just saved with the whole message ready", waText.split("\n")[0]);
+    const mailUrl = new URL(await con.getAttribute(".con-send-email", "href"));
+    check(mailUrl.protocol === "mailto:" && mailUrl.pathname === "owner@noproshop.example" && /Marlon Pro: your monthly payment \(No Pro Shop\)/.test(mailUrl.searchParams.get("subject") || "") && /Monthly total: \$157\.50/.test(mailUrl.searchParams.get("body") || ""),
+      "Send by email opens the mail app addressed to them, with the subject and the message filled in", mailUrl.searchParams.get("subject"));
     const [noticePdf] = await Promise.all([con.waitForEvent("download"), con.click(".con-send-pdf")]);
     const noticeBytes = fs.readFileSync(await noticePdf.path());
     check(noticeBytes.subarray(0, 5).toString() === "%PDF-" && noticeBytes.length > 15000 && /marlon-pro-payment-no-pro-shop\.pdf/.test(noticePdf.suggestedFilename()), "Send as PDF makes a one-page PDF of the notice", `${noticePdf.suggestedFilename()} · ${noticeBytes.length} bytes`);
@@ -218,37 +256,45 @@ async function shelfJpeg(page) {
     await con.click(".con-notice-close");
     const kept = (await buyers()).buyers.find((b) => b.name === "No Pro Shop").notices;
     check(kept.length === 1 && kept[0].startDate === localDay && kept[0].price.netCents === 15750 && kept[0].price.reps === 7, "a copy is kept in the company's record (start date, reps and the exact price)", JSON.stringify({ n: kept.length, d: kept[0]?.startDate, c: kept[0]?.price.netCents }));
-    const card7 = con.locator(".con-buyer", { hasText: "No Pro Shop" });
-    const lines7 = (await card7.locator(".con-pro-lines").textContent()).replace(/\s+/g, " ");
-    check(/^prompt: How many reps does No Pro Shop have\?/.test(asked[0] || "") && /Team discount 10% \(5–9 reps\): −\$17\.50/.test(asked[1] || "") && /Monthly total: \$157\.50/.test(asked[1] || ""),
-      "Switch Pro on first asks how many reps, then shows the discounted monthly total before confirming", asked.map((x) => x.split("\n")[0]).join(" | "));
-    check(/7 reps × \$25\.00 ?\$175\.00/.test(lines7), "the card shows 7 reps × $25.00 = $175.00", lines7);
-    check(/Team discount 10% \(5–9 reps\)/.test(lines7) && /\$157\.50/.test(await card7.locator(".con-pro-price").textContent()), "…the automatic 10% team discount for 5–9 reps, and the monthly total $157.50");
-    await card7.locator(".con-pro-reps").fill("25");
-    check(/Team discount 20% \(25–49 reps\)/.test(await card7.locator(".con-pro-lines").textContent()) && /\$500\.00/.test(await card7.locator(".con-pro-price").textContent()) && await card7.locator(".con-pro-save").isVisible(),
-      "changing the reps to 25 updates the discount (20%) and the total ($625.00 → $500.00) straight away", await card7.locator(".con-pro-price").textContent());
-    await card7.locator(".con-pro-discount").fill("10");
-    check(/Special deal 10% \(on top\)/.test(await card7.locator(".con-pro-lines").textContent()) && /\$450\.00/.test(await card7.locator(".con-pro-price").textContent()),
-      "a special deal % comes off on top of the team discount ($500.00 − 10% = $450.00)");
-    await card7.locator(".con-pro-save").click();
-    await con.waitForFunction(() => /\$450\.00/.test(document.querySelector('.con-buyer[data-id] .con-pro.is-on .con-pro-price')?.textContent || "") || [...document.querySelectorAll(".con-buyer")].some((c) => /No Pro Shop/.test(c.textContent) && /\$450\.00/.test(c.querySelector(".con-pro-price")?.textContent || "")), null, { timeout: 5000 });
+    check(await con.locator(".ed-page").count() === 1 && /Saved/.test(await con.textContent(".con-saved")) && await con.isChecked("#ed-pro") && /^Reps$/.test(await con.textContent(".ed-pro-fields .con-field span")),
+      "after saving, the page stays open with 'Saved.' and Pro on");
+    // Change reps and the special deal later: same page, same Save (no second notice unless asked for).
+    await con.fill("#ed-reps", "25");
+    await con.fill("#ed-deal", "10");
+    await con.click(".ed-save");
+    await con.waitForFunction(() => /\$450\.00/.test(document.querySelector(".ed-page .con-pro-price")?.textContent || "") && document.querySelector(".con-saved"), null, { timeout: 5000 });
     const saved25 = (await buyers()).buyers.find((b) => b.name === "No Pro Shop");
-    check(saved25.proReps === 25 && saved25.proTierPct === 20 && saved25.discountPct === 10 && saved25.proMonthlyCents === 45000, "saved: 25 reps, 20% team discount, 10% special deal, $450.00 a month", JSON.stringify({ r: saved25.proReps, t: saved25.proTierPct, d: saved25.discountPct, c: saved25.proMonthlyCents }));
-    await con.waitForTimeout(600); // the console redraws after saving
+    check(saved25.proReps === 25 && saved25.proTierPct === 20 && saved25.discountPct === 10 && saved25.proMonthlyCents === 45000 && saved25.notices.length === 1,
+      "saved: 25 reps, 20% team discount, 10% special deal, $450.00 a month", JSON.stringify({ r: saved25.proReps, t: saved25.proTierPct, d: saved25.discountPct, c: saved25.proMonthlyCents }));
     // "Send again" shows the notice exactly as it was agreed, even though the price has changed since.
-    const card450 = con.locator(".con-buyer", { hasText: "No Pro Shop" }).first();
-    check(/Payment notices \(1\)/.test(await card450.locator(".con-notices summary").textContent()), "the company's card lists its payment notices");
-    await card450.locator(".con-notices summary").click();
-    await card450.locator(".con-notice-again").click();
+    check(/Payment notices \(1\)/.test(await con.textContent(".ed-page .con-notices summary")), "the customer's page lists its payment notices");
+    await con.click(".ed-page .con-notices summary");
+    await con.click(".ed-page .con-notice-again");
     await con.waitForSelector("dialog.con-notice[open]");
     check(/is \$157\.50\./.test(await con.textContent(".con-notice-lead")), "Send again reopens the saved notice with its original price ($157.50), ready to send by WhatsApp, PDF or email");
     await con.click(".con-notice-close");
-    await card450.locator(".con-notice-new").click();
+    await con.click(".ed-page .con-notice-new");
     await con.waitForSelector("dialog.con-notice[open]");
     check(/owner dashboard plus 25 reps\) is \$450\.00/.test(await con.textContent(".con-notice-lead")) && /Special deal 10%/.test(await con.textContent(".con-notice-table")),
       "a new payment notice at today's price shows the new total with the team discount and special deal ($450.00)");
     await con.click(".con-notice-close");
     check((await buyers()).buyers.find((b) => b.name === "No Pro Shop").notices.length === 2, "…and is kept too (2 notices in the record)");
+    // Back to the list: the card shows the new details.
+    await con.waitForSelector(".ed-back");
+    await con.click(".ed-back");
+    await con.waitForSelector(".con-buyer");
+    const npSummary = await con.locator(".con-buyer", { hasText: "No Pro Shop" }).locator(".con-summary").textContent();
+    check(new URL(con.url()).hash === "" && /\+1 876 555 0199 · owner@noproshop\.example/.test(npSummary) && /Marlon Pro: on · 25 reps · \$450\.00 a month/.test(npSummary),
+      "'‹ All buyers' goes back to the list, and the card shows the new contact and Pro details", npSummary.replace(/\s+/g, " "));
+    // The server checks everything too, and saves nothing if one part is wrong.
+    const halfBad = await post("/api/console/buyer-update", { id: plain.buyer.id, name: "Renamed Shop", phone: "+1 876 555 0199", email: "owner@", pro: true, reps: 25, discountPct: 10 }, token);
+    const afterBad = (await buyers()).buyers.find((b) => b.id === plain.buyer.id);
+    check(halfBad.status === 400 && (await halfBad.json()).field === "email" && afterBad.name === "No Pro Shop", "the server refuses a save with one wrong part (a broken email) and keeps the old name too", `HTTP ${halfBad.status}`);
+    const offRes = await post("/api/console/buyer-update", { id: team.buyer.id, name: team.buyer.name, phone: "", email: "", pro: false, discountPct: 0 }, token);
+    check(offRes.status === 200 && !(await offRes.json()).buyer.pro, "switching Pro off from the page works (Save with Pro off)");
+    const noName = await post("/api/console/buyer-update", { id: team.buyer.id, name: "  ", phone: "", email: "", pro: false, discountPct: 0 }, token);
+    check(noName.status === 400 && (await noName.json()).field === "name", "a blank name is refused");
+    await post("/api/console/pro", { id: team.buyer.id, pro: true, reps: 3, discountPct: 0 }, token);
 
     // ── The buyer's phone and email fill in WhatsApp and email ──────────────────────────────────────────────────
     const noCc = await post("/api/console/buyers", { name: "Brown's Wholesale", devices: 5, amount: 300, kind: "team", phone: "876 555 0123", email: "" }, token);
@@ -257,13 +303,15 @@ async function shelfJpeg(page) {
     check(badMail.status === 400 && /email address/.test((await badMail.json()).error), "a broken email address is refused", `HTTP ${badMail.status}`);
     const brown = await (await post("/api/console/buyers", { name: "Brown's Wholesale", devices: 5, amount: 300, kind: "team", phone: "+1 876 555 0123", email: "orders@brownswholesale.example" }, token)).json();
     check(brown.buyer.phone === "+1 876 555 0123" && brown.buyer.email === "orders@brownswholesale.example", "a new buyer can be saved with their phone and email", JSON.stringify([brown.buyer.phone, brown.buyer.email]));
-    const brownOn = await (await post("/api/console/pro", { id: brown.buyer.id, pro: true, reps: 5, discountPct: 5 }, token)).json();
+    await post("/api/console/pro", { id: brown.buyer.id, pro: true, reps: 5, discountPct: 5 }, token);
     await con.reload();
-    await con.waitForSelector(".con-pro");
+    await con.waitForSelector(".con-buyer");
     const brownCard = con.locator(".con-buyer", { hasText: "Brown's Wholesale" }).first();
-    check(/\+1 876 555 0123 · orders@brownswholesale\.example/.test(await brownCard.locator(".con-contact summary").textContent()), "the buyer's card shows their phone and email under Contact");
-    await brownCard.locator(".con-notices summary").click().catch(() => {});
-    await brownCard.locator(".con-notice-again").first().click();
+    check(/\+1 876 555 0123 · orders@brownswholesale\.example/.test(await brownCard.locator(".con-summary").textContent()), "the buyer's card shows their phone and email under Contact");
+    await brownCard.locator(".con-edit").click(); // the small "Edit ›" button at the top of the card
+    await con.waitForSelector(".ed-page");
+    await con.click(".ed-page .con-notices summary").catch(() => {});
+    await con.locator(".ed-page .con-notice-again").first().click();
     await con.waitForSelector("dialog.con-notice[open]");
     const bWa = await con.getAttribute(".con-send-wa", "href"), bMail = await con.getAttribute(".con-send-email", "href");
     check(bWa.startsWith("https://wa.me/18765550123?text=") && /Send by WhatsApp to \+1 876 555 0123/.test(await con.textContent(".con-send-wa")) && /owner dashboard plus 5 reps\) is \$106\.87/.test(decodeURIComponent(bWa)),
@@ -272,25 +320,17 @@ async function shelfJpeg(page) {
       "email opens addressed to the buyer, and the pop-up shows who it's going to", bMail.slice(0, 50));
     await con.screenshot({ path: path.join(OUT, "pro-1d-notice-with-contact.png") });
     await con.click(".con-notice-close");
-    // Change it on the card: a number without the country code is refused there too; a good one is saved and used.
-    const npCard = con.locator(".con-buyer", { hasText: "No Pro Shop" }).first();
-    await npCard.locator(".con-contact summary").click();
-    await npCard.locator(".con-contact-phone").fill("876 555 0199");
-    await npCard.locator(".con-contact-save").click();
-    check(/country code/.test(await npCard.locator(".con-contact-error").textContent()) && (await buyers()).buyers.find((b) => b.name === "No Pro Shop").phone === "", "on the card, a number without the country code is refused and nothing is saved");
-    await npCard.locator(".con-contact-phone").fill("+1 876 555 0199");
-    await npCard.locator(".con-contact-email").fill("owner@noproshop.example");
-    await npCard.locator(".con-contact-save").click();
-    await con.waitForFunction(() => [...document.querySelectorAll(".con-buyer")].some((c) => /No Pro Shop/.test(c.textContent) && /\+1 876 555 0199/.test(c.querySelector(".con-contact summary")?.textContent || "")), null, { timeout: 5000 });
-    const np2 = (await buyers()).buyers.find((b) => b.name === "No Pro Shop");
-    check(np2.phone === "+1 876 555 0199" && np2.email === "owner@noproshop.example", "the phone and email can be added or changed later on the buyer's card");
-    const npCard2 = con.locator(".con-buyer", { hasText: "No Pro Shop" }).first();
-    await npCard2.locator(".con-notices summary").click().catch(() => {});
-    await npCard2.locator(".con-notice-again").first().click();
-    await con.waitForSelector("dialog.con-notice[open]");
-    check((await con.getAttribute(".con-send-wa", "href")).startsWith("https://wa.me/18765550199?text=") && (await con.getAttribute(".con-send-email", "href")).startsWith("mailto:owner@noproshop.example?"),
-      "Send again on an older notice uses the company's current phone and email");
-    await con.click(".con-notice-close");
+    // Rename on the page: the new name is saved and shown.
+    await con.fill("#ed-name", "Brown's Wholesale Ltd");
+    await con.click(".ed-save");
+    await con.waitForFunction(() => /Brown's Wholesale Ltd/.test(document.querySelector(".ed-title h1")?.textContent || ""), null, { timeout: 5000 });
+    check((await buyers()).buyers.find((b) => b.id === brown.buyer.id).name === "Brown's Wholesale Ltd", "the customer's name can be changed on the page");
+    // Opening the page by its address works too (e.g. after a reload).
+    await con.reload();
+    await con.waitForSelector(".ed-page");
+    check(/Brown's Wholesale Ltd/.test(await con.textContent(".ed-title h1")), "reloading keeps the customer's page open");
+    await con.click(".ed-back");
+    await con.waitForSelector(".con-buyer");
     await post("/api/console/buyer-contact", { id: plain.buyer.id, phone: "", email: "" }, token);
     check((await buyers()).buyers.find((b) => b.name === "No Pro Shop").phone === "", "contact details can be cleared again (WhatsApp and email then ask who to send to)");
     await con.locator(".con-buyer", { hasText: "No Pro Shop" }).first().scrollIntoViewIfNeeded();
@@ -302,7 +342,7 @@ async function shelfJpeg(page) {
     check(/Team discount for 12 reps: 15% \(10–24 reps\)/.test(await con.textContent(".con-tier-hint")), "plain Marlon's new-team form shows the same team discount for that number of reps");
     await post("/api/console/pro", { id: plain.buyer.id, pro: false, discountPct: 0 }, token);
     await con.reload();
-    await con.waitForSelector(".con-pro");
+    await con.waitForSelector(".con-buyer");
     await con.locator(".con-buyer", { hasText: "Island Fresh Distributors" }).scrollIntoViewIfNeeded();
     await con.screenshot({ path: path.join(OUT, "pro-1-console.png") });
 
