@@ -174,7 +174,7 @@ async function shelfJpeg(page) {
     list = await buyers();
     check(list.proMonthlyCents === 9750, "'Pro each month' adds up every company with Pro on ($97.50)", String(list.proMonthlyCents));
 
-    const con = await (await browser.newContext({ ...PHONE })).newPage();
+    const con = await (await browser.newContext({ ...PHONE, acceptDownloads: true })).newPage();
     watch(con, "console");
     await con.goto(`${BASE}/console`);
     await con.evaluate((t) => sessionStorage.setItem("marlon.console", t), token);
@@ -192,6 +192,32 @@ async function shelfJpeg(page) {
     await plainCard.locator(".con-pro-toggle").click();
     await con.waitForSelector('.con-buyer:has-text("No Pro Shop") .con-pro[data-pro="on"]');
     con.off("dialog", onDialog);
+    // The payment notice pops up straight away, on this console only.
+    await con.waitForSelector("dialog.con-notice[open]");
+    const localDay = await con.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; });
+    const pricingMod = await import(path.join(APP, "public", "js", "pricing.js"));
+    const startText = pricingMod.longDate(localDay), dueText = pricingMod.dueDayText(localDay);
+    const lead = (await con.textContent(".con-notice-lead")).replace(/\s+/g, " ");
+    check(lead === `No Pro Shop: your monthly payment for Marlon Pro (owner dashboard plus 7 reps) is $157.50. Payment starts on ${startText} and is due on ${dueText}.`,
+      "switching Pro on pops up the payment notice straight away: company, owner dashboard plus 7 reps, $157.50, start date and monthly due date", lead);
+    const nTable = (await con.textContent(".con-notice-table")).replace(/\s+/g, " ");
+    check(/7 reps × \$25\.00 a month ?\$175\.00/.test(nTable) && /Team discount 10% \(5–9 reps\) ?−\$17\.50/.test(nTable) && /Monthly total ?\$157\.50/.test(nTable), "…with the price breakdown (team discount included)", nTable);
+    check(/only you see this/i.test(await con.textContent(".con-notice-kicker")) && /Nothing is sent until you tap a button/.test(await con.textContent("dialog.con-notice")), "the pop-up says only the maker sees it, and nothing is sent until a button is tapped");
+    const waHref = await con.getAttribute(".con-send-wa", "href");
+    const waText = decodeURIComponent(waHref.replace("https://wa.me/?text=", ""));
+    check(waHref.startsWith("https://wa.me/?text=") && waText.startsWith("No Pro Shop: your monthly payment for Marlon Pro (owner dashboard plus 7 reps) is $157.50.") && /Team discount 10% \(5–9 reps\): −\$17\.50/.test(waText) && /\/terms$/.test(waText),
+      "Send by WhatsApp opens WhatsApp with the whole message ready (the maker picks the customer)", waText.split("\n")[0]);
+    const mailHref = await con.getAttribute(".con-send-email", "href");
+    const mailUrl = new URL(mailHref);
+    check(mailUrl.protocol === "mailto:" && /Marlon Pro: your monthly payment \(No Pro Shop\)/.test(mailUrl.searchParams.get("subject") || "") && /Monthly total: \$157\.50/.test(mailUrl.searchParams.get("body") || ""),
+      "Send by email opens the mail app with the subject and the message filled in", mailUrl.searchParams.get("subject"));
+    const [noticePdf] = await Promise.all([con.waitForEvent("download"), con.click(".con-send-pdf")]);
+    const noticeBytes = fs.readFileSync(await noticePdf.path());
+    check(noticeBytes.subarray(0, 5).toString() === "%PDF-" && noticeBytes.length > 15000 && /marlon-pro-payment-no-pro-shop\.pdf/.test(noticePdf.suggestedFilename()), "Send as PDF makes a one-page PDF of the notice", `${noticePdf.suggestedFilename()} · ${noticeBytes.length} bytes`);
+    await con.screenshot({ path: path.join(OUT, "pro-1c-payment-notice.png") });
+    await con.click(".con-notice-close");
+    const kept = (await buyers()).buyers.find((b) => b.name === "No Pro Shop").notices;
+    check(kept.length === 1 && kept[0].startDate === localDay && kept[0].price.netCents === 15750 && kept[0].price.reps === 7, "a copy is kept in the company's record (start date, reps and the exact price)", JSON.stringify({ n: kept.length, d: kept[0]?.startDate, c: kept[0]?.price.netCents }));
     const card7 = con.locator(".con-buyer", { hasText: "No Pro Shop" });
     const lines7 = (await card7.locator(".con-pro-lines").textContent()).replace(/\s+/g, " ");
     check(/^prompt: How many reps does No Pro Shop have\?/.test(asked[0] || "") && /Team discount 10% \(5–9 reps\): −\$17\.50/.test(asked[1] || "") && /Monthly total: \$157\.50/.test(asked[1] || ""),
@@ -209,6 +235,20 @@ async function shelfJpeg(page) {
     const saved25 = (await buyers()).buyers.find((b) => b.name === "No Pro Shop");
     check(saved25.proReps === 25 && saved25.proTierPct === 20 && saved25.discountPct === 10 && saved25.proMonthlyCents === 45000, "saved: 25 reps, 20% team discount, 10% special deal, $450.00 a month", JSON.stringify({ r: saved25.proReps, t: saved25.proTierPct, d: saved25.discountPct, c: saved25.proMonthlyCents }));
     await con.waitForTimeout(600); // the console redraws after saving
+    // "Send again" shows the notice exactly as it was agreed, even though the price has changed since.
+    const card450 = con.locator(".con-buyer", { hasText: "No Pro Shop" }).first();
+    check(/Payment notices \(1\)/.test(await card450.locator(".con-notices summary").textContent()), "the company's card lists its payment notices");
+    await card450.locator(".con-notices summary").click();
+    await card450.locator(".con-notice-again").click();
+    await con.waitForSelector("dialog.con-notice[open]");
+    check(/is \$157\.50\./.test(await con.textContent(".con-notice-lead")), "Send again reopens the saved notice with its original price ($157.50), ready to send by WhatsApp, PDF or email");
+    await con.click(".con-notice-close");
+    await card450.locator(".con-notice-new").click();
+    await con.waitForSelector("dialog.con-notice[open]");
+    check(/owner dashboard plus 25 reps\) is \$450\.00/.test(await con.textContent(".con-notice-lead")) && /Special deal 10%/.test(await con.textContent(".con-notice-table")),
+      "a new payment notice at today's price shows the new total with the team discount and special deal ($450.00)");
+    await con.click(".con-notice-close");
+    check((await buyers()).buyers.find((b) => b.name === "No Pro Shop").notices.length === 2, "…and is kept too (2 notices in the record)");
     await con.locator(".con-buyer", { hasText: "No Pro Shop" }).first().scrollIntoViewIfNeeded();
     await con.screenshot({ path: path.join(OUT, "pro-1b-console-tiers.png") });
     // Plain Marlon uses the same table: the new-team form shows the discount for that many reps.

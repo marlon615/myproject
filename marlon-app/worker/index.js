@@ -26,7 +26,9 @@
  *
  * Marlon Pro (switched on per company in the console): $25 per rep per month, minus the automatic team discount for
  * that many reps (public/js/pricing.js, the same table as plain Marlon), minus any special deal % on top:
- *   POST /api/console/pro        (Bearer) { id, pro, reps, discountPct }   Pro on/off, the company's reps, the special deal
+ *   POST /api/console/pro        (Bearer) { id, pro, reps, discountPct, startDate }   Pro on/off, the company's reps, the
+ *                                special deal; switching Pro on also saves a payment notice (returned as { notice })
+ *   POST /api/console/pro-notice (Bearer) { id, startDate }   a new payment notice at today's price (kept in the record)
  *   /api/activate and /api/check also answer { pro } so phones show Pro features (remembered for offline)
  *   POST /api/team/sync          also takes { credits: [...] }: a rep's credit notes (returns) go to the boss too
  *   POST /api/pro/shelf          { key, device, image, mime, products } → { found: [{ name, count }] } (Gemini free tier)
@@ -209,6 +211,8 @@ export class Stats extends DurableObject {
     addColumn("buyers", "discount_pct", "REAL NOT NULL DEFAULT 0");
     addColumn("buyers", "pro_since", "TEXT");
     addColumn("buyers", "pro_reps", "INTEGER"); // how many reps Pro is billed for (asked when Pro is switched on)
+    // Pro payment notices the maker sent (or can send again): the exact price at that moment, kept for good.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS pro_notices (id TEXT PRIMARY KEY, buyer TEXT NOT NULL, created TEXT NOT NULL, start_date TEXT NOT NULL, data TEXT NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS team_credits (buyer TEXT NOT NULL, device TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
       updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS shelf_daily (buyer TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (buyer, day))`);
@@ -476,17 +480,32 @@ export class Stats extends DurableObject {
         // Companies on Pro before reps were asked: their rep places (a solo business: 1 rep), so their price is unchanged.
         const reps = cleanReps(b.pro_reps) || (b.kind === "team" ? b.devices : 1);
         const price = proPrice(reps, Number(b.discount_pct) || 0);
-        return { pro: Boolean(b.pro), discountPct: price.extraPct, proSince: b.pro_since || null, proReps: reps, proRepsSaved: cleanReps(b.pro_reps) !== null, proTierPct: price.tierPct, proTierLabel: price.tierLabel, proPrice: price, proMonthlyCents: price.netCents };
+        const notices = this.sql.exec("SELECT id, created, start_date, data FROM pro_notices WHERE buyer = ? ORDER BY created DESC LIMIT 20", id).toArray()
+          .map((n) => ({ id: n.id, created: n.created, startDate: n.start_date, ...JSON.parse(n.data) }));
+        return { notices, pro: Boolean(b.pro), discountPct: price.extraPct, proSince: b.pro_since || null, proReps: reps, proRepsSaved: cleanReps(b.pro_reps) !== null, proTierPct: price.tierPct, proTierLabel: price.tierLabel, proPrice: price, proMonthlyCents: price.netCents };
       })() };
   }
 
   /** Marlon Pro on or off for one company, and its discount (0–100 %). */
-  setPro(id, pro, discountPct, reps = null) {
+  setPro(id, pro, discountPct, reps = null, startDate = null) {
     const b = this.#buyer(id);
     if (!b) return null;
     const since = pro ? (b.pro ? b.proSince : new Date().toISOString()) : null;
     this.sql.exec("UPDATE buyers SET pro = ?, discount_pct = ?, pro_since = ?, pro_reps = COALESCE(?, pro_reps) WHERE id = ?", pro ? 1 : 0, discountPct, since, reps, id);
-    return this.#buyer(id);
+    // Switched on just now: a payment notice with the price agreed, kept in the company's record.
+    const notice = pro && !b.pro ? this.proNotice(id, startDate) : null;
+    return { buyer: this.#buyer(id), notice };
+  }
+
+  /** A payment notice for a Pro company at its current price, starting on `startDate` (YYYY-MM-DD). Kept for good. */
+  proNotice(id, startDate) {
+    const b = this.#buyer(id);
+    if (!b) return null;
+    const start = DAY.test(startDate || "") ? startDate : todayUTC();
+    const n = { id: randomHex(12), created: new Date().toISOString(), startDate: start, company: b.name, kind: b.kind, price: b.proPrice };
+    this.sql.exec("INSERT INTO pro_notices (id, buyer, created, start_date, data) VALUES (?, ?, ?, ?, ?)", n.id, id, n.created, start,
+      JSON.stringify({ company: n.company, kind: n.kind, price: n.price }));
+    return n;
   }
 
   /** A shelf photo from a Pro company's active phone: counts it against today's limit. → { ok } | { error } */
@@ -512,7 +531,7 @@ export class Stats extends DurableObject {
   /** Deletes a buyer or team completely: its phones, rep links, boss phones, passcode, sessions and team invoices. */
   deleteBuyer(id) {
     if (!this.#buyer(id)) return false;
-    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions", "team_credits", "shelf_daily"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
+    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions", "team_credits", "shelf_daily", "pro_notices"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
     this.sql.exec("DELETE FROM buyers WHERE id = ?", id);
     return true;
   }
@@ -521,7 +540,7 @@ export class Stats extends DurableObject {
   leftovers(id) {
     const n = (t, col = "buyer") => this.sql.exec(`SELECT COUNT(*) AS n FROM ${t} WHERE ${col} = ?`, id).toArray()[0].n;
     return { buyers: n("buyers", "id"), devices: n("buyer_devices"), slots: n("team_slots"), invoices: n("team_invoices"), paid: n("boss_paid"), sessions: n("boss_sessions"),
-      credits: n("team_credits"), shelf: n("shelf_daily") };
+      credits: n("team_credits"), shelf: n("shelf_daily"), notices: n("pro_notices") };
   }
 
   setBuyerOff(id, off) {
@@ -1083,8 +1102,19 @@ async function api(request, env, path) {
     const cur = (await stub.buyers()).buyers.find((x) => x.id === id);
     if (!cur) return json({ error: "not found" }, 404);
     if (body.pro && reps === null && !cur.pro && !cur.proRepsSaved) return json({ error: "Say how many reps they have before switching Pro on." }, 400);
-    const buyer = await stub.setPro(id, Boolean(body.pro), Math.round(pct * 100) / 100, reps);
-    return buyer ? json({ buyer }) : json({ error: "not found" }, 404);
+    const r = await stub.setPro(id, Boolean(body.pro), Math.round(pct * 100) / 100, reps, typeof body.startDate === "string" ? body.startDate : null);
+    return r ? json(r) : json({ error: "not found" }, 404);
+  }
+  if (path === "/api/console/pro-notice" && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 300); } catch { return json({ error: "bad request" }, 400); }
+    const id = hex32(body.id);
+    if (!id) return json({ error: "bad request" }, 400);
+    const b = (await stub.buyers()).buyers.find((x) => x.id === id);
+    if (!b) return json({ error: "not found" }, 404);
+    if (!b.pro) return json({ error: "Switch Marlon Pro on for this company first." }, 409);
+    const notice = await stub.proNotice(id, typeof body.startDate === "string" ? body.startDate : null);
+    return json({ notice });
   }
   if (path === "/api/console/contact" && request.method === "POST") {
     let body;

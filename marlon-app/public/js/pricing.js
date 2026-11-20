@@ -45,3 +45,38 @@ export function proPrice(reps, extraPct = 0) {
   const extraCents = Math.round(afterTierCents * extra / 100);
   return { reps: r, grossCents, tierPct: tier.pct, tierLabel: tier.label, tierCents, afterTierCents, extraPct: extra, extraCents, netCents: afterTierCents - extraCents };
 }
+
+// ── Pro payment notices (the maker sends these to the customer from the console) ─────────────────────────────
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const ordinal = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"}`;
+const usd = (cents) => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+/** "20 November 2026" */
+export const longDate = (iso) => { const [y, m, d] = String(iso).split("-").map(Number); return `${d} ${MONTHS[m - 1]} ${y}`; };
+/** "the 20th of every month" (29th–31st: "or the last day of shorter months") */
+export function dueDayText(iso) {
+  const d = Number(String(iso).slice(8, 10));
+  return `the ${ordinal(d)} of every month${d >= 29 ? " (or the last day of shorter months)" : ""}`;
+}
+/**
+ * A payment notice as text (WhatsApp, email, the console) and as lines (the PDF).
+ * notice: { company, reps, startDate, price: proPrice(...) }
+ */
+export function noticeLines(n) {
+  const p = n.price;
+  const lines = [[`${p.reps} rep${p.reps === 1 ? "" : "s"} × $25.00 a month`, usd(p.grossCents)]];
+  lines.push(p.tierPct ? [`Team discount ${p.tierPct}% (${p.tierLabel})`, `−${usd(p.tierCents)}`] : [`Team discount (${p.tierLabel})`, "none"]);
+  if (p.extraPct) lines.push([`Special deal ${p.extraPct}%`, `−${usd(p.extraCents)}`]);
+  return lines;
+}
+export function noticeText(n) {
+  const p = n.price;
+  return [
+    `${n.company}: your monthly payment for Marlon Pro (owner dashboard plus ${p.reps} rep${p.reps === 1 ? "" : "s"}) is ${usd(p.netCents)}. Payment starts on ${longDate(n.startDate)} and is due on ${dueDayText(n.startDate)}.`,
+    "",
+    "Price breakdown:",
+    ...noticeLines(n).map(([a, v]) => `• ${a}: ${v}`),
+    `Monthly total: ${usd(p.netCents)}`,
+    "",
+    "Terms: " + (n.termsUrl || "/terms"),
+  ].join("\n");
+}

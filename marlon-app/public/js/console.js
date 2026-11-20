@@ -3,7 +3,8 @@
  * collected, and anonymous counts of how the app is used. The first visit sets the passcode;
  * after that it asks for it (5 wrong tries per 15 minutes). The session lasts 12 hours, in this tab only.
  */
-import { MAX_REPS, TIER_LABELS, cleanReps, proPrice, tierFor } from "./pricing.js";
+import { MAX_REPS, TIER_LABELS, cleanReps, dueDayText, longDate, noticeLines, noticeText, proPrice, tierFor } from "./pricing.js";
+import { canvasToPdfBlob } from "./pdf.js";
 
 const root = document.getElementById("console");
 const TOKEN = "marlon.console";
@@ -324,9 +325,9 @@ function proBox(b, refresh) {
   discount.addEventListener("input", show);
   const send = async (body) => {
     const r = await api("/api/console/pro", { method: "POST", auth: true, body: { id: b.id, ...body } }).catch(() => ({ ok: false, data: {} }));
-    if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return false; }
+    if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return null; }
     refresh();
-    return true;
+    return r.data;
   };
   const switchOn = async () => {
     const d = readDeal();
@@ -339,7 +340,8 @@ function proBox(b, refresh) {
     show();
     const pp = proPrice(r, d);
     if (!confirm(`Switch Marlon Pro on for ${b.name}?\n\n${summary(pp)}\n\nTheir phones${b.kind === "team" ? " and boss dashboard" : ""} show the Pro features the next time they're online.`)) return;
-    await send({ pro: true, reps: r, discountPct: d });
+    const done = await send({ pro: true, reps: r, discountPct: d, startDate: localToday() });
+    if (done?.notice) showNotice(done.notice); // straight away, on this console only
   };
   const switchOff = async () => {
     if (!confirm(`Switch Marlon Pro off for ${b.name}?\n\nThe Pro features disappear from their phones the next time they're online. Their invoices, returns and credit notes are kept.`)) return;
@@ -356,9 +358,108 @@ function proBox(b, refresh) {
       el("label", { class: "con-field con-pro-field" }, el("span", {}, "Special deal % ", el("small", {}, "(optional, on top)")), discount)),
     b.pro ? breakdown : el("p", { class: "con-note" }, "Switching Pro on asks how many reps they have, then applies the team discount for that number automatically."),
     b.pro ? price : null,
+    b.pro ? noticesList(b, refresh) : null,
     el("div", { class: "con-actions" },
       el("button", { type: "button", class: b.pro ? "btn btn-ghost con-danger con-pro-toggle" : "btn btn-primary con-pro-toggle", onclick: () => (b.pro ? switchOff() : switchOn()) }, b.pro ? "Switch Pro off" : "Switch Pro on"),
       save));
+}
+
+// ── Pro payment notices: shown to the maker only; sent to the customer only by tapping WhatsApp, PDF or email ──
+
+const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const withTerms = (n) => ({ ...n, termsUrl: `${location.origin}/terms` });
+const subjectFor = (n) => `Marlon Pro: your monthly payment (${n.company})`;
+
+/** The company's saved payment notices, newest first, each with "Send again"; and a new one at today's price. */
+function noticesList(b, refresh) {
+  const list = b.notices || [];
+  const make = el("button", { type: "button", class: "btn btn-ghost con-notice-new", onclick: async () => {
+    const r = await api("/api/console/pro-notice", { method: "POST", auth: true, body: { id: b.id, startDate: localToday() } }).catch(() => ({ ok: false, data: {} }));
+    if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
+    showNotice(r.data.notice);
+    refresh();
+  } }, "New payment notice at today's price");
+  return el("details", { class: "con-notices", open: list.length ? null : true },
+    el("summary", {}, `Payment notices (${list.length})`),
+    list.length ? el("ul", { class: "con-notice-list" }, list.map((n) => el("li", {},
+      el("div", {}, el("strong", { class: "num" }, money(n.price.netCents)), el("span", { class: "con-phone-meta" }, `a month · starts ${longDate(n.startDate)} · made ${dateText(n.created)}`)),
+      el("button", { type: "button", class: "btn con-notice-again", onclick: () => showNotice(n) }, "Send again")))) : el("p", { class: "con-note" }, "None yet."),
+    make);
+}
+
+/** The pop-up (this console only): the message, the breakdown, and buttons to send it by WhatsApp, as a PDF or by email. */
+function showNotice(notice) {
+  const n = withTerms(notice);
+  const text = noticeText(n);
+  const p = n.price;
+  const dlg = el("dialog", { class: "con-notice", "aria-labelledby": "con-notice-title" });
+  const close = () => { dlg.close(); dlg.remove(); };
+  const status = el("p", { class: "con-note con-notice-status", role: "status" });
+  const wa = el("a", { class: "btn btn-primary con-send-wa", href: `https://wa.me/?text=${encodeURIComponent(text)}`, target: "_blank", rel: "noopener" }, "Send by WhatsApp");
+  const mail = el("a", { class: "btn con-send-email", href: `mailto:?subject=${encodeURIComponent(subjectFor(n))}&body=${encodeURIComponent(text)}` }, "Send by email");
+  const pdf = el("button", { type: "button", class: "btn con-send-pdf", onclick: async () => {
+    pdf.disabled = true;
+    try { const r = await sharePdf(n); status.textContent = r === "shared" ? "PDF shared." : r === "cancelled" ? "" : "PDF saved to your downloads. Attach it to a message to the customer."; }
+    catch (e) { console.error(e); status.textContent = "Couldn't make the PDF. Please try again."; }
+    pdf.disabled = false;
+  } }, "Send as PDF");
+  const copy = el("button", { type: "button", class: "btn btn-ghost con-notice-copy", onclick: (e) => copyText(text, e.currentTarget) }, "Copy text");
+  dlg.append(
+    el("div", { class: "con-notice-head" }, el("p", { class: "con-notice-kicker" }, "Payment notice · only you see this"), el("h2", { id: "con-notice-title" }, n.company)),
+    el("div", { class: "con-notice-body" },
+      el("p", { class: "con-notice-lead" }, `${n.company}: your monthly payment for Marlon Pro (owner dashboard plus ${p.reps} rep${p.reps === 1 ? "" : "s"}) is `, el("strong", {}, money(p.netCents)),
+        `. Payment starts on ${longDate(n.startDate)} and is due on ${dueDayText(n.startDate)}.`),
+      el("table", { class: "con-notice-table" },
+        el("tbody", {}, noticeLines(n).map(([a, v]) => el("tr", {}, el("td", {}, a), el("td", { class: "num" }, v)))),
+        el("tfoot", {}, el("tr", {}, el("th", {}, "Monthly total"), el("td", { class: "num" }, money(p.netCents))))),
+      el("p", { class: "con-note" }, "Nothing is sent until you tap a button. WhatsApp and email open with the message ready: choose the customer there."),
+      el("div", { class: "con-notice-actions" }, wa, pdf, mail, copy),
+      status),
+    el("button", { type: "button", class: "btn btn-ghost con-notice-close", onclick: close }, "Close"));
+  dlg.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
+  document.body.append(dlg);
+  dlg.showModal();
+  return dlg;
+}
+
+/** One letter page: the company, the monthly payment, the breakdown, the start and due date. */
+async function sharePdf(n) {
+  const W = 1275, H = 1650, m = 100, c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const x = c.getContext("2d");
+  x.fillStyle = "#fff"; x.fillRect(0, 0, W, H);
+  const SANS = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif';
+  const t = (str, size, px, py, { weight = 400, align = "left", color = "#111" } = {}) => { x.font = `${weight} ${size}px ${SANS}`; x.fillStyle = color; x.textAlign = align; x.fillText(String(str), px, py); };
+  const wrap = (str, size, maxW, weight = 400) => { x.font = `${weight} ${size}px ${SANS}`; const out = []; let line = ""; for (const w of str.split(" ")) { const tryL = line ? `${line} ${w}` : w; if (x.measureText(tryL).width > maxW && line) { out.push(line); line = w; } else line = tryL; } if (line) out.push(line); return out; };
+  const p = n.price;
+  x.fillStyle = "#0f1411"; x.fillRect(0, 0, W, 150);
+  t("Marlon Pro", 46, m, 95, { weight: 800, color: "#f3efe4" });
+  t("PAYMENT NOTICE", 22, W - m, 92, { weight: 800, color: "#6cc495", align: "right" });
+  let y = 240;
+  t(n.company, 42, m, y, { weight: 800 }); y += 70;
+  for (const l of wrap(`Your monthly payment for Marlon Pro (owner dashboard plus ${p.reps} rep${p.reps === 1 ? "" : "s"}) is ${money(p.netCents)}.`, 30, W - 2 * m)) { t(l, 30, m, y); y += 44; }
+  for (const l of wrap(`Payment starts on ${longDate(n.startDate)} and is due on ${dueDayText(n.startDate)}.`, 30, W - 2 * m)) { t(l, 30, m, y); y += 44; }
+  y += 40;
+  x.fillStyle = "#f1f1f1"; x.fillRect(m, y, W - 2 * m, 56);
+  t("PRICE BREAKDOWN", 20, m + 16, y + 37, { weight: 700, color: "#555" });
+  t("PER MONTH", 20, W - m - 16, y + 37, { weight: 700, color: "#555", align: "right" });
+  y += 56;
+  for (const [a, v] of noticeLines(n)) { y += 54; t(a, 28, m + 16, y); t(v, 28, W - m - 16, y, { align: "right" }); y += 18; x.fillStyle = "#ddd"; x.fillRect(m, y, W - 2 * m, 2); }
+  y += 74;
+  t("Monthly total", 34, m + 16, y, { weight: 800 });
+  t(money(p.netCents), 44, W - m - 16, y, { weight: 800, color: "#17633f", align: "right" });
+  y += 90;
+  t(`Terms and conditions: ${n.termsUrl}`, 22, m, y, { color: "#555" });
+  const blob = await canvasToPdfBlob(c, { page: { w: 612, h: 792 }, title: `Marlon Pro payment notice · ${n.company}` });
+  const file = new File([blob], `marlon-pro-payment-${n.company.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "notice"}.pdf`, { type: "application/pdf" });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: subjectFor(n), text: `Marlon Pro payment notice for ${n.company}` }); return "shared"; } catch (e) { if (e?.name === "AbortError") return "cancelled"; }
+  }
+  const url = URL.createObjectURL(file);
+  const a = el("a", { href: url, download: file.name, style: "display:none" });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return "downloaded";
 }
 
 /** The automatic team discounts (plain Marlon and Marlon Pro use the same table). */

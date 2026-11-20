@@ -99,6 +99,30 @@
     .con-tier-table td { padding: 7px 4px; border-bottom: 1px solid var(--line); }
     .con-tier-table td:last-child { text-align: right; font-weight: 650; }
     .con-tier-hint { margin: 6px 0 0; color: #17633f; font-weight: 650; }
+    .con-notices { margin-top: 4px; }
+    .con-notices summary { cursor: pointer; font-weight: 700; min-height: 40px; display: flex; align-items: center; }
+    .con-notice-list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 6px; }
+    .con-notice-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm, 10px); background: var(--paper, #fff); }
+    .con-notice-list li > div { display: grid; gap: 2px; min-width: 0; }
+    .con-notice-list .btn { min-height: 38px; padding: 0 12px; flex: none; }
+    dialog.con-notice { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; border: 0; border-radius: 20px; background: var(--bg); color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.35); overflow: auto; }
+    dialog.con-notice::backdrop { background: rgba(10, 12, 9, .6); }
+    .con-notice-head { padding: 18px 20px 14px; background: #0f1411; color: #f3efe4; }
+    .con-notice-kicker { margin: 0; font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #6cc495; }
+    .con-notice-head h2 { margin: 4px 0 0; font-family: var(--font-display); font-size: 1.5rem; overflow-wrap: anywhere; }
+    .con-notice-body { padding: 16px 20px 6px; display: grid; gap: 12px; }
+    .con-notice-lead { margin: 0; font-size: 1.02rem; line-height: 1.5; }
+    .con-notice-lead strong { font-size: 1.15rem; color: #17633f; }
+    .con-notice-table { width: 100%; border-collapse: collapse; font-size: .95rem; background: var(--paper, #fff); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .con-notice-table td, .con-notice-table th { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+    .con-notice-table td.num { text-align: right; white-space: nowrap; }
+    .con-notice-table tfoot th, .con-notice-table tfoot td { font-weight: 800; border-bottom: 0; }
+    .con-notice-table tfoot td { font-family: var(--font-display); font-size: 1.25rem; color: #17633f; }
+    .con-notice-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .con-notice-actions .btn { min-height: 48px; justify-content: center; text-align: center; text-decoration: none; display: inline-flex; align-items: center; }
+    .con-send-wa { grid-column: 1 / -1; background: #1f8f4e; border-color: #1f8f4e; }
+    .con-notice-status { margin: 0; min-height: 1.2em; }
+    .con-notice-close { display: block; width: calc(100% - 40px); margin: 6px 20px 18px; }
     .con-sub { margin: 4px 0 0; font-size: .82rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
     .con-created h3 { margin: 6px 0 0; font-size: .95rem; }
     .con-replinks { display: grid; gap: 10px; }
