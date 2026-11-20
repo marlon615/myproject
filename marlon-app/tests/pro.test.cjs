@@ -17,7 +17,7 @@
 const { spawn, spawnSync } = require("child_process");
 const fs = require("fs"), os = require("os"), path = require("path"), http = require("http"), crypto = require("crypto");
 const { chromium } = require("playwright");
-const { setUp } = require("./fixture.cjs");
+const { setUp, BUSINESS } = require("./fixture.cjs");
 
 const PORT = 8811, BASE = `http://localhost:${PORT}`, GPORT = 8812;
 const APP = path.join(__dirname, ".."), OUT = path.join(__dirname, "output");
@@ -29,10 +29,7 @@ const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isM
 const post = (p, body, token) => fetch(BASE + p, { method: "POST", headers: { "content-type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
 const row = (page, name) => page.locator(".prod-row", { hasText: name }).first();
 const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
-const dbEval = (page, fn, arg) => page.evaluate(async ({ src, arg }) => {
-  const db = await import("/js/db.js");
-  return new Function("db", "arg", `return (${src})(db, arg);`)(db, arg);
-}, { src: fn.toString(), arg });
+// (Playwright runs these functions in the page itself; each one imports the app's storage module.)
 
 // ── A stand-in for Google's Gemini API ─────────────────────────────────────────────────────────────────────────
 const gemini = { mode: "ok", calls: [] };
@@ -141,7 +138,7 @@ async function shelfJpeg(page) {
   const w = startWorker(stateDir);
   const browser = await chromium.launch();
   const errors = [];
-  const watch = (page, who) => page.on("pageerror", (e) => errors.push(`${who}: ${e.message}`));
+  const watch = (page, who) => page.on("pageerror", (e) => { errors.push(`${who}: ${e.message}`); console.log(`PAGE ERROR (${who}): ${e.message}`); });
   try {
     await w.ready;
     const token = (await (await post("/api/console/claim", { passcode: "pro-test-passcode" })).json()).token;
@@ -176,7 +173,7 @@ async function shelfJpeg(page) {
     await plainCard.locator(".con-pro-discount").fill("20");
     check(/\$25\.00 − 20% = \$20\.00 a month/.test(await plainCard.locator(".con-pro-price").textContent()), "typing a discount shows the price after the discount straight away");
     await plainCard.locator(".con-pro-discount").fill("0");
-    check(/\$97\.50/.test(await con.textContent(".con-tiles")), "the console shows 'Pro each month'");
+    check(/Pro each month/.test(await con.locator(".con-tiles").nth(1).textContent()) && /\$97\.50/.test(await con.locator(".con-tiles").nth(1).textContent()), "the console shows 'Pro each month' ($97.50)");
     await con.locator(".con-buyer", { hasText: "Island Fresh Distributors" }).scrollIntoViewIfNeeded();
     await con.screenshot({ path: path.join(OUT, "pro-1-console.png") });
 
@@ -188,7 +185,7 @@ async function shelfJpeg(page) {
     await setUp(N);
     await N.waitForTimeout(500);
     check(await N.locator("#pro-bar").isHidden() && await N.locator("#pro-return").count() === 0, "a company without Pro: no Return or Shelf photo buttons");
-    const nLic = await dbEval(N, (db) => db.settings.get("license"));
+    const nLic = await N.evaluate(async () => (await import("/js/db.js")).settings.get("license"));
     const nShelf = await post("/api/pro/shelf", { key: nLic.key, device: nLic.device, image: "A".repeat(200), mime: "image/jpeg", products: ["Mango Juice"] });
     check(nShelf.status === 403 && /part of Marlon Pro/.test((await nShelf.json()).error), "…and the server refuses a shelf photo from it", `HTTP ${nShelf.status}`);
 
@@ -227,11 +224,11 @@ async function shelfJpeg(page) {
     check((await S.textContent("#grand-amount")).trim() === "$1,320.00" && /-\$480\.00/.test(await S.textContent("#credit-rows")), "…and what's left ($480.00) comes off the invoice after that: $1,800.00 → $1,320.00");
     await makeInvoice(S, "Bay Market", [["Ginger Beer", 2]]);
     check(await S.locator("#credit-rows").isHidden() && (await S.textContent("#grand-amount")).trim() === "$300.00", "another store's invoice gets no credit");
-    const cnState = await dbEval(S, async (db) => { const [cn] = await db.credits.all(); return { left: db.credits.left(cn), uses: Object.values(cn.appliedTo).map((a) => a.amount).sort() }; });
+    const cnState = await S.evaluate(async () => { const db = await import("/js/db.js"); const [cn] = await db.credits.all(); return { left: db.credits.left(cn), uses: Object.values(cn.appliedTo).map((a) => a.amount).sort((a, b) => a - b) }; });
     check(cnState.left === 0 && JSON.stringify(cnState.uses) === "[480,500]", "the credit note records exactly which invoices used it ($500 + $480 = $980, nothing left)", JSON.stringify(cnState));
 
     // Every copy of the invoice shows the credit: receipt, QR page (link and text), PDF.
-    const inv3 = await dbEval(S, async (db) => (await db.invoices.all()).find((i) => i.items[0]?.name === "Coconut Water"));
+    const inv3 = await S.evaluate(async () => (await (await import("/js/db.js")).invoices.all()).find((i) => i.items[0]?.name === "Coconut Water"));
     check(inv3.subtotal === 1800 && inv3.credit.amount === 480 && inv3.total === 1320, "the saved invoice: subtotal $1,800, credit $480, total $1,320", JSON.stringify({ s: inv3.subtotal, c: inv3.credit?.amount, t: inv3.total }));
     const copies = await S.evaluate(async (inv) => {
       const { receiptModel } = await import("/js/receipt.js"); const codec = await import("/js/codec.js");
@@ -243,15 +240,15 @@ async function shelfJpeg(page) {
     watch(V, "customer page");
     await V.goto(copies.url);
     await V.waitForSelector(".credit-lines");
-    const vText = (await V.textContent(".sheet")).replace(/\s+/g, " ");
-    check(/Subtotal \$1,800\.00/.test(vText) && /Credit note CN-0001 -\$480\.00/.test(vText) && /\$1,320\.00/.test(vText) && !/please check with/.test(vText),
+    const vText = (await V.textContent(".sheet")).replace(/\s+/g, "");
+    check(/Subtotal\$1,800\.00/.test(vText) && /CreditnoteCN-0001-\$480\.00/.test(vText) && /\$1,320\.00/.test(vText) && !/pleasecheckwith/.test(vText),
       "the customer's QR page shows subtotal, credit note and total (no 'doesn't add up' warning)");
     await V.screenshot({ path: path.join(OUT, "pro-5-customer-page.png"), fullPage: true });
     const plainUrl = await S.evaluate(async () => { const codec = await import("/js/codec.js"); return codec.invoiceToUrl({ seller: "S", number: 9, date: "2026-11-20", store: "X", items: [{ name: "A", qty: 1, price: 2 }] }); });
     check(plainUrl.split("#")[1].split("~").length === 10, "an invoice without a credit keeps exactly the same QR link as before (10 fields)");
 
     // A signing link carries the credit, worked out by the server.
-    const lic = await dbEval(S, (db) => db.settings.get("license"));
+    const lic = await S.evaluate(async () => (await import("/js/db.js")).settings.get("license"));
     const sent = await (await post("/api/sign/create", { key: lic.key, device: lic.device, invoice: { ...inv3, seller: "Island Fresh Distributors" } })).json();
     const viewed = await (await post("/api/sign/view", { token: sent.token })).json();
     check(viewed.invoice?.subtotal === 1800 && viewed.invoice.credit.amount === 480 && viewed.invoice.total === 1320, "Send for signature: the buyer's copy shows the same credit and total", JSON.stringify(viewed.invoice?.credit));
@@ -262,7 +259,8 @@ async function shelfJpeg(page) {
     await post("/api/sign/cancel", { key: lic.key, device: lic.device, invoiceId: inv3.id });
 
     // A signed invoice keeps its credit; deleting an invoice gives its credit back.
-    const frozen = await dbEval(S, async (db) => {
+    const frozen = await S.evaluate(async () => {
+      const db = await import("/js/db.js");
       const all = await db.invoices.all();
       const inv2 = all.find((i) => i.items[0]?.name === "Mango Juice" && i.items[0]?.qty === 2);
       await db.invoices.put({ ...inv2, signature: "data:image/png;base64,iVBORw0KGgo=" });
@@ -271,7 +269,7 @@ async function shelfJpeg(page) {
       return { credit: again.credit.amount, notes: again.credit.notes.map((n) => n.number).join() };
     });
     check(frozen.credit === 500 && frozen.notes === "1", "a signed invoice keeps exactly the credit it had (a newer credit note doesn't change it)", JSON.stringify(frozen));
-    const released = await dbEval(S, async (db, id) => { await db.invoices.remove(id); const cn1 = (await db.credits.all()).find((c) => c.number === 1); return db.credits.left(cn1); }, inv3.id);
+    const released = await S.evaluate(async (id) => { const db = await import("/js/db.js"); await db.invoices.remove(id); const cn1 = (await db.credits.all()).find((c) => c.number === 1); return db.credits.left(cn1); }, inv3.id);
     check(released === 480, "deleting an invoice gives its credit back to the credit note ($480.00 to come off again)", String(released));
 
     // Offline: a return works with no signal.
@@ -319,7 +317,7 @@ async function shelfJpeg(page) {
     await S.waitForSelector("#dash-accountant");
     const yearCard = (await S.textContent('#dash-accountant .pro-q.is-year')).replace(/\s+/g, " ");
     // Invoices this year: $1,000 + $500 (credit $500) + $300 = $1,800 gross (the $1,800 one was deleted); returns $980 + $250 + $450 (CN-0003) = $1,680.
-    check(/Net sales/.test(yearCard) && /Gross sales\$1,800\.00/.test(yearCard.replace(/ /g, "")) && /Returns−\$1,680\.00/.test(yearCard.replace(/ /g, "")) && /\$120\.00/.test(yearCard),
+    check(/Net sales/.test(yearCard) && /Grosssales\$1,800\.00/.test(yearCard.replace(/ /g, "")) && /Returns−\$1,680\.00/.test(yearCard.replace(/ /g, "")) && /\$120\.00/.test(yearCard),
       "solo dashboard → Pro: the accountant summary for the year (gross $1,800, returns $1,680, net $120)", yearCard.slice(0, 200));
     check(/accountant still needs to check it/.test(await S.textContent(".pro-acct-note")), "it says the accountant still checks it");
     const [csvDl] = await Promise.all([S.waitForEvent("download"), S.click("#dash-csv")]);
@@ -339,7 +337,7 @@ async function shelfJpeg(page) {
     await R.goto(team.repLinks[0]);
     await R.waitForSelector("#setup-rep");
     await R.fill("#setup-rep", "Dana Reid");
-    await setUp(R);
+    await setUp(R, { ...BUSINESS, name: "Coastline Foods" }); // a rep's company name comes from the team
     await R.waitForSelector("#pro-return");
     await makeInvoice(R, "Corner Shop", [["Mango Juice", 6]]);
     await logReturn(R, "Corner Shop", [["Mango Juice", 3, "expired"]]);
@@ -363,8 +361,9 @@ async function shelfJpeg(page) {
       "boss: returns by store, by product (with the reason) and by rep", retRep.replace(/\s+/g, " "));
     check(/Credit note CN-0001/.test(await B.textContent(".boss-credit")) && /−\$750\.00/.test(await B.textContent(".boss-credit")), "boss: the invoice shows the credit that came off it");
     const bYear = (await B.textContent("#boss-accountant .boss-q.is-year")).replace(/\s+/g, "");
-    check(/Grosssales\$2,000\.00/.test(bYear) && /Returns−\$750\.00/.test(bYear) && /\$1,250\.00/.test(bYear) && /accountant still needs to check it/.test(await B.textContent(".boss-acct-note")),
-      "boss: the accountant summary by quarter and year (gross $2,000, returns $750, net $1,250), with the note", bYear.slice(0, 140));
+    // The rep's invoices: 6 × $250 = $1,500 and 4 × $250 = $1,000 (of which $750 was credit); the return: $750.
+    check(/Grosssales\$2,500\.00/.test(bYear) && /Returns−\$750\.00/.test(bYear) && /\$1,750\.00/.test(bYear) && /accountant still needs to check it/.test(await B.textContent(".boss-acct-note")),
+      "boss: the accountant summary by quarter and year (gross $2,500, returns $750, net $1,750), with the note", bYear.slice(0, 140));
     const [bcsv] = await Promise.all([B.waitForEvent("download"), B.click("#boss-csv")]);
     const bText = fs.readFileSync(await bcsv.path(), "utf8");
     check(/Coastline Foods — sales summary/.test(bText) && /Dana Reid/.test(bText) && /CN-0001,Dana Reid,Corner Shop,Mango Juice,3,each,Expired/.test(bText), "boss: the accountant's CSV names the rep on every line");
@@ -380,6 +379,7 @@ async function shelfJpeg(page) {
     // ── Pro switched off reaches the phone; credit notes already given still count ─────────────────────────────────
     await post("/api/console/pro", { id: solo.buyer.id, pro: false, discountPct: 10 }, token);
     await S.goto(`${BASE}/#/`);
+    await S.reload(); // a real new open of the app (a change after "#" alone doesn't reload the page)
     await S.waitForFunction(() => window.__appReady === true);
     await S.waitForFunction(() => document.getElementById("pro-bar").hidden === true, null, { timeout: 8000 });
     check(true, "Pro switched off in the console: the phone hides Return and Shelf photo the next time it's online");

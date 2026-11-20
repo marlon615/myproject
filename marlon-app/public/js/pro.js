@@ -46,6 +46,8 @@ export function setupPro(o) {
     setPro(Boolean(e.detail?.pro));
     toast(e.detail?.pro ? "Marlon Pro is on for your company." : "Marlon Pro was switched off for your company.");
   });
+  // The phone's check with the server starts before this runs: if it already changed Pro, pick that up now.
+  settings.get("license", null).then((l) => { if (Boolean(l?.pro) !== isPro) setPro(Boolean(l?.pro)); }, () => {});
   window.addEventListener("online", () => { processShelfQueue().catch(() => {}); });
   processShelfQueue().catch(() => {});
 }
@@ -87,7 +89,8 @@ async function openReturn() {
   if (!list.length) { await alertSheet({ title: "Add your products first", message: "Returns use your product list. Add products in the dashboard's Settings, then try again." }); return; }
   const stores = await invoices.knownStores();
   const s = sheet("Return", "Log what the store is giving back. The store signs, and a numbered credit note comes off their next invoice automatically.", "pro-return");
-  const storeIn = h("input", { type: "text", id: "ret-store", list: "ret-stores", autocomplete: "off", autocapitalize: "words", maxlength: "60", placeholder: "e.g. Hill Top Grocery", value: opts.getStore?.() || "" });
+  const storeIn = h("input", { type: "text", id: "ret-store", autocomplete: "off", autocapitalize: "words", maxlength: "60", placeholder: "e.g. Hill Top Grocery", value: opts.getStore?.() || "" });
+  storeIn.setAttribute("list", "ret-stores"); // (an input's list can only be set as an attribute)
   const addressIn = h("textarea", { id: "ret-address", rows: "2", maxlength: "120", autocapitalize: "words", placeholder: "Street and town" });
   addressIn.value = opts.getAddress?.() || "";
   storeIn.addEventListener("input", () => {
@@ -381,7 +384,7 @@ async function openShelf() {
     if (!f) return;
     result.replaceChildren(h("p", { class: "shelf-busy" }, "Getting the photo ready…"));
     try { photo = await shrink(f); } catch (e) { result.replaceChildren(h("p", { class: "shelf-result is-error" }, e.message)); return; }
-    preview.replaceChildren(h("img", { src: photo.thumb, alt: "The shelf photo" }));
+    preview.replaceChildren(h("img", { src: `data:image/jpeg;base64,${photo.data}`, alt: "The shelf photo" }));
     preview.hidden = false;
     takeBtn.lastChild.textContent = "Take another photo";
     await runCheck();

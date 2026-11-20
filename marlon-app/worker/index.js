@@ -38,11 +38,11 @@ import { newVapidKeys, pushEndpointOk, sendPush } from "./webpush.js";
 import { shelfCount } from "./shelf.js";
 
 // Marlon Pro: the price per rep per month (whole cents) and the free-tier guard for shelf photos.
-export const PRO_REP_CENTS = 2500;
+const PRO_REP_CENTS = 2500;
 const SHELF_DAILY_LIMIT = 100; // photos per company per day (keeps one company from using up the shared free quota)
 const SHELF_MAX_PRODUCTS = 120;
 /** A company's Pro price per month in whole cents: reps × $25, minus its discount % (rounded to the cent). Solo = 1 rep. */
-export const proMonthlyCents = (reps, discountPct) => Math.round(Math.max(1, reps) * PRO_REP_CENTS * (1 - Math.min(100, Math.max(0, discountPct || 0)) / 100));
+const proMonthlyCents = (reps, discountPct) => Math.round(Math.max(1, reps) * PRO_REP_CENTS * (1 - Math.min(100, Math.max(0, discountPct || 0)) / 100));
 
 const KINDS = ["open", "setup", "invoice", "voice", "print", "pdf", "picture"];
 const BOSS_PLACES = 2; // boss phones per team (on iPhone, the browser and the Home Screen icon count as two)
