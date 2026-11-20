@@ -80,3 +80,24 @@ export function noticeText(n) {
     "Terms: " + (n.termsUrl || "/terms"),
   ].join("\n");
 }
+
+// ── A buyer's contact details (fill in WhatsApp and email automatically) ───────────────────────────────────
+/** A phone number for WhatsApp: must start with + (or 00) and the country code, 7–15 digits in all. → { phone, error } */
+export function cleanPhone(raw) {
+  const t = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (!t) return { phone: "" };
+  if (!/^(\+|00)/.test(t)) return { error: "Start the phone number with + and the country code, e.g. +1 876 555 0123 (WhatsApp needs it)." };
+  if (/[^\d\s+().-]/.test(t)) return { error: "The phone number can only have digits, spaces and + ( ) - ." };
+  const digits = t.replace(/^00/, "").replace(/\D/g, "");
+  if (digits.length < 7 || digits.length > 15) return { error: "That phone number doesn't look complete. Include the country code, e.g. +1 876 555 0123." };
+  return { phone: t.slice(0, 40) };
+}
+/** The digits WhatsApp's link needs (country code included, no +), or "". */
+export const waDigits = (phone) => String(phone || "").trim().replace(/^00/, "").replace(/\D/g, "");
+/** A plain email address check (something@something.something). → { email, error } */
+export function cleanEmail(raw) {
+  const t = String(raw ?? "").trim();
+  if (!t) return { email: "" };
+  if (t.length > 120 || !/^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[A-Za-z]{2,}$/.test(t)) return { error: "That email address doesn't look right, e.g. name@example.com." };
+  return { email: t };
+}

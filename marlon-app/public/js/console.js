@@ -3,7 +3,7 @@
  * collected, and anonymous counts of how the app is used. The first visit sets the passcode;
  * after that it asks for it (5 wrong tries per 15 minutes). The session lasts 12 hours, in this tab only.
  */
-import { MAX_REPS, TIER_LABELS, cleanReps, dueDayText, longDate, noticeLines, noticeText, proPrice, tierFor } from "./pricing.js";
+import { MAX_REPS, TIER_LABELS, cleanEmail, cleanPhone, cleanReps, dueDayText, longDate, noticeLines, noticeText, proPrice, tierFor, waDigits } from "./pricing.js";
 import { canvasToPdfBlob } from "./pdf.js";
 
 const root = document.getElementById("console");
@@ -187,6 +187,8 @@ function newBuyerForm(onCreated) {
     el("input", { type: "radio", name: "con-devices", value: v }), el("span", {}, v === "other" ? "Another number" : v)));
   const other = el("input", { type: "number", id: "con-devices-other", min: "1", max: "1000", step: "1", inputmode: "numeric", placeholder: "How many?", hidden: true, "aria-label": "Number of devices" });
   const amount = el("input", { type: "text", id: "con-amount", inputmode: "decimal", autocomplete: "off", placeholder: "0.00", required: true });
+  const phone = el("input", { type: "tel", id: "con-phone", autocomplete: "off", maxlength: "40", placeholder: "+1 876 555 0123" });
+  const email = el("input", { type: "email", id: "con-email", autocomplete: "off", maxlength: "120", placeholder: "name@example.com" });
   const error = el("p", { class: "con-error", role: "alert", hidden: true });
   const tierHint = el("p", { class: "con-note con-tier-hint", hidden: true });
   const submit = el("button", { type: "submit", class: "btn btn-primary", disabled: true }, "Create link");
@@ -208,7 +210,9 @@ function newBuyerForm(onCreated) {
     if (submit.disabled) return;
     submit.disabled = true;
     error.hidden = true;
-    const r = await api("/api/console/buyers", { method: "POST", auth: true, body: { name: name.value.trim(), devices: devices(), amount: paid(), kind: kind() } }).catch(() => ({ ok: false, data: { error: "No connection. Try again when you're online." } }));
+    const bad = cleanPhone(phone.value).error || cleanEmail(email.value).error;
+    if (bad) { error.textContent = bad; error.hidden = false; update(); return; }
+    const r = await api("/api/console/buyers", { method: "POST", auth: true, body: { name: name.value.trim(), devices: devices(), amount: paid(), kind: kind(), phone: phone.value, email: email.value } }).catch(() => ({ ok: false, data: { error: "No connection. Try again when you're online." } }));
     if (r.status === 401) { setToken(""); start(); return; }
     if (!r.ok) { error.textContent = r.data.error || "That didn't work. Please try again."; error.hidden = false; update(); return; }
     onCreated(r.data);
@@ -218,6 +222,8 @@ function newBuyerForm(onCreated) {
   el("label", { class: "con-field" }, "Buyer's name (for a team: the company)", name),
   el("fieldset", { class: "con-field con-devices" }, devicesLegend, el("div", { class: "con-chips" }, choices), other, tierHint),
   el("label", { class: "con-field" }, "How much did they pay?", el("span", { class: "con-money" }, el("span", { "aria-hidden": "true" }, "$"), amount)),
+  el("label", { class: "con-field" }, el("span", {}, "Their phone ", el("small", {}, "(optional, with country code, for WhatsApp)")), phone),
+  el("label", { class: "con-field" }, el("span", {}, "Their email ", el("small", {}, "(optional)")), email),
   el("p", { class: "con-note" }, "The link works on the first phones that open it, up to this number. Any other phone is blocked and told to contact you. A team also gets a boss link for the boss's phone."),
   error, submit);
   return form;
@@ -341,7 +347,7 @@ function proBox(b, refresh) {
     const pp = proPrice(r, d);
     if (!confirm(`Switch Marlon Pro on for ${b.name}?\n\n${summary(pp)}\n\nTheir phones${b.kind === "team" ? " and boss dashboard" : ""} show the Pro features the next time they're online.`)) return;
     const done = await send({ pro: true, reps: r, discountPct: d, startDate: localToday() });
-    if (done?.notice) showNotice(done.notice); // straight away, on this console only
+    if (done?.notice) showNotice(done.notice, b); // straight away, on this console only
   };
   const switchOff = async () => {
     if (!confirm(`Switch Marlon Pro off for ${b.name}?\n\nThe Pro features disappear from their phones the next time they're online. Their invoices, returns and credit notes are kept.`)) return;
@@ -376,27 +382,30 @@ function noticesList(b, refresh) {
   const make = el("button", { type: "button", class: "btn btn-ghost con-notice-new", onclick: async () => {
     const r = await api("/api/console/pro-notice", { method: "POST", auth: true, body: { id: b.id, startDate: localToday() } }).catch(() => ({ ok: false, data: {} }));
     if (!r.ok) { alert(r.data.error || "That didn't work. Please try again."); return; }
-    showNotice(r.data.notice);
+    showNotice(r.data.notice, b);
     refresh();
   } }, "New payment notice at today's price");
   return el("details", { class: "con-notices", open: list.length ? null : true },
     el("summary", {}, `Payment notices (${list.length})`),
     list.length ? el("ul", { class: "con-notice-list" }, list.map((n) => el("li", {},
       el("div", {}, el("strong", { class: "num" }, money(n.price.netCents)), el("span", { class: "con-phone-meta" }, `a month · starts ${longDate(n.startDate)} · made ${dateText(n.created)}`)),
-      el("button", { type: "button", class: "btn con-notice-again", onclick: () => showNotice(n) }, "Send again")))) : el("p", { class: "con-note" }, "None yet."),
+      el("button", { type: "button", class: "btn con-notice-again", onclick: () => showNotice(n, b) }, "Send again")))) : el("p", { class: "con-note" }, "None yet."),
     make);
 }
 
 /** The pop-up (this console only): the message, the breakdown, and buttons to send it by WhatsApp, as a PDF or by email. */
-function showNotice(notice) {
+function showNotice(notice, buyer = {}) {
   const n = withTerms(notice);
+  const to = { phone: buyer.phone || "", email: buyer.email || "" }; // the company's current details fill in WhatsApp and email
   const text = noticeText(n);
   const p = n.price;
   const dlg = el("dialog", { class: "con-notice", "aria-labelledby": "con-notice-title" });
   const close = () => { dlg.close(); dlg.remove(); };
   const status = el("p", { class: "con-note con-notice-status", role: "status" });
-  const wa = el("a", { class: "btn btn-primary con-send-wa", href: `https://wa.me/?text=${encodeURIComponent(text)}`, target: "_blank", rel: "noopener" }, "Send by WhatsApp");
-  const mail = el("a", { class: "btn con-send-email", href: `mailto:?subject=${encodeURIComponent(subjectFor(n))}&body=${encodeURIComponent(text)}` }, "Send by email");
+  const wa = el("a", { class: "btn btn-primary con-send-wa", href: `https://wa.me/${waDigits(to.phone)}?text=${encodeURIComponent(text)}`, target: "_blank", rel: "noopener" }, to.phone ? `Send by WhatsApp to ${to.phone}` : "Send by WhatsApp");
+  const mail = el("a", { class: "btn con-send-email", href: `mailto:${encodeURIComponent(to.email).replace(/%40/g, "@")}?subject=${encodeURIComponent(subjectFor(n))}&body=${encodeURIComponent(text)}` }, to.email ? `Send by email to ${to.email}` : "Send by email");
+  const toLine = el("p", { class: "con-notice-to" },
+    to.phone || to.email ? ["To: ", [to.phone, to.email].filter(Boolean).join(" · ")] : "No phone or email saved for this company: WhatsApp and email will ask who to send it to. Add them under “Contact” on its card.");
   const pdf = el("button", { type: "button", class: "btn con-send-pdf", onclick: async () => {
     pdf.disabled = true;
     try { const r = await sharePdf(n); status.textContent = r === "shared" ? "PDF shared." : r === "cancelled" ? "" : "PDF saved to your downloads. Attach it to a message to the customer."; }
@@ -412,7 +421,8 @@ function showNotice(notice) {
       el("table", { class: "con-notice-table" },
         el("tbody", {}, noticeLines(n).map(([a, v]) => el("tr", {}, el("td", {}, a), el("td", { class: "num" }, v)))),
         el("tfoot", {}, el("tr", {}, el("th", {}, "Monthly total"), el("td", { class: "num" }, money(p.netCents))))),
-      el("p", { class: "con-note" }, "Nothing is sent until you tap a button. WhatsApp and email open with the message ready: choose the customer there."),
+      el("p", { class: "con-note" }, `Nothing is sent until you tap a button. ${to.phone && to.email ? "WhatsApp and email open with the customer and the message filled in." : "WhatsApp and email open with the message ready" + (to.phone || to.email ? "; the customer is filled in where saved." : ": choose the customer there.")}`),
+      toLine,
       el("div", { class: "con-notice-actions" }, wa, pdf, mail, copy),
       status),
     el("button", { type: "button", class: "btn btn-ghost con-notice-close", onclick: close }, "Close"));
@@ -462,6 +472,30 @@ async function sharePdf(n) {
   return "downloaded";
 }
 
+/** The buyer's phone (with country code, for WhatsApp) and email: shown, and changed in place. */
+function contactBox(b, refresh) {
+  const phone = el("input", { type: "tel", class: "con-contact-phone", autocomplete: "off", maxlength: "40", placeholder: "+1 876 555 0123", value: b.phone || "", "aria-label": `Phone for ${b.name}` });
+  const email = el("input", { type: "email", class: "con-contact-email", autocomplete: "off", maxlength: "120", placeholder: "name@example.com", value: b.email || "", "aria-label": `Email for ${b.name}` });
+  const msg = el("p", { class: "con-error con-contact-error", role: "alert", hidden: true });
+  const save = el("button", { type: "submit", class: "btn con-contact-save" }, "Save contact");
+  return el("details", { class: "con-contact" },
+    el("summary", {}, "Contact", el("span", { class: "con-contact-sum" }, b.phone || b.email ? ` · ${[b.phone, b.email].filter(Boolean).join(" · ")}` : " · none saved")),
+    el("form", { class: "con-contact-form", novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      msg.hidden = true;
+      const bad = cleanPhone(phone.value).error || cleanEmail(email.value).error;
+      if (bad) { msg.textContent = bad; msg.hidden = false; return; }
+      save.disabled = true;
+      const r = await api("/api/console/buyer-contact", { method: "POST", auth: true, body: { id: b.id, phone: phone.value, email: email.value } }).catch(() => ({ ok: false, data: { error: "No connection. Try again when you're online." } }));
+      save.disabled = false;
+      if (!r.ok) { msg.textContent = r.data.error || "That didn't work. Please try again."; msg.hidden = false; return; }
+      refresh();
+    } },
+    el("label", { class: "con-field" }, el("span", {}, "Phone ", el("small", {}, "(with country code, for WhatsApp)")), phone),
+    el("label", { class: "con-field" }, "Email", email),
+    msg, save));
+}
+
 /** The automatic team discounts (plain Marlon and Marlon Pro use the same table). */
 function tiersCard(tiers) {
   return el("section", { class: "card con-card con-tiers", "aria-labelledby": "con-h-tiers" },
@@ -492,6 +526,7 @@ function buyerCard(b, refresh) {
       el("strong", { class: "num" }, money(b.amountCents))),
     el("p", { class: "con-buyer-meta" }, `${b.active} of ${b.devices} device${b.devices === 1 ? "" : "s"} in use · created ${dateText(b.created)}`),
     phones,
+    contactBox(b, refresh),
     proBox(b, refresh),
     el("details", { class: "con-buyer-link" }, el("summary", {}, "Their personal link"), linkBox(linkFor(b.id))),
     el("div", { class: "con-actions" }, toggleBuyer, deleteButton(b, refresh)));
@@ -511,6 +546,7 @@ function teamCard(b, refresh) {
     el("p", { class: "con-buyer-meta" }, `${b.active} of ${b.devices} rep phone${b.devices === 1 ? "" : "s"} in use · ${b.invoices} invoice${b.invoices === 1 ? "" : "s"} sent to the boss · created ${dateText(b.created)}`),
     el("h4", { class: "con-sub" }, "Boss phone"), phoneList(b, b.bossPhones, refresh, { boss: true }),
     el("h4", { class: "con-sub" }, "Reps"), b.slots.length ? slotList(b, refresh) : phoneList(b, b.phones, refresh),
+    contactBox(b, refresh),
     proBox(b, refresh),
     el("details", { class: "con-buyer-link" }, el("summary", {}, "Their links"),
       b.slots.length

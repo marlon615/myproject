@@ -249,6 +249,50 @@ async function shelfJpeg(page) {
       "a new payment notice at today's price shows the new total with the team discount and special deal ($450.00)");
     await con.click(".con-notice-close");
     check((await buyers()).buyers.find((b) => b.name === "No Pro Shop").notices.length === 2, "…and is kept too (2 notices in the record)");
+
+    // ── The buyer's phone and email fill in WhatsApp and email ──────────────────────────────────────────────────
+    const noCc = await post("/api/console/buyers", { name: "Brown's Wholesale", devices: 5, amount: 300, kind: "team", phone: "876 555 0123", email: "" }, token);
+    check(noCc.status === 400 && /country code/.test((await noCc.json()).error), "a phone number without the country code is refused (WhatsApp needs it)", `HTTP ${noCc.status}`);
+    const badMail = await post("/api/console/buyers", { name: "Brown's Wholesale", devices: 5, amount: 300, kind: "team", phone: "", email: "brown@" }, token);
+    check(badMail.status === 400 && /email address/.test((await badMail.json()).error), "a broken email address is refused", `HTTP ${badMail.status}`);
+    const brown = await (await post("/api/console/buyers", { name: "Brown's Wholesale", devices: 5, amount: 300, kind: "team", phone: "+1 876 555 0123", email: "orders@brownswholesale.example" }, token)).json();
+    check(brown.buyer.phone === "+1 876 555 0123" && brown.buyer.email === "orders@brownswholesale.example", "a new buyer can be saved with their phone and email", JSON.stringify([brown.buyer.phone, brown.buyer.email]));
+    const brownOn = await (await post("/api/console/pro", { id: brown.buyer.id, pro: true, reps: 5, discountPct: 5 }, token)).json();
+    await con.reload();
+    await con.waitForSelector(".con-pro");
+    const brownCard = con.locator(".con-buyer", { hasText: "Brown's Wholesale" }).first();
+    check(/\+1 876 555 0123 · orders@brownswholesale\.example/.test(await brownCard.locator(".con-contact summary").textContent()), "the buyer's card shows their phone and email under Contact");
+    await brownCard.locator(".con-notices summary").click().catch(() => {});
+    await brownCard.locator(".con-notice-again").first().click();
+    await con.waitForSelector("dialog.con-notice[open]");
+    const bWa = await con.getAttribute(".con-send-wa", "href"), bMail = await con.getAttribute(".con-send-email", "href");
+    check(bWa.startsWith("https://wa.me/18765550123?text=") && /Send by WhatsApp to \+1 876 555 0123/.test(await con.textContent(".con-send-wa")) && /owner dashboard plus 5 reps\) is \$106\.87/.test(decodeURIComponent(bWa)),
+      "WhatsApp opens straight to the buyer's number (+1 876 555 0123) with the notice filled in ($106.87 for 5 reps, 10% team discount, 5% special deal)", bWa.slice(0, 40));
+    check(bMail.startsWith("mailto:orders@brownswholesale.example?subject=") && /Send by email to orders@brownswholesale\.example/.test(await con.textContent(".con-send-email")) && /To: \+1 876 555 0123 · orders@brownswholesale\.example/.test(await con.textContent(".con-notice-to")),
+      "email opens addressed to the buyer, and the pop-up shows who it's going to", bMail.slice(0, 50));
+    await con.screenshot({ path: path.join(OUT, "pro-1d-notice-with-contact.png") });
+    await con.click(".con-notice-close");
+    // Change it on the card: a number without the country code is refused there too; a good one is saved and used.
+    const npCard = con.locator(".con-buyer", { hasText: "No Pro Shop" }).first();
+    await npCard.locator(".con-contact summary").click();
+    await npCard.locator(".con-contact-phone").fill("876 555 0199");
+    await npCard.locator(".con-contact-save").click();
+    check(/country code/.test(await npCard.locator(".con-contact-error").textContent()) && (await buyers()).buyers.find((b) => b.name === "No Pro Shop").phone === "", "on the card, a number without the country code is refused and nothing is saved");
+    await npCard.locator(".con-contact-phone").fill("+1 876 555 0199");
+    await npCard.locator(".con-contact-email").fill("owner@noproshop.example");
+    await npCard.locator(".con-contact-save").click();
+    await con.waitForFunction(() => [...document.querySelectorAll(".con-buyer")].some((c) => /No Pro Shop/.test(c.textContent) && /\+1 876 555 0199/.test(c.querySelector(".con-contact summary")?.textContent || "")), null, { timeout: 5000 });
+    const np2 = (await buyers()).buyers.find((b) => b.name === "No Pro Shop");
+    check(np2.phone === "+1 876 555 0199" && np2.email === "owner@noproshop.example", "the phone and email can be added or changed later on the buyer's card");
+    const npCard2 = con.locator(".con-buyer", { hasText: "No Pro Shop" }).first();
+    await npCard2.locator(".con-notices summary").click().catch(() => {});
+    await npCard2.locator(".con-notice-again").first().click();
+    await con.waitForSelector("dialog.con-notice[open]");
+    check((await con.getAttribute(".con-send-wa", "href")).startsWith("https://wa.me/18765550199?text=") && (await con.getAttribute(".con-send-email", "href")).startsWith("mailto:owner@noproshop.example?"),
+      "Send again on an older notice uses the company's current phone and email");
+    await con.click(".con-notice-close");
+    await post("/api/console/buyer-contact", { id: plain.buyer.id, phone: "", email: "" }, token);
+    check((await buyers()).buyers.find((b) => b.name === "No Pro Shop").phone === "", "contact details can be cleared again (WhatsApp and email then ask who to send to)");
     await con.locator(".con-buyer", { hasText: "No Pro Shop" }).first().scrollIntoViewIfNeeded();
     await con.screenshot({ path: path.join(OUT, "pro-1b-console-tiers.png") });
     // Plain Marlon uses the same table: the new-team form shows the discount for that many reps.

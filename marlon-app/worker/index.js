@@ -29,6 +29,8 @@
  *   POST /api/console/pro        (Bearer) { id, pro, reps, discountPct, startDate }   Pro on/off, the company's reps, the
  *                                special deal; switching Pro on also saves a payment notice (returned as { notice })
  *   POST /api/console/pro-notice (Bearer) { id, startDate }   a new payment notice at today's price (kept in the record)
+ *   POST /api/console/buyer-contact (Bearer) { id, phone, email }  the buyer's phone (with country code) and email, which
+ *                                fill in WhatsApp and email for payment notices
  *   /api/activate and /api/check also answer { pro } so phones show Pro features (remembered for offline)
  *   POST /api/team/sync          also takes { credits: [...] }: a rep's credit notes (returns) go to the boss too
  *   POST /api/pro/shelf          { key, device, image, mime, products } → { found: [{ name, count }] } (Gemini free tier)
@@ -39,7 +41,7 @@ import { FILES, RULES } from "./assets.generated.js";
 import { withTotals, normalizeUnit } from "../public/js/util.js";
 import { newVapidKeys, pushEndpointOk, sendPush } from "./webpush.js";
 import { shelfCount } from "./shelf.js";
-import { PRO_REP_CENTS, TIER_LABELS, cleanReps, proPrice } from "../public/js/pricing.js";
+import { PRO_REP_CENTS, TIER_LABELS, cleanEmail, cleanPhone, cleanReps, proPrice } from "../public/js/pricing.js";
 
 // Marlon Pro: the free-tier guard for shelf photos (the price lives in public/js/pricing.js).
 const SHELF_DAILY_LIMIT = 100; // photos per company per day (keeps one company from using up the shared free quota)
@@ -211,6 +213,8 @@ export class Stats extends DurableObject {
     addColumn("buyers", "discount_pct", "REAL NOT NULL DEFAULT 0");
     addColumn("buyers", "pro_since", "TEXT");
     addColumn("buyers", "pro_reps", "INTEGER"); // how many reps Pro is billed for (asked when Pro is switched on)
+    addColumn("buyers", "phone", "TEXT NOT NULL DEFAULT ''"); // the buyer's phone (with country code), for WhatsApp
+    addColumn("buyers", "email", "TEXT NOT NULL DEFAULT ''");
     // Pro payment notices the maker sent (or can send again): the exact price at that moment, kept for good.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS pro_notices (id TEXT PRIMARY KEY, buyer TEXT NOT NULL, created TEXT NOT NULL, start_date TEXT NOT NULL, data TEXT NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS team_credits (buyer TEXT NOT NULL, device TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
@@ -453,12 +457,12 @@ export class Stats extends DurableObject {
   setContact(text) { this.#setMeta("contact", text); return this.contact(); }
 
   /** kind "solo" (one business) or "team" (a company: `devices` rep phones, plus a boss link for the boss's phone). */
-  createBuyer(name, devices, amountCents, kind = "solo") {
+  createBuyer(name, devices, amountCents, kind = "solo", phone = "", email = "") {
     const id = randomHex(16);
     const bossKey = kind === "team" ? randomHex(16) : null;
     const now = new Date().toISOString();
-    this.sql.exec("INSERT INTO buyers (id, name, devices, amount_cents, created, kind, boss_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      id, name, devices, amountCents, now, kind, bossKey);
+    this.sql.exec("INSERT INTO buyers (id, name, devices, amount_cents, created, kind, boss_key, phone, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      id, name, devices, amountCents, now, kind, bossKey, phone, email);
     if (kind === "team") for (let n = 1; n <= devices; n++) this.sql.exec("INSERT INTO team_slots (key, buyer, n, created) VALUES (?, ?, ?, ?)", randomHex(16), id, n, now);
     return this.#buyer(id);
   }
@@ -473,7 +477,7 @@ export class Stats extends DurableObject {
       .map((r) => ({ n: r.n, key: r.key, name: r.name || "", phone: all.find((d) => d.slotKey === r.key && !d.released) || null,
         used: all.some((d) => d.slotKey === r.key) }));
     const devices = all.filter((d) => d.role !== "boss"), bosses = all.filter((d) => d.role === "boss");
-    return { id: b.id, name: b.name, kind: b.kind || "solo", devices: b.devices, amountCents: b.amount_cents, created: b.created, off: Boolean(b.off),
+    return { id: b.id, name: b.name, kind: b.kind || "solo", devices: b.devices, amountCents: b.amount_cents, created: b.created, off: Boolean(b.off), phone: b.phone || "", email: b.email || "",
       phones: devices, active: devices.filter((d) => !d.off).length, bossKey: b.boss_key || null, bossPhones: bosses, bossPlaces: BOSS_PLACES, slots,
       invoices: b.kind === "team" ? this.sql.exec("SELECT COUNT(*) AS n FROM team_invoices WHERE buyer = ?", id).toArray()[0].n : 0,
       ...(() => {
@@ -495,6 +499,13 @@ export class Stats extends DurableObject {
     // Switched on just now: a payment notice with the price agreed, kept in the company's record.
     const notice = pro && !b.pro ? this.proNotice(id, startDate) : null;
     return { buyer: this.#buyer(id), notice };
+  }
+
+  /** The buyer's phone and email (already checked). */
+  setBuyerContact(id, phone, email) {
+    if (!this.#buyer(id)) return null;
+    this.sql.exec("UPDATE buyers SET phone = ?, email = ? WHERE id = ?", phone, email, id);
+    return this.#buyer(id);
   }
 
   /** A payment notice for a Pro company at its current price, starting on `startDate` (YYYY-MM-DD). Kept for good. */
@@ -1051,7 +1062,10 @@ async function api(request, env, path) {
     if (!Number.isInteger(devices) || devices < 1 || devices > 1000) return json({ error: "Choose how many devices (1 or more)." }, 400);
     if (String(body.amount ?? "").trim() === "" || !Number.isFinite(amount) || amount < 0 || amount > 1e9) return json({ error: "Type how much the buyer paid (0 or more)." }, 400);
     const kind = body.kind === "team" ? "team" : "solo";
-    const buyer = await stub.createBuyer(name, devices, Math.round(amount * 100), kind);
+    const ph = cleanPhone(body.phone), em = cleanEmail(body.email);
+    if (ph.error) return json({ error: ph.error }, 400);
+    if (em.error) return json({ error: em.error }, 400);
+    const buyer = await stub.createBuyer(name, devices, Math.round(amount * 100), kind, ph.phone, em.email);
     const origin = new URL(request.url).origin;
     return json({ buyer, link: `${origin}/?k=${buyer.id}`, bossLink: buyer.bossKey ? `${origin}/boss?b=${buyer.bossKey}` : null,
       repLinks: buyer.slots.map((x) => `${origin}/?k=${x.key}`) });
@@ -1104,6 +1118,17 @@ async function api(request, env, path) {
     if (body.pro && reps === null && !cur.pro && !cur.proRepsSaved) return json({ error: "Say how many reps they have before switching Pro on." }, 400);
     const r = await stub.setPro(id, Boolean(body.pro), Math.round(pct * 100) / 100, reps, typeof body.startDate === "string" ? body.startDate : null);
     return r ? json(r) : json({ error: "not found" }, 404);
+  }
+  if (path === "/api/console/buyer-contact" && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 500); } catch { return json({ error: "bad request" }, 400); }
+    const id = hex32(body.id);
+    if (!id) return json({ error: "bad request" }, 400);
+    const ph = cleanPhone(body.phone), em = cleanEmail(body.email);
+    if (ph.error) return json({ error: ph.error }, 400);
+    if (em.error) return json({ error: em.error }, 400);
+    const buyer = await stub.setBuyerContact(id, ph.phone, em.email);
+    return buyer ? json({ buyer }) : json({ error: "not found" }, 404);
   }
   if (path === "/api/console/pro-notice" && request.method === "POST") {
     let body;
