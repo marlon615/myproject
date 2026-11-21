@@ -325,7 +325,7 @@ async function checkPhoto(image, names) {
   let res;
   try {
     res = await fetch("/api/pro/shelf", { method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
-      body: JSON.stringify({ key: lic?.key, device: lic?.device, image, mime: "image/jpeg", products: names }) });
+      body: JSON.stringify({ key: lic?.key, device: lic?.device, image, mime: "image/jpeg", products: names, today: todayISO() }) });
   } catch { const e = new Error("No connection."); e.offline = true; throw e; }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(data.error || "The photo couldn't be checked. Try again."); e.status = res.status; throw e; }

@@ -35,7 +35,7 @@
  *                                edit page: everything is checked first, then saved together → { buyer, notice }
  *   /api/activate and /api/check also answer { pro } so phones show Pro features (remembered for offline)
  *   POST /api/team/sync          also takes { credits: [...] }: a rep's credit notes (returns) go to the boss too
- *   POST /api/pro/shelf          { key, device, image, mime, products } → { found: [{ name, count }] } (Gemini free tier)
+ *   POST /api/pro/shelf          { key, device, image, mime, products } → { found, unknown } (Google Gemini); 20 per rep per day
  *   GET  /api/boss/data          also answers { pro, credits, orders } (orders: Marlon Pro shelf orders, without signatures)
  *   POST /api/team/sync          also takes { orders: [...] } (Pro only): shelf orders; the orderer's name and signature
  *                                are kept encrypted (AES-256-GCM, ENCRYPTION_KEY) → { storedOrders }
@@ -59,7 +59,7 @@ import { shelfCount } from "./shelf.js";
 import { PRO_REP_CENTS, TIER_LABELS, cleanEmail, cleanPhone, cleanReps, proPrice } from "../public/js/pricing.js";
 
 // Marlon Pro: the free-tier guard for shelf photos (the price lives in public/js/pricing.js).
-const SHELF_DAILY_LIMIT = 100; // photos per company per day (keeps one company from using up the shared free quota)
+const SHELF_REP_DAILY = 20; // shelf photos per rep per day (a solo business counts as one rep), by the phone's own date
 const SHELF_MAX_PRODUCTS = 200;   // My Products per company
 const PRODUCT_PHOTOS = 3;          // photos per product
 const SHELF_REFS = 40;             // reference photos sent with one shelf photo (one per product)
@@ -255,6 +255,8 @@ export class Stats extends DurableObject {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS team_credits (buyer TEXT NOT NULL, device TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
       updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS shelf_daily (buyer TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (buyer, day))`);
+    // Shelf photos per rep per day ("rep" = the rep's phone for a team; "company" for a solo business, which counts as one rep).
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS shelf_rep_daily (buyer TEXT NOT NULL, rep TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (buyer, rep, day))`);
     // Marlon Pro · My Products: each company's own products and their photos (private to that company).
     this.sql.exec(`CREATE TABLE IF NOT EXISTS company_products (buyer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, size TEXT NOT NULL DEFAULT '',
       price_cents INTEGER, unit TEXT NOT NULL DEFAULT 'each', position INTEGER NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
@@ -572,17 +574,20 @@ export class Stats extends DurableObject {
   }
 
   /** A shelf photo from a Pro company's active phone: counts it against today's limit. → { ok } | { error } */
-  shelfAllow(key, device) {
+  shelfAllow(key, device, phoneDay = null) {
     const b = this.#activePhone(key, device);
     if (!b) return { error: "off" };
     if (!b.pro) return { error: "notpro" };
     const list = this.#products(b.id);
     if (!list.length) return { error: "noproducts", team: b.kind === "team" };
-    const day = todayUTC();
-    const n = this.sql.exec("SELECT n FROM shelf_daily WHERE buyer = ? AND day = ?", b.id, day).toArray()[0]?.n || 0;
-    if (n >= SHELF_DAILY_LIMIT) return { error: "daily" };
-    this.sql.exec("INSERT INTO shelf_daily (buyer, day, n) VALUES (?, ?, 1) ON CONFLICT(buyer, day) DO UPDATE SET n = n + 1", b.id, day);
-    this.sql.exec("DELETE FROM shelf_daily WHERE day < ?", addDays(day, -30));
+    // "Today" is the phone's own date (so the limit resets at the rep's midnight), if it's within a day of the server's.
+    const utc = todayUTC();
+    const day = DAY.test(phoneDay || "") && phoneDay >= addDays(utc, -1) && phoneDay <= addDays(utc, 1) ? phoneDay : utc;
+    const rep = b.kind === "team" ? device : "company";
+    const n = this.sql.exec("SELECT n FROM shelf_rep_daily WHERE buyer = ? AND rep = ? AND day = ?", b.id, rep, day).toArray()[0]?.n || 0;
+    if (n >= SHELF_REP_DAILY) return { error: "daily" };
+    this.sql.exec("INSERT INTO shelf_rep_daily (buyer, rep, day, n) VALUES (?, ?, ?, 1) ON CONFLICT(buyer, rep, day) DO UPDATE SET n = n + 1", b.id, rep, day);
+    this.sql.exec("DELETE FROM shelf_rep_daily WHERE day < ?", addDays(utc, -30));
     // The company's saved products (name and size), and the first photo of each as a reference (up to SHELF_REFS).
     const label = (p) => (p.size ? `${p.name} (${p.size})` : p.name);
     const refs = [];
@@ -704,7 +709,7 @@ export class Stats extends DurableObject {
   /** Deletes a buyer or team completely: its phones, rep links, boss phones, passcode, sessions and team invoices. */
   deleteBuyer(id) {
     if (!this.#buyer(id)) return false;
-    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions", "team_credits", "shelf_daily", "pro_notices", "team_orders", "company_products", "product_photos"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
+    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions", "team_credits", "shelf_daily", "shelf_rep_daily", "pro_notices", "team_orders", "company_products", "product_photos"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
     this.sql.exec("DELETE FROM buyers WHERE id = ?", id);
     return true;
   }
@@ -713,7 +718,7 @@ export class Stats extends DurableObject {
   leftovers(id) {
     const n = (t, col = "buyer") => this.sql.exec(`SELECT COUNT(*) AS n FROM ${t} WHERE ${col} = ?`, id).toArray()[0].n;
     return { buyers: n("buyers", "id"), devices: n("buyer_devices"), slots: n("team_slots"), invoices: n("team_invoices"), paid: n("boss_paid"), sessions: n("boss_sessions"),
-      credits: n("team_credits"), shelf: n("shelf_daily"), notices: n("pro_notices"), orders: n("team_orders"), products: n("company_products"), photos: n("product_photos") };
+      credits: n("team_credits"), shelf: n("shelf_daily") + n("shelf_rep_daily"), notices: n("pro_notices"), orders: n("team_orders"), products: n("company_products"), photos: n("product_photos") };
   }
 
   setBuyerOff(id, off) {
@@ -1169,11 +1174,11 @@ async function api(request, env, path) {
     const image = typeof body.image === "string" && body.image.length > 100 && body.image.length < 2_900_000 && /^[A-Za-z0-9+/=]+$/.test(body.image) ? body.image : null;
     if (!image) return json({ error: "That photo couldn't be read. Take it again." }, 400);
     // Matched ONLY against the company's saved products (My Products), never names sent by the phone.
-    const allow = await stub.shelfAllow(key, device);
+    const allow = await stub.shelfAllow(key, device, typeof body.today === "string" ? body.today : null);
     if (allow.error === "off") return json({ error: "This phone is switched off.", contact: await stub.contact() }, 403);
     if (allow.error === "notpro") return json({ error: "Shelf photo is part of Marlon Pro. Ask the seller to switch Pro on for your company." }, 403);
     if (allow.error === "noproducts") return json({ error: allow.team ? "Your boss needs to add your company's products in My Products first." : "Add your products in My Products first (dashboard → Pro), so Marlon knows what to look for." }, 400);
-    if (allow.error === "daily") return json({ error: `Your company has used today's ${SHELF_DAILY_LIMIT} shelf photos. Try again tomorrow.` }, 429);
+    if (allow.error === "daily") return json({ error: `You've reached today's ${SHELF_REP_DAILY} shelf checks. More are available tomorrow.` }, 429);
     const r = await shelfCount(env, { image, mime, products: allow.products, refs: allow.refs });
     if (r.error === "setup") return json({ error: r.message }, 503);
     if (r.error === "limit") return json({ error: r.message }, 429);

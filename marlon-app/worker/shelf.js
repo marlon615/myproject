@@ -10,7 +10,7 @@
  *
  *   shelfCount(env, { image, mime, products: [{ id, label }], refs: [{ label, data }] })
  *     → { ok: true, found: [{ productId, name, count }], unknown: [{ description, count }], model } | { error, message }
- *   error: "setup" (no GEMINI_API_KEY) | "limit" (Google's free daily limit reached) | "failed"
+ *   error: "setup" (no GEMINI_API_KEY) | "limit" (Google's service is busy or over its limit) | "failed"
  */
 const DEFAULT_BASE = "https://generativelanguage.googleapis.com";
 // Tried in order: the first one this key can use on the free tier answers. A model Google retired moves to the next.
@@ -83,7 +83,7 @@ export async function shelfCount(env, { image, mime, products, refs = [] }) {
     } catch (e) { return { error: "failed", message: `Couldn't reach the photo checker (${e?.name === "TimeoutError" ? "it took too long" : "network"}). Try again.` }; }
     const b = await res.json().catch(() => ({}));
     const msg = String(b?.error?.message || "");
-    if (res.status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)) return { error: "limit", message: "Today's free photo checks are used up. Try again tomorrow." };
+    if (res.status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)) return { error: "limit", message: "The photo service is busy right now. Please try again in a little while." };
     if (res.status === 404 || /no longer available|not found for API version|not supported for generateContent/i.test(msg)) { last = msg; continue; }
     if (!res.ok) return { error: "failed", message: res.status === 400 && /API key/i.test(msg) ? "The photo checker's key isn't working. Contact the seller." : "The photo checker couldn't read this photo. Try again." };
     const text = (b.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");

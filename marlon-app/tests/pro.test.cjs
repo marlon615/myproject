@@ -10,7 +10,7 @@
  *   - accountant summary (by quarter and for the year, CSV + print) and returns, in the solo dashboard and the boss's;
  *   - team: a rep's credit notes reach the boss: returns by store, by product and by rep;
  *   - shelf photo: shrunk on the phone, the company's products only (an invented one is dropped), queued offline,
- *     Google's free limit, the 100-a-day company limit, no key;
+ *     Google busy, the 20-a-day per-rep limit, no key;
  *   - Pro switched off reaches the phone; credit notes already given still count;
  *   - the Terms page with its Marlon Pro section.
  * Nothing here touches the live site.
@@ -535,7 +535,7 @@ async function shelfJpeg(page) {
     gemini.mode = "limit";
     await S.setInputFiles("#shelf-file", await shelfJpeg(S));
     await S.waitForSelector(".shelf-out .shelf-result.is-error");
-    check(/free photo checks are used up/.test(await S.textContent(".shelf-out")), "when Google's free daily limit is reached, the rep is told plainly (no charge)");
+    check(/photo service is busy right now/.test(await S.textContent(".shelf-out")), "when Google's service is busy or over its limit, the rep is told plainly to try again later");
     gemini.mode = "retired";
     const retired = await (await post("/api/pro/shelf", { key: lic.key, device: lic.device, image: "A".repeat(300), mime: "image/jpeg", products: ["Mango Juice"] })).json();
     check(retired.ok && gemini.calls.slice(-2).map((c) => c.path).join(" ").includes("gemini-flash-latest"), "a model Google retired is skipped for the next one");
@@ -797,9 +797,25 @@ async function shelfJpeg(page) {
     // Shelf photo limits on the server.
     const limitKey = team.repLinks[1].split("k=")[1], limitDev = "d".repeat(32);
     await post("/api/activate", { key: limitKey, device: limitDev });
-    let last = null;
-    for (let i = 0; i < 101; i++) last = await post("/api/pro/shelf", { key: limitKey, device: limitDev, image: "A".repeat(200), mime: "image/jpeg", products: ["Mango Juice"] });
-    check(last.status === 429 && /today's 100 shelf photos/.test((await last.json()).error), "each company can check up to 100 shelf photos a day (keeps the free quota for everyone)", `HTTP ${last.status}`);
+    const shot = (key, device, extra = {}) => post("/api/pro/shelf", { key, device, image: "A".repeat(200), mime: "image/jpeg", products: ["Mango Juice"], today, ...extra });
+    const statuses = [];
+    for (let i = 0; i < 21; i++) statuses.push((await shot(limitKey, limitDev)).status);
+    const over = await shot(limitKey, limitDev);
+    const overMsg = (await over.json()).error;
+    check(statuses.slice(0, 20).every((x) => x === 200) && statuses[20] === 429 && over.status === 429 && overMsg === "You've reached today's 20 shelf checks. More are available tomorrow.",
+      "each rep can check 20 shelf photos a day; the 21st gets “You've reached today's 20 shelf checks. More are available tomorrow.”", `${statuses.filter((x) => x === 200).length} ok · ${overMsg}`);
+    const otherRep = await shot(team.repLinks[0].split("k=")[1], rLicMp.device);
+    check(otherRep.status === 200, "…it's per rep: another rep in the same company can still check", `HTTP ${otherRep.status}`);
+    const tomorrow = (() => { const d = new Date(`${today}T12:00:00`); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+    check((await shot(limitKey, limitDev, { today: tomorrow })).status === 200, "…and the next day (by the phone's own date) the rep can check again");
+    // A solo business counts as one rep: its phones share the 20.
+    await post("/api/console/pro", { id: solo.buyer.id, pro: true, reps: 1, discountPct: 0 }, token);
+    const soloDev2 = "e".repeat(32);
+    await post("/api/activate", { key: solo.buyer.id, device: soloDev2 });
+    let soloOk = 0, soloLast = null;
+    for (let i = 0; i < 21; i++) { soloLast = await shot(solo.buyer.id, soloDev2); if (soloLast.status === 200) soloOk++; }
+    const firstPhone = await shot(sLicMp.key, sLicMp.device);
+    check(soloLast.status === 429 && soloOk < 20 && firstPhone.status === 429, "a solo business counts as one rep: its two phones share the same 20 a day (the first phone's checks already counted)", `${soloOk} more on the 2nd phone`);
     const { shelfCount } = await import(path.join(APP, "worker", "shelf.js"));
     const noKey = await shelfCount({}, { image: "x", mime: "image/jpeg", products: ["A"] });
     check(noKey.error === "setup" && /isn't set up/.test(noKey.message), "without a Gemini key, shelf photo says it isn't set up (nothing breaks)");
