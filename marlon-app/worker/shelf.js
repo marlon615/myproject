@@ -1,13 +1,15 @@
 /**
  * Marlon Pro · Shelf photo: which of the company's own products are on a store shelf, and how many.
  *
- * The rep's phone sends one photo (shrunk on the phone to about 200 KB) and the company's product names. The photo
- * goes to Google's Gemini API on the FREE tier (no billing is ever set up) with a strict instruction: count only the
- * listed products, and answer only in the JSON shape below. Back here, any name that isn't one of the company's
- * products is dropped (nothing invented), and counts are kept to whole numbers 0–999.
- * The photo isn't stored anywhere by Marlon: it's sent to Gemini once and forgotten.
+ * The rep's phone sends one photo (shrunk on the phone to about 200 KB). It is matched ONLY against the company's own
+ * saved products (My Products, kept on the server for that company): their names and sizes, plus one small reference
+ * photo per product (up to 40), go to Google's Gemini API on the FREE tier (no billing is ever set up) with a strict
+ * instruction: count the listed products, and put anything else it sees under "unknown". Back here, any name that isn't
+ * one of the company's products becomes an unknown product too (nothing is invented), and counts are kept to whole
+ * numbers 1–999. The shelf photo isn't stored anywhere by Marlon: it's sent to Gemini once and forgotten.
  *
- *   shelfCount(env, { image, mime, products }) → { ok: true, found: [{ name, count }], model } | { error, message }
+ *   shelfCount(env, { image, mime, products: [{ id, label }], refs: [{ label, data }] })
+ *     → { ok: true, found: [{ productId, name, count }], unknown: [{ description, count }], model } | { error, message }
  *   error: "setup" (no GEMINI_API_KEY) | "limit" (Google's free daily limit reached) | "failed"
  */
 const DEFAULT_BASE = "https://generativelanguage.googleapis.com";
@@ -16,40 +18,59 @@ const MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-2.5-f
 
 const SCHEMA = {
   type: "OBJECT",
-  properties: { products: { type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, count: { type: "INTEGER" } }, required: ["name", "count"] } } },
+  properties: {
+    products: { type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, count: { type: "INTEGER" } }, required: ["name", "count"] } },
+    unknown: { type: "ARRAY", items: { type: "OBJECT", properties: { description: { type: "STRING" }, count: { type: "INTEGER" } }, required: ["description", "count"] } },
+  },
   required: ["products"],
 };
 
 const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
-export function shelfPrompt(products) {
-  return `This is a photo of a shelf in a store. Count how many units of each of THESE products you can see on the shelf (only these, by name):
-${products.map((p) => `- ${p}`).join("\n")}
-
+export function shelfPrompt(labels, refLabels = []) {
+  return `The LAST photo is a shelf in a store. Count how many units of each of THIS company's products you can see on that shelf (only these, by name):
+${labels.map((p) => `- ${p}`).join("\n")}
+${refLabels.length ? `\nBefore the shelf photo come reference photos of some of these products, each labelled with its name, so you can recognise them. The reference photos are not the shelf: don't count them.\n` : ""}
 Rules:
-- Use exactly the product names above. Never add a product that isn't on the list.
+- In "products", use exactly the product names above. Never add a product that isn't on the list to "products".
 - Count individual units (bottles, packs, bags…) you can actually see. If a product isn't visible, leave it out.
-- If you're not sure what a product is, leave it out rather than guess.`;
+- Anything else you can see that is NOT one of these products goes in "unknown", with a short description (e.g. "red can") and how many.
+- If you're not sure whether something is one of these products, put it in "unknown" rather than guess.`;
 }
 
-/** Keeps only the company's own products (matched by name), with whole-number counts; sums duplicates. */
+/**
+ * Keeps the company's own products (matched by name), with whole-number counts, summing duplicates. Names that aren't
+ * the company's products, and Gemini's own "unknown" list, come back as unknown products.
+ */
 export function cleanFound(raw, products) {
-  const byKey = new Map(products.map((p) => [norm(p), p]));
-  const out = new Map();
+  const byKey = new Map(products.map((p) => [norm(p.label), p]));
+  const out = new Map(), unknown = [];
+  const whole = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.min(999, Math.round(n)) : 0; };
   for (const it of Array.isArray(raw?.products) ? raw.products : []) {
-    const name = byKey.get(norm(it?.name));
-    const n = Number(it?.count);
-    if (!name || !Number.isFinite(n) || n <= 0) continue;
-    out.set(name, Math.min(999, (out.get(name) || 0) + Math.round(n)));
+    const n = whole(it?.count);
+    if (!n) continue;
+    const p = byKey.get(norm(it?.name));
+    if (p) out.set(p.id, Math.min(999, (out.get(p.id) || 0) + n));
+    else unknown.push({ description: "", count: n }); // a name that isn't on the company's list: never shown as if it were
   }
-  return products.filter((p) => out.has(p)).map((p) => ({ name: p, count: out.get(p) }));
+  for (const it of Array.isArray(raw?.unknown) ? raw.unknown : []) {
+    const n = whole(it?.count);
+    if (n) unknown.push({ description: String(it?.description || "").replace(/\s+/g, " ").trim().slice(0, 60), count: n });
+  }
+  return {
+    found: products.filter((p) => out.has(p.id)).map((p) => ({ productId: p.id, name: p.label, count: out.get(p.id) })),
+    unknown: unknown.slice(0, 20),
+  };
 }
 
-export async function shelfCount(env, { image, mime, products }) {
+export async function shelfCount(env, { image, mime, products, refs = [] }) {
   if (!env.GEMINI_API_KEY) return { error: "setup", message: "Shelf photo isn't set up on this server yet (no Gemini key)." };
   const base = env.ALLOW_TEST_CLOCK === "1" && env.GEMINI_BASE ? env.GEMINI_BASE : DEFAULT_BASE;
+  const parts = [{ text: shelfPrompt(products.map((p) => p.label), refs.map((r) => r.label)) }];
+  for (const r of refs) parts.push({ text: `Reference photo: ${r.label}` }, { inline_data: { mime_type: "image/jpeg", data: r.data } });
+  parts.push({ text: "The shelf photo:" }, { inline_data: { mime_type: mime, data: image } });
   const body = JSON.stringify({
-    contents: [{ role: "user", parts: [{ text: shelfPrompt(products) }, { inline_data: { mime_type: mime, data: image } }] }],
+    contents: [{ role: "user", parts }],
     generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: SCHEMA },
   });
   let last = "";
@@ -68,7 +89,7 @@ export async function shelfCount(env, { image, mime, products }) {
     const text = (b.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
     let raw;
     try { raw = JSON.parse(text); } catch { return { error: "failed", message: "The photo checker's answer wasn't readable. Try again." }; }
-    return { ok: true, found: cleanFound(raw, products), model };
+    return { ok: true, ...cleanFound(raw, products), model };
   }
   return { error: "failed", message: `No photo checker model was available (${last.slice(0, 80) || "none"}).` };
 }

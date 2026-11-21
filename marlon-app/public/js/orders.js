@@ -128,7 +128,7 @@ export async function openOrderForm({ store = "", address = "", found = [], shel
   s.foot.append(why, saveBtn);
   const pad = new SignaturePad(signCanvas, { onChange: validate });
   for (const f of found) {
-    const p = list.find((x) => x.name.toLowerCase() === String(f.name).toLowerCase());
+    const p = (f.productId && list.find((x) => x.id === f.productId)) || list.find((x) => x.name.toLowerCase() === String(f.name).toLowerCase());
     if (p) addLine({ productId: p.id, onShelf: Number(f.count) || 0, target: lastTarget });
   }
   if (!lines.length) addLine({ onShelf: 0, target: lastTarget });

@@ -144,3 +144,44 @@ dialog.sheet p { margin: 0 0 14px; color: var(--ink-2); }
 .sheet-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; margin-top: 18px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* Marlon Pro · My Products (owner dashboard, rep dashboard and boss dashboard) */
+.mp { display: grid; gap: 12px; }
+.mp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.mp-title { margin: 0; }
+.mp-count { font-size: 13px; font-weight: 700; color: var(--muted, #73796f); white-space: nowrap; }
+.mp-note { margin: 0; font-size: 14px; color: var(--ink-2, #454a43); }
+.mp-msg { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--brand-soft, #e4f1e8); color: var(--brand, #17633f); font-weight: 650; font-size: 14px; }
+.mp-msg.is-bad { background: #fbe9e7; color: var(--danger, #b3261e); }
+.mp-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.mp-item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 10px 12px; background: var(--paper, #fff); border: 1px solid var(--line, #e2ddd1); border-radius: 14px; }
+.mp-item.is-editing { display: block; }
+.mp-thumbs { display: flex; gap: 4px; }
+.mp-thumb { padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 8px; overflow: hidden; width: 48px; height: 48px; }
+.mp-thumb img { width: 48px; height: 48px; object-fit: cover; display: block; }
+.mp-thumbs .mp-thumb + .mp-thumb { display: none; }
+.mp-nophoto { width: 48px; height: 48px; border-radius: 8px; background: var(--paper-2, #faf8f3); border: 1px dashed var(--line-strong, #cfc8b8); font-size: 10px; color: var(--muted, #73796f); display: grid; place-items: center; text-align: center; line-height: 1.1; }
+.mp-info { display: grid; gap: 1px; min-width: 0; }
+.mp-name { overflow-wrap: anywhere; }
+.mp-size, .mp-price { font-size: 13px; color: var(--muted, #73796f); }
+.mp-edit { min-height: 40px; }
+.mp-empty { color: var(--muted, #73796f); margin: 0; }
+.mp-editor { display: grid; gap: 10px; padding: 14px; border-radius: 14px; background: var(--paper, #fff); border: 1.5px solid var(--brand, #17633f); }
+.mp-ed-title { margin: 0; font-size: 16px; }
+.mp-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.mp-field { display: grid; gap: 4px; font-size: 13px; font-weight: 700; color: var(--ink-2, #454a43); min-width: 0; }
+.mp-field input, .mp-field select { width: 100%; min-height: 46px; font-size: 16px; }
+.mp-photos { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.mp-ph { position: relative; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line, #e2ddd1); }
+.mp-ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mp-ph.is-new { outline: 2px dashed var(--accent, #c2702a); outline-offset: -2px; }
+.mp-ph-x { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; border-radius: 50%; border: 0; background: rgba(0,0,0,.65); color: #fff; font-size: 16px; line-height: 1; cursor: pointer; }
+.mp-photo-add { min-height: 72px; }
+.mp-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.mp-actions .mp-save { flex: 1 1 120px; }
+.mp-delete { color: var(--danger, #b3261e); margin-left: auto; }
+.mp-viewer { border: 0; border-radius: 16px; padding: 12px; max-width: min(92vw, 520px); }
+.mp-viewer::backdrop { background: rgba(0,0,0,.6); }
+.mp-viewer img { display: block; width: 100%; height: auto; border-radius: 10px; }
+.mp-viewer-cap { text-align: center; font-weight: 650; margin: 8px 0; }
+@media (max-width: 360px) { .mp-row { grid-template-columns: 1fr 1fr; } }

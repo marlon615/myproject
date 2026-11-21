@@ -13,6 +13,8 @@ import {
 import { accountantSummary, reportYears, returnsBreakdown, summaryCsv } from "./pro-report.js";
 import { creditNoteView, shareCreditNotePdf } from "./pro.js";
 import { STATUS_TEXT, openOrder, orderView, shareOrderPdf } from "./orders.js";
+import { cachedCatalog, catalogApi, syncCatalog } from "./catalog.js";
+import { myProductsSection } from "./myproducts.js";
 import {
   UNITS, UNIT_NAMES, business, parseAmount, priceInputText, setBusiness, h, invoiceNo, money, monthLabel, normalizeUnit, parseISODate, prettyDate, qtyText, qtyWithUnit, storeKey, tidy, toCents, todayISO,
   weekStartISO, withTotals, signedByText,
@@ -453,10 +455,11 @@ function cancelPinFlow() {
 // ── Dashboard shell ──────────────────────────────────────────────────────
 
 async function loadData() {
-  const [list, prods, paper, pinResetAt, lic, cns, ods] = await Promise.all([
-    invoices.all(), products.all({ includeHidden: true }), settings.get("paper", 58), settings.get("pinResetAt", null), settings.get("license", null), credits.all(), orders.all(),
+  const [list, prods, paper, pinResetAt, lic, cns, ods, cat] = await Promise.all([
+    invoices.all(), products.all({ includeHidden: true }), settings.get("paper", 58), settings.get("pinResetAt", null), settings.get("license", null), credits.all(), orders.all(), cachedCatalog(),
   ]);
-  data = { invoices: list.map(withTotals), products: prods, paper: Number(paper) === 80 ? 80 : 58, pinResetAt, pro: Boolean(lic?.pro), credits: cns, orders: ods };
+  data = { invoices: list.map(withTotals), products: prods, paper: Number(paper) === 80 ? 80 : 58, pinResetAt, pro: Boolean(lic?.pro), credits: cns, orders: ods,
+    catalogActive: Boolean(lic?.pro && cat?.products?.length), catalogEdit: Boolean(cat?.canEdit) };
   TABS = data.pro ? [BASE_TABS[0], BASE_TABS[1], ["pro", "Pro"], BASE_TABS[2]] : BASE_TABS;
   if (view.tab === "pro" && !data.pro) view.tab = "overview";
 }
@@ -558,6 +561,9 @@ function renderPanel() {
 
 const cnNo = (n) => `CN-${String(n || 0).padStart(4, "0")}`;
 function proView() {
+  const mine = myProductsSection({ load: async () => (await syncCatalog().catch(() => null)) || cachedCatalog(), api: catalogApi,
+    onChanged: async () => { await syncCatalog().catch(() => {}); await loadData(); } });
+  mine.classList.add("dash-section");
   const years = reportYears(data.invoices, data.credits);
   const year = years.includes(view.proYear) ? view.proYear : years[0];
   const s = accountantSummary({ invoices: data.invoices, credits: data.credits, year });
@@ -577,6 +583,7 @@ function proView() {
   const rb = returnsBreakdown(data.credits);
   const table = (id, head, rows) => h("table", { class: "dash-table", id }, h("thead", {}, h("tr", {}, head.map((x) => h("th", { scope: "col" }, x)))), h("tbody", {}, rows));
   return [
+    mine,
     h("section", { class: "dash-section pro-acct", id: "dash-accountant", "aria-labelledby": "dash-h-acct" },
       h("div", { class: "pro-acct-head" }, h("h2", { class: "section-title", id: "dash-h-acct" }, "Accountant summary"), yearSel),
       h("p", { class: "dash-note" }, `${business.name || "Your business"} · sales for ${year}, by quarter and for the year ending 31 December ${year}.`),
@@ -1288,6 +1295,14 @@ async function setPaper(mm) {
 }
 
 function productsSection() {
+  // Marlon Pro · My Products in use: the list comes from the company's saved products (one place to change it).
+  if (data.catalogActive) {
+    return settingsSection("dash-h-products", "Products",
+      h("p", { class: "dash-help", id: "dash-products-managed" }, data.catalogEdit
+        ? "Your products are in My Products (the Pro tab), with sizes and photos. Add, change or delete them there."
+        : "Your company's products are managed by your boss in My Products. They update on this phone by themselves."),
+      data.catalogEdit ? h("button", { type: "button", class: "btn btn-block", onclick: () => selectTab("pro") }, "Open My Products") : null);
+  }
   ui.productList = h("ul", { class: "dash-plist" });
   ui.removedBox = h("div", { class: "dash-removed-box" });
   const form = addProductForm();

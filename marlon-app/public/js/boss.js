@@ -15,6 +15,7 @@
  *    Delivered, Cancelled) with who ordered; the orderer's signature is fetched only when "Show signature" is tapped.
  */
 import { accountantSummary, reportYears, returnsBreakdown, summaryCsv } from "./pro-report.js";
+import { myProductsSection } from "./myproducts.js";
 const root = document.getElementById("boss");
 const KEY = /^[0-9a-f]{32}$/;
 const STORE = "marlon.boss";        // { boss, device } on this phone
@@ -262,6 +263,20 @@ function returnsSection(data, repName) {
           el("p", { class: "boss-note" }, c.applied >= c.total ? "Fully taken off invoices." : c.applied ? `${money(c.applied)} taken off invoices so far · ${money(c.total - c.applied)} still to come off.` : "Comes off this store's next invoice.")))))] : null);
 }
 
+/** My Products (Pro): the boss adds, edits and deletes the company's products; every rep phone gets them by itself.
+ *  Made once and kept across the 30-second refreshes, so a product being typed isn't wiped. */
+let productsBox = null;
+function productsSection() {
+  if (!productsBox) {
+    productsBox = myProductsSection({
+      load: async () => { const r = await call("/api/pro/products", { method: "POST", auth: true, body: {} }).catch(() => null); return r?.ok && r.data.pro ? r.data : null; },
+      api: (sub, body) => call(`/api/pro/products${sub}`, { method: "POST", auth: true, body }),
+    });
+    productsBox.classList.add("card", "boss-card", "boss-pro-card");
+  }
+  return productsBox;
+}
+
 /** Shelf orders from the reps' phones: Pending first; who ordered, with their signature on demand. */
 const ordNo = (n) => `ORD-${String(n || 0).padStart(4, "0")}`;
 const ORDER_STATUS = { pending: "Pending", delivered: "Delivered", cancelled: "Cancelled" };
@@ -354,6 +369,7 @@ function render(data, offline) {
       el("div", { class: "card boss-tile" }, el("p", { class: "boss-tile-label" }, "This month"), el("p", { class: "boss-tile-value num", "data-total": "month" }, money(sum(all.filter(inRange(p.month))))))),
     el("p", { class: "boss-note" }, `Not paid: ${money(sum(unpaid))} on ${unpaid.length} invoice${unpaid.length === 1 ? "" : "s"}. Weeks run Monday to Sunday.`),
     repsSection(data),
+    data.pro ? productsSection() : null,
     data.pro ? accountantSection(data, repName, offline) : null,
     data.pro ? returnsSection(data, repName) : null,
     data.pro ? ordersSection(data, repName, offline) : null,
@@ -377,7 +393,7 @@ function render(data, offline) {
     el("p", { class: "boss-note boss-no-print" }, el("a", { href: "/terms", target: "_blank", rel: "noopener" }, "Terms and conditions (including Marlon Pro)")),
     el("div", { class: "boss-actions" },
       el("button", { type: "button", class: "btn", onclick: () => load() }, "Refresh"),
-      el("button", { type: "button", class: "btn btn-ghost", onclick: async () => { await call("/api/boss/logout", { method: "POST", auth: true }).catch(() => {}); put(TOKEN, null, sessionStorage); put(CACHE, null); start(); } }, "Lock")));
+      el("button", { type: "button", class: "btn btn-ghost", onclick: async () => { await call("/api/boss/logout", { method: "POST", auth: true }).catch(() => {}); put(TOKEN, null, sessionStorage); put(CACHE, null); productsBox = null; start(); } }, "Lock")));
 }
 
 start();

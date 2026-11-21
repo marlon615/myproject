@@ -128,6 +128,15 @@ Same app, no separate version: Pro features appear only for companies with **Pro
   dropped. Offline, photos wait on the phone and are checked once online. Limit: 100 photos per company per day. If
   Google's free daily limit is reached, the rep is told to try tomorrow; without a key, shelf photo says it isn't set up.
   Cost: $0 within Google's free limit; Marlon never turns on paid use.
+- **My Products:** each company's own products (name, size, price, how it's sold, up to 3 camera photos), kept on the
+  server for that company only (`company_products`, `product_photos`; every request is checked against the company's
+  phone link + device or the boss's session). A solo business edits them in its dashboard → Pro (its own list is copied
+  in once, the first time); for a team the boss edits them in the boss dashboard and reps can only read (`catalog.js`
+  keeps each phone's list in step every 5 minutes / when online, with thumbnails for offline). While the company has
+  saved products, the phone uses exactly those (its own are `hiddenByCompany`, not deleted; names include the size).
+  Shelf photo matches ONLY these products (names, sizes and the first photo of each, up to 40, as references) and
+  shows "Unknown product" for anything else. The maker's console shows each company's product count.
+  Limits: 200 products, 3 photos each (512 px + small thumbnail, shrunk on the phone).
 - **Shelf Order:** after a shelf photo, **Make an order** opens the order form filled in from the shelf count. The rep sets a
   target per product (or one for all; the last one is remembered) and Marlon orders `target − on shelf` (never below 0);
   any amount can be changed, products added or left out. The store person types their name and signs; the order is saved

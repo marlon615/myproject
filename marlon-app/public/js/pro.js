@@ -24,7 +24,7 @@ import { openOrderForm, openOrders, setupOrders } from "./orders.js";
 import { orders } from "./db.js";
 
 const SHELF_QUEUE = "shelfQueue";     // photos taken offline, waiting to be checked: [{ id, at, store, image, products }]
-const SHELF_HISTORY = "shelfChecks";  // the last checks on this phone: [{ id, at, store, found, missing, thumb }]
+const SHELF_HISTORY = "shelfChecks";  // the last checks on this phone: [{ id, at, store, found, unknown, missing, thumb }]
 const REASONS = [["expired", "Expired"], ["damaged", "Damaged"]];
 const reasonText = (r) => (r === "damaged" ? "Damaged" : "Expired");
 let opts = {};
@@ -337,7 +337,9 @@ async function saveCheck(entry) {
   await settings.set(SHELF_HISTORY, [entry, ...list.filter((x) => x.id !== entry.id)].slice(0, 30));
 }
 
-const missingFrom = (found, names) => names.filter((n) => !found.some((f) => f.name === n));
+/** The company's products not seen on the shelf. list: [{ id, name }] (older queued photos: names only). */
+const missingFrom = (found, list) => list.map((p) => (typeof p === "string" ? { id: null, name: p } : p))
+  .filter((p) => !found.some((f) => (p.id && f.productId === p.id) || f.name === p.name)).map((p) => p.name);
 
 /** Photos taken offline: checked one by one once there's a connection. */
 let draining = false;
@@ -350,7 +352,7 @@ export async function processShelfQueue() {
       const q = queue[0];
       try {
         const r = await checkPhoto(q.image, q.products);
-        await saveCheck({ id: q.id, at: q.at, checkedAt: new Date().toISOString(), store: q.store, found: r.found, missing: missingFrom(r.found, q.products), thumb: q.thumb });
+        await saveCheck({ id: q.id, at: q.at, checkedAt: new Date().toISOString(), store: q.store, found: r.found, unknown: r.unknown || [], missing: missingFrom(r.found, q.list || q.products), thumb: q.thumb });
         toast(`Shelf photo${q.store ? ` at ${q.store}` : ""} checked: ${r.found.length} of your products seen.`, { ms: 3600 });
       } catch (e) {
         if (e.offline || e.status === 429 || e.status >= 500) break; // try again later
@@ -370,6 +372,9 @@ function resultView(entry, from = null) {
   return h("div", { class: "shelf-result" },
     h("p", { class: "shelf-summary" }, entry.found.length ? `${entry.found.length} of your products seen · ${total} unit${total === 1 ? "" : "s"}` : "None of your products were seen in this photo."),
     entry.found.length ? h("ul", { class: "shelf-found" }, entry.found.map((f) => h("li", {}, h("span", {}, f.name), h("strong", { class: "num" }, `× ${f.count}`)))) : null,
+    entry.unknown?.length ? h("ul", { class: "shelf-found shelf-unknown" }, entry.unknown.map((u) => h("li", {},
+      h("span", {}, "Unknown product", u.description ? h("small", {}, ` · ${u.description}`) : null), h("strong", { class: "num" }, `× ${u.count}`)))) : null,
+    entry.unknown?.length ? h("p", { class: "shelf-missing" }, "Unknown products aren't in My Products, so they can't be ordered. Add them in My Products if you sell them.") : null,
     entry.missing?.length ? h("p", { class: "shelf-missing" }, h("strong", {}, "Not seen: "), entry.missing.join(", ")) : null,
     h("p", { class: "shelf-note" }, "Counted by AI from the photo. Check the shelf before relying on it."),
     isPro ? orderBtn : null);
@@ -415,12 +420,12 @@ async function openShelf() {
 
   async function runCheck() {
     if (!photo) return;
-    const entry = { id: uid("sh_"), at: new Date().toISOString(), store: tidy(storeIn.value), image: photo.data, thumb: photo.thumb, products: names };
+    const entry = { id: uid("sh_"), at: new Date().toISOString(), store: tidy(storeIn.value), image: photo.data, thumb: photo.thumb, products: names, list: list.map((p) => ({ id: p.id, name: p.name })) };
     if (navigator.onLine === false) return queueIt(entry);
     result.replaceChildren(h("p", { class: "shelf-busy" }, "Checking the shelf…"));
     try {
       const r = await checkPhoto(entry.image, names);
-      const done = { id: entry.id, at: entry.at, checkedAt: new Date().toISOString(), store: entry.store, found: r.found, missing: missingFrom(r.found, names), thumb: entry.thumb };
+      const done = { id: entry.id, at: entry.at, checkedAt: new Date().toISOString(), store: entry.store, found: r.found, unknown: r.unknown || [], missing: missingFrom(r.found, entry.list), thumb: entry.thumb };
       await saveCheck(done);
       result.replaceChildren(resultView(done, s));
       renderHistory();

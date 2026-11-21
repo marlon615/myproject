@@ -84,12 +84,13 @@ nav: security
         <li><b>Anonymous counts</b> (you can turn these off in Settings): a random id plus “what happened, which day”, such as an invoice made or a receipt printed. Never names, customers, products, prices or amounts. Nothing is sent before setup is finished.</li>
         <li><b>Team invoices</b> and, with Pro, credit notes and shelf orders, as described above. A shelf order includes the name and signature of the person who placed it; both are stored encrypted (AES-256-GCM) and the boss sees the signature only on request.</li>
         <li><b>Invoices sent for signature,</b> encrypted.</li>
+        <li><b>My Products</b> with Marlon Pro: your saved products and their photos, for your company only.</li>
         <li><b>Shelf photos</b> with Marlon Pro, passed on to be read. See below.</li>
       </ul>
       <p>Full details are in our <a href="/privacy">privacy policy</a>.</p>
 
       <h2 id="pro">Marlon Pro and AI</h2>
-      <p>To read a shelf photo, Marlon sends the photo (shrunk on the phone to about 200 KB) and your company’s product names to Google’s Gemini service. Our server doesn’t keep the photo after it has been read. The phone keeps a small copy in its own history. Google handles the photo under its own Gemini API terms. Please don’t photograph people or private papers. Shelf photo is only available with Marlon Pro, and only when a rep chooses to take one.</p>
+      <p>My Products (your company’s saved products and their photos) is stored on our server for your company only: every request is checked against your company’s own phone links or your boss’s passcode, and a rep’s phone can read the list but not change it. To read a shelf photo, Marlon sends the photo (shrunk on the phone to about 200 KB) and your company’s saved product names, sizes and one photo of each (up to 40) to Google’s Gemini service. Our server doesn’t keep the photo after it has been read. The phone keeps a small copy in its own history. Google handles the photo under its own Gemini API terms. Please don’t photograph people or private papers. Shelf photo is only available with Marlon Pro, and only when a rep chooses to take one.</p>
 
       <h2 id="hosting">Hosting</h2>
       <p>Marlon and this website run on Cloudflare Workers, with data stored in Cloudflare Durable Objects. Pages and the app are served over HTTPS only.</p>

@@ -40,6 +40,16 @@
  *   POST /api/team/sync          also takes { orders: [...] } (Pro only): shelf orders; the orderer's name and signature
  *                                are kept encrypted (AES-256-GCM, ENCRYPTION_KEY) → { storedOrders }
  *   POST /api/boss/order-signature (Bearer) { id } → { signer, signature, signedAt }  one order's signature, on demand
+ *   Marlon Pro · My Products (each company's own product list, private to that company; shelf photo matches only these):
+ *   POST /api/pro/products        { key, device } or boss Bearer → { pro, canEdit, version, products: [{ id, name, size, price,
+ *                                unit, photos: [{ id, thumb }] }] }   (a solo phone and the boss can edit; reps only read)
+ *   POST /api/pro/products/save   … + { product: { id?, name, size, price, unit } } → { product }
+ *   POST /api/pro/products/delete … + { id }
+ *   POST /api/pro/products/photo  … + { productId, image (512 px JPEG, base64), thumb (small JPEG, base64) } → { photo }
+ *   POST /api/pro/products/photo-delete … + { productId, photoId }
+ *   POST /api/pro/products/photo-get    … + { photoId } → { image }
+ *   POST /api/pro/products/seed   { key, device, products: [{ name, price, unit }] }  a solo phone's own list, once, while
+ *                                the company has no saved products yet
  */
 import { DurableObject } from "cloudflare:workers";
 import { FILES, RULES } from "./assets.generated.js";
@@ -50,7 +60,9 @@ import { PRO_REP_CENTS, TIER_LABELS, cleanEmail, cleanPhone, cleanReps, proPrice
 
 // Marlon Pro: the free-tier guard for shelf photos (the price lives in public/js/pricing.js).
 const SHELF_DAILY_LIMIT = 100; // photos per company per day (keeps one company from using up the shared free quota)
-const SHELF_MAX_PRODUCTS = 120;
+const SHELF_MAX_PRODUCTS = 200;   // My Products per company
+const PRODUCT_PHOTOS = 3;          // photos per product
+const SHELF_REFS = 40;             // reference photos sent with one shelf photo (one per product)
 
 
 const KINDS = ["open", "setup", "invoice", "voice", "print", "pdf", "picture"];
@@ -243,6 +255,12 @@ export class Stats extends DurableObject {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS team_credits (buyer TEXT NOT NULL, device TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
       updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS shelf_daily (buyer TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (buyer, day))`);
+    // Marlon Pro · My Products: each company's own products and their photos (private to that company).
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS company_products (buyer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, size TEXT NOT NULL DEFAULT '',
+      price_cents INTEGER, unit TEXT NOT NULL DEFAULT 'each', position INTEGER NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS product_photos (buyer TEXT NOT NULL, product_id TEXT NOT NULL, id TEXT NOT NULL, image TEXT NOT NULL, thumb TEXT NOT NULL,
+      created TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
+    addColumn("buyers", "catalog_ver", "INTEGER NOT NULL DEFAULT 0");
     // Marlon Pro shelf orders from reps' phones. `data` has no name or signature; `sealed` has both, encrypted.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS team_orders (buyer TEXT NOT NULL, device TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
       sealed TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
@@ -506,6 +524,7 @@ export class Stats extends DurableObject {
     return { id: b.id, name: b.name, kind: b.kind || "solo", devices: b.devices, amountCents: b.amount_cents, created: b.created, off: Boolean(b.off), phone: b.phone || "", email: b.email || "",
       phones: devices, active: devices.filter((d) => !d.off).length, bossKey: b.boss_key || null, bossPhones: bosses, bossPlaces: BOSS_PLACES, slots,
       invoices: b.kind === "team" ? this.sql.exec("SELECT COUNT(*) AS n FROM team_invoices WHERE buyer = ?", id).toArray()[0].n : 0,
+      productCount: this.sql.exec("SELECT COUNT(*) AS n FROM company_products WHERE buyer = ?", id).toArray()[0].n,
       ...(() => {
         // Companies on Pro before reps were asked: their rep places (a solo business: 1 rep), so their price is unchanged.
         const reps = cleanReps(b.pro_reps) || (b.kind === "team" ? b.devices : 1);
@@ -557,12 +576,122 @@ export class Stats extends DurableObject {
     const b = this.#activePhone(key, device);
     if (!b) return { error: "off" };
     if (!b.pro) return { error: "notpro" };
+    const list = this.#products(b.id);
+    if (!list.length) return { error: "noproducts", team: b.kind === "team" };
     const day = todayUTC();
     const n = this.sql.exec("SELECT n FROM shelf_daily WHERE buyer = ? AND day = ?", b.id, day).toArray()[0]?.n || 0;
     if (n >= SHELF_DAILY_LIMIT) return { error: "daily" };
     this.sql.exec("INSERT INTO shelf_daily (buyer, day, n) VALUES (?, ?, 1) ON CONFLICT(buyer, day) DO UPDATE SET n = n + 1", b.id, day);
     this.sql.exec("DELETE FROM shelf_daily WHERE day < ?", addDays(day, -30));
+    // The company's saved products (name and size), and the first photo of each as a reference (up to SHELF_REFS).
+    const label = (p) => (p.size ? `${p.name} (${p.size})` : p.name);
+    const refs = [];
+    for (const p of list) {
+      if (refs.length >= SHELF_REFS) break;
+      const ph = this.sql.exec("SELECT image FROM product_photos WHERE buyer = ? AND product_id = ? ORDER BY created LIMIT 1", b.id, p.id).toArray()[0];
+      if (ph) refs.push({ label: label(p), data: ph.image });
+    }
+    return { ok: true, products: list.map((p) => ({ id: p.id, label: label(p) })), refs };
+  }
+
+  // ── Marlon Pro · My Products ──────────────────────────────────────────────────────────────────────────────────
+  #products(buyerId) {
+    return this.sql.exec("SELECT id, name, size, price_cents, unit, position FROM company_products WHERE buyer = ? ORDER BY position, created", buyerId).toArray()
+      .map((r) => ({ id: r.id, name: r.name, size: r.size, price: r.price_cents === null ? null : r.price_cents / 100, unit: r.unit }));
+  }
+  /** Who is asking: a company phone ({ key, device }) or a signed-in boss phone ({ boss }). Solo phones and bosses can edit. */
+  #catalogWho(who, { edit = false } = {}) {
+    let b = null;
+    if (who?.boss) {
+      const s = this.sql.exec("SELECT buyer, device FROM boss_sessions WHERE token = ? AND expires > ?", who.boss, Date.now()).toArray()[0];
+      if (!s) return { error: "signin" };
+      b = this.#buyer(s.buyer);
+      if (!this.#bossDeviceOk(b, s.device)) return { error: "off" };
+    } else {
+      b = this.#activePhone(who?.key, who?.device);
+      if (!b) return { error: "off" };
+    }
+    if (!b.pro) return { error: "notpro", b };
+    const canEdit = Boolean(who?.boss) || b.kind !== "team";
+    if (edit && !canEdit) return { error: "readonly" };
+    return { b, canEdit };
+  }
+  #bumpCatalog(id) { this.sql.exec("UPDATE buyers SET catalog_ver = catalog_ver + 1 WHERE id = ?", id); }
+  catalog(who) {
+    const r = this.#catalogWho(who);
+    if (r.error === "notpro") return { pro: false };
+    if (r.error) return r;
+    const photos = this.sql.exec("SELECT id, product_id, thumb FROM product_photos WHERE buyer = ? ORDER BY created", r.b.id).toArray();
+    const ver = this.sql.exec("SELECT catalog_ver FROM buyers WHERE id = ?", r.b.id).toArray()[0].catalog_ver;
+    return { pro: true, canEdit: r.canEdit, team: r.b.kind === "team", version: ver,
+      products: this.#products(r.b.id).map((p) => ({ ...p, photos: photos.filter((x) => x.product_id === p.id).map((x) => ({ id: x.id, thumb: x.thumb })) })) };
+  }
+  catalogSave(who, p) {
+    const r = this.#catalogWho(who, { edit: true });
+    if (r.error) return r;
+    const id = r.b.id, now = new Date().toISOString();
+    const clash = this.sql.exec("SELECT id FROM company_products WHERE buyer = ? AND lower(name) = lower(?) AND lower(size) = lower(?) AND id != ?", id, p.name, p.size, p.id || "").toArray()[0];
+    if (clash) return { error: "duplicate" };
+    if (p.id) {
+      if (!this.sql.exec("SELECT 1 FROM company_products WHERE buyer = ? AND id = ?", id, p.id).toArray().length) return { error: "unknown" };
+      this.sql.exec("UPDATE company_products SET name = ?, size = ?, price_cents = ?, unit = ?, updated = ? WHERE buyer = ? AND id = ?", p.name, p.size, p.priceCents, p.unit, now, id, p.id);
+    } else {
+      const n = this.sql.exec("SELECT COUNT(*) AS n, COALESCE(MAX(position), 0) AS m FROM company_products WHERE buyer = ?", id).toArray()[0];
+      if (n.n >= SHELF_MAX_PRODUCTS) return { error: "limit" };
+      p.id = `cp_${randomHex(8)}`;
+      this.sql.exec("INSERT INTO company_products (buyer, id, name, size, price_cents, unit, position, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", id, p.id, p.name, p.size, p.priceCents, p.unit, n.m + 1, now, now);
+    }
+    this.#bumpCatalog(id);
+    return { ok: true, product: this.#products(id).find((x) => x.id === p.id) };
+  }
+  catalogDelete(who, productId) {
+    const r = this.#catalogWho(who, { edit: true });
+    if (r.error) return r;
+    this.sql.exec("DELETE FROM product_photos WHERE buyer = ? AND product_id = ?", r.b.id, productId);
+    this.sql.exec("DELETE FROM company_products WHERE buyer = ? AND id = ?", r.b.id, productId);
+    this.#bumpCatalog(r.b.id);
     return { ok: true };
+  }
+  catalogPhoto(who, productId, image, thumb) {
+    const r = this.#catalogWho(who, { edit: true });
+    if (r.error) return r;
+    if (!this.sql.exec("SELECT 1 FROM company_products WHERE buyer = ? AND id = ?", r.b.id, productId).toArray().length) return { error: "unknown" };
+    if (this.sql.exec("SELECT COUNT(*) AS n FROM product_photos WHERE buyer = ? AND product_id = ?", r.b.id, productId).toArray()[0].n >= PRODUCT_PHOTOS) return { error: "photos" };
+    const photo = { id: `ph_${randomHex(8)}`, thumb };
+    this.sql.exec("INSERT INTO product_photos (buyer, product_id, id, image, thumb, created) VALUES (?, ?, ?, ?, ?, ?)", r.b.id, productId, photo.id, image, thumb, new Date().toISOString());
+    this.#bumpCatalog(r.b.id);
+    return { ok: true, photo };
+  }
+  catalogPhotoDelete(who, productId, photoId) {
+    const r = this.#catalogWho(who, { edit: true });
+    if (r.error) return r;
+    this.sql.exec("DELETE FROM product_photos WHERE buyer = ? AND product_id = ? AND id = ?", r.b.id, productId, photoId);
+    this.#bumpCatalog(r.b.id);
+    return { ok: true };
+  }
+  catalogPhotoGet(who, photoId) {
+    const r = this.#catalogWho(who);
+    if (r.error) return r;
+    const row = this.sql.exec("SELECT image FROM product_photos WHERE buyer = ? AND id = ?", r.b.id, photoId).toArray()[0]; // only this company's photos
+    return row ? { ok: true, image: row.image } : { error: "unknown" };
+  }
+  /** A solo phone's own product list becomes My Products, once, while the company has none saved yet. */
+  catalogSeed(who, list) {
+    const r = this.#catalogWho(who, { edit: true });
+    if (r.error) return r;
+    if (r.b.kind === "team" || who?.boss) return { error: "readonly" };
+    if (this.#products(r.b.id).length) return { ok: true, seeded: 0 };
+    const now = new Date().toISOString(), seen = new Set();
+    let pos = 0;
+    for (const p of list.slice(0, SHELF_MAX_PRODUCTS)) {
+      const k = p.name.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      this.sql.exec("INSERT INTO company_products (buyer, id, name, size, price_cents, unit, position, created, updated) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)",
+        r.b.id, `cp_${randomHex(8)}`, p.name, p.priceCents, p.unit, ++pos, now, now);
+    }
+    this.#bumpCatalog(r.b.id);
+    return { ok: true, seeded: pos };
   }
 
   buyers() {
@@ -575,7 +704,7 @@ export class Stats extends DurableObject {
   /** Deletes a buyer or team completely: its phones, rep links, boss phones, passcode, sessions and team invoices. */
   deleteBuyer(id) {
     if (!this.#buyer(id)) return false;
-    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions", "team_credits", "shelf_daily", "pro_notices", "team_orders"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
+    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions", "team_credits", "shelf_daily", "pro_notices", "team_orders", "company_products", "product_photos"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
     this.sql.exec("DELETE FROM buyers WHERE id = ?", id);
     return true;
   }
@@ -584,7 +713,7 @@ export class Stats extends DurableObject {
   leftovers(id) {
     const n = (t, col = "buyer") => this.sql.exec(`SELECT COUNT(*) AS n FROM ${t} WHERE ${col} = ?`, id).toArray()[0].n;
     return { buyers: n("buyers", "id"), devices: n("buyer_devices"), slots: n("team_slots"), invoices: n("team_invoices"), paid: n("boss_paid"), sessions: n("boss_sessions"),
-      credits: n("team_credits"), shelf: n("shelf_daily"), notices: n("pro_notices"), orders: n("team_orders") };
+      credits: n("team_credits"), shelf: n("shelf_daily"), notices: n("pro_notices"), orders: n("team_orders"), products: n("company_products"), photos: n("product_photos") };
   }
 
   setBuyerOff(id, off) {
@@ -1039,17 +1168,59 @@ async function api(request, env, path) {
     const mime = body.mime === "image/png" ? "image/png" : body.mime === "image/webp" ? "image/webp" : "image/jpeg";
     const image = typeof body.image === "string" && body.image.length > 100 && body.image.length < 2_900_000 && /^[A-Za-z0-9+/=]+$/.test(body.image) ? body.image : null;
     if (!image) return json({ error: "That photo couldn't be read. Take it again." }, 400);
-    const products = [...new Set((Array.isArray(body.products) ? body.products : []).map((x) => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, 80)).filter(Boolean))].slice(0, SHELF_MAX_PRODUCTS);
-    if (!products.length) return json({ error: "Add your products first (Settings), so Marlon knows what to look for." }, 400);
+    // Matched ONLY against the company's saved products (My Products), never names sent by the phone.
     const allow = await stub.shelfAllow(key, device);
     if (allow.error === "off") return json({ error: "This phone is switched off.", contact: await stub.contact() }, 403);
     if (allow.error === "notpro") return json({ error: "Shelf photo is part of Marlon Pro. Ask the seller to switch Pro on for your company." }, 403);
+    if (allow.error === "noproducts") return json({ error: allow.team ? "Your boss needs to add your company's products in My Products first." : "Add your products in My Products first (dashboard → Pro), so Marlon knows what to look for." }, 400);
     if (allow.error === "daily") return json({ error: `Your company has used today's ${SHELF_DAILY_LIMIT} shelf photos. Try again tomorrow.` }, 429);
-    const r = await shelfCount(env, { image, mime, products });
+    const r = await shelfCount(env, { image, mime, products: allow.products, refs: allow.refs });
     if (r.error === "setup") return json({ error: r.message }, 503);
     if (r.error === "limit") return json({ error: r.message }, 429);
     if (r.error) return json({ error: r.message }, 502);
-    return json({ ok: true, found: r.found });
+    return json({ ok: true, found: r.found, unknown: r.unknown });
+  }
+  if (path.startsWith("/api/pro/products") && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 600000); } catch { return json({ error: "That's too big. Try a smaller photo." }, 400); }
+    const bearer = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+    const who = body.key ? { key: hex32(body.key), device: hex32(body.device) } : { boss: bearer };
+    const txt = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+    const oid = (v) => (typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : null);
+    const jpeg = (v, max) => (typeof v === "string" && v.length > 100 && v.length < max && /^[A-Za-z0-9+/=]+$/.test(v) ? v : null);
+    const sub = path.slice("/api/pro/products".length);
+    let r;
+    if (sub === "") r = await stub.catalog(who);
+    else if (sub === "/save") {
+      const p = body.product || {};
+      const name = txt(p.name, 80), size = txt(p.size, 40);
+      if (!name) return json({ error: "Type the product's name." }, 400);
+      const price = p.price === null || p.price === undefined || p.price === "" ? null : Number(String(p.price).replace(/[$,\s]/g, ""));
+      if (price !== null && (!Number.isFinite(price) || price < 0 || price > 1e7)) return json({ error: "The price should be a number, like 2.50." }, 400);
+      r = await stub.catalogSave(who, { id: p.id ? oid(p.id) : null, name, size, priceCents: price === null ? null : Math.round(price * 100), unit: normalizeUnit(p.unit) });
+    } else if (sub === "/delete") r = await stub.catalogDelete(who, oid(body.id) || "");
+    else if (sub === "/photo") {
+      const image = jpeg(body.image, 400000), thumb = jpeg(body.thumb, 30000);
+      if (!image || !thumb) return json({ error: "That photo couldn't be used. Take it again." }, 400);
+      r = await stub.catalogPhoto(who, oid(body.productId) || "", image, thumb);
+    } else if (sub === "/photo-delete") r = await stub.catalogPhotoDelete(who, oid(body.productId) || "", oid(body.photoId) || "");
+    else if (sub === "/photo-get") r = await stub.catalogPhotoGet(who, oid(body.photoId) || "");
+    else if (sub === "/seed") {
+      const list = (Array.isArray(body.products) ? body.products : []).map((x) => {
+        const price = x?.price === null || x?.price === undefined ? null : Number(x.price);
+        return { name: txt(x?.name, 80), priceCents: Number.isFinite(price) && price >= 0 ? Math.round(price * 100) : null, unit: normalizeUnit(x?.unit) };
+      }).filter((x) => x.name);
+      r = await stub.catalogSeed(who, list);
+    } else return json({ error: "Not found" }, 404);
+    if (r.error === "signin") return json({ error: "Please enter your passcode again." }, 401);
+    if (r.error === "off") return json({ error: "This phone's access has been switched off.", contact: await stub.contact() }, 403);
+    if (r.error === "notpro") return json({ error: "My Products is part of Marlon Pro. Ask the seller to switch Pro on for your company." }, 403);
+    if (r.error === "readonly") return json({ error: "Your boss manages your company's products." }, 403);
+    if (r.error === "duplicate") return json({ error: "You already have a product with that name and size." }, 409);
+    if (r.error === "limit") return json({ error: `A company can save up to ${SHELF_MAX_PRODUCTS} products.` }, 409);
+    if (r.error === "photos") return json({ error: `Each product can have up to ${PRODUCT_PHOTOS} photos. Delete one first.` }, 409);
+    if (r.error === "unknown") return json({ error: "That product or photo isn't in your company's list." }, 404);
+    return json(r);
   }
   if (path === "/api/boss/activate" && request.method === "POST") {
     let body;

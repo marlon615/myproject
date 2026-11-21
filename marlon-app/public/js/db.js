@@ -2,7 +2,9 @@
  * On-phone storage (IndexedDB). Everything stays on this device; nothing is ever uploaded.
  *
  * Stores:
- *   products  { id, name, order, custom, hidden, createdAt }   (prices live on invoices only)
+ *   products  { id, name, order, custom, hidden, createdAt, price, unit }
+ *             Marlon Pro · My Products: company products (company: true, size, baseName) come from the server
+ *             (catalog.js); while the company has any, the phone's own products are hiddenByCompany (kept, not deleted).
  *   invoices  { id, number, seller, store, address, date, items[], total, signature, signedAt, createdAt, updatedAt, payment?, remote?, signerName? }
  *             remote (sent for signature): { state: "sent"|"opened"|"signed"|"expired", link, sentAt, openedAt, expires, signedAt }
  *             Once remote.state is "signed", put() never changes the invoice again (only its payment).
@@ -101,7 +103,34 @@ export const products = {
   /** Products in list order. Hidden (removed) products are left out unless includeHidden. */
   async all({ includeHidden = false } = {}) {
     const rows = await run("products", "readonly", (s) => done(s.products.getAll()));
-    return rows.filter((p) => includeHidden || !p.hidden).sort(byOrder);
+    return rows.filter((p) => includeHidden || (!p.hidden && !p.hiddenByCompany)).sort(byOrder);
+  },
+  /**
+   * The company's saved products (My Products) become this phone's list. list: [{ id, name, size, price, unit }].
+   * An empty list gives the phone its own products back. Resolves with true when anything changed.
+   */
+  async applyCompany(list) {
+    return run("products", "readwrite", async (s) => {
+      const rows = await done(s.products.getAll());
+      const want = new Map((list || []).map((p, i) => [p.id, { ...p, order: i + 1 }]));
+      let changed = false;
+      const put = async (p) => { await done(s.products.put(p)); changed = true; };
+      for (const p of rows) {
+        if (p.company) {
+          const w = want.get(p.id);
+          if (!w) { if (!p.hidden) await put({ ...p, hidden: true }); continue; }
+          const name = w.size ? `${w.name} ${w.size}` : w.name;
+          const next = { ...p, name, baseName: w.name, size: w.size || "", price: w.price ?? null, unit: normalizeUnit(w.unit), order: w.order, hidden: false };
+          if (JSON.stringify(next) !== JSON.stringify(p)) await put(next);
+          want.delete(p.id);
+        } else if (Boolean(p.hiddenByCompany) !== Boolean(list?.length)) await put({ ...p, hiddenByCompany: Boolean(list?.length) });
+      }
+      for (const w of want.values()) {
+        await put({ id: w.id, name: w.size ? `${w.name} ${w.size}` : w.name, baseName: w.name, size: w.size || "", price: w.price ?? null, unit: normalizeUnit(w.unit),
+          order: w.order, company: true, custom: false, hidden: false, createdAt: nowISO() });
+      }
+      return changed;
+    });
   },
   async get(id) {
     return (await run("products", "readonly", (s) => done(s.products.get(id)))) || null;

@@ -4,6 +4,7 @@
  */
 import { init as initDb, credits, invoices, products, profile, settings } from "./db.js";
 import { setupPro } from "./pro.js";
+import { startCatalogSync } from "./catalog.js";
 import { runSetup } from "./setup.js";
 import { track } from "./usage.js";
 import { ensureAccess } from "./license.js";
@@ -139,6 +140,8 @@ async function start() {
       window.scrollTo({ top: 0, behavior: "smooth" });
       return { id: state.inv.id, number: state.inv.number };
     } });
+  // Marlon Pro · My Products: the company's saved products become this phone's list (kept for offline).
+  startCatalogSync({ onChanged: () => { hooks.onProductsChanged(); document.dispatchEvent(new Event("catalog:changed")); } });
   startRemoteWatch(); // invoices sent for signature: news comes in by itself (it stops when nothing is waiting)
   initDashboard(el.dash, hooks);
   window.addEventListener("hashchange", route);

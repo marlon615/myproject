@@ -414,6 +414,7 @@ function cardSummary(b) {
   return el("div", { class: "con-summary" },
     el("p", {}, el("strong", {}, "Contact: "), b.phone || b.email ? [b.phone, b.email].filter(Boolean).join(" · ") : el("span", { class: "con-muted" }, "none saved")),
     el("p", {}, el("strong", {}, "Marlon Pro: "), b.pro ? `on · ${b.proReps} rep${b.proReps === 1 ? "" : "s"} · ${money(b.proMonthlyCents)} a month` : el("span", { class: "con-muted" }, "off")),
+    el("p", { class: "con-products" }, el("strong", {}, "My Products: "), `${b.productCount || 0} product${b.productCount === 1 ? "" : "s"}`, b.pro ? null : el("span", { class: "con-muted" }, " (Pro feature)")),
     el("button", { type: "button", class: "btn btn-primary btn-block con-edit-big", onclick: () => openBuyer(b.id) }, "Edit customer ›"));
 }
 

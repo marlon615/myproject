@@ -69,7 +69,7 @@
       <a href="#teams">Teams and the boss dashboard</a>
       <a href="#signing">Send for signature and alerts</a>
       <a href="#orders">Marlon Pro shelf orders</a>
-      <a href="#pro">Marlon Pro shelf photo</a>
+      <a href="#pro">My Products and shelf photo</a>
       <a href="#counts">Anonymous usage counts</a>
       <a href="#sharing">Who we share with</a>
       <a href="#keeping">How long we keep it</a>
@@ -117,8 +117,9 @@
       <h2 id="orders">Marlon Pro shelf orders</h2>
       <p>A shelf order is saved on the rep’s phone with the store, the products and amounts, and the name and signature of the person who placed it, with the date and time. For a team with Marlon Pro, the order is also sent to our server so the company’s boss dashboard can show it. The orderer’s name and signature are stored encrypted (AES-256-GCM). The boss dashboard shows the name, and shows the signature only when the boss taps “Show signature”. For a solo business, orders stay on its own phone.</p>
 
-      <h2 id="pro">Marlon Pro shelf photo</h2>
-      <p>When a rep takes a shelf photo with Marlon Pro, the photo (shrunk on the phone) and the company’s product names are sent through our server to Google’s Gemini service, which reads the photo. Our server doesn’t keep the photo after it has been read. The phone keeps a small copy in its own history. Google processes the photo under its own <a href="https://ai.google.dev/gemini-api/terms" rel="noopener">Gemini API terms</a>. Please don’t photograph people or private documents.</p>
+      <h2 id="pro">Marlon Pro: My Products and shelf photo</h2>
+      <p>With Marlon Pro, each company can save its own products in My Products: name, size, price and up to three product photos taken with the phone camera. These are stored on our server for that company only, so its phones and its boss dashboard can use them. Other companies can’t see them. We count how many products each company has saved (shown in the console we use to manage customers), but we don’t look at the products or photos. They are deleted with the company’s account, or when you delete them.</p>
+      <p>When a rep takes a shelf photo, the photo (shrunk on the phone), the company’s saved product names and sizes, and one photo of each saved product (up to 40) are sent through our server to Google’s Gemini service, which reads the shelf photo. Our server doesn’t keep the photo after it has been read. The phone keeps a small copy in its own history. Google processes the photo under its own <a href="https://ai.google.dev/gemini-api/terms" rel="noopener">Gemini API terms</a>. Please don’t photograph people or private documents.</p>
 
       <h2 id="counts">Anonymous usage counts</h2>
       <p>After setup, each phone can send anonymous counts of how Marlon is used: a random id plus “what happened, which day” (for example, an invoice made or a receipt printed). These counts never include names, customers, products, prices or amounts. A business can turn them off at any time in Settings.</p>
@@ -127,7 +128,7 @@
       <p>We don’t sell, rent or trade your information, and we don’t use it for advertising. We share it only with:</p>
       <ul>
         <li><b>Cloudflare,</b> which hosts Marlon and this website and stores the server-side data described above;</li>
-        <li><b>Google,</b> only for shelf photos with Marlon Pro, as described above;</li>
+        <li><b>Google,</b> only for shelf photos with Marlon Pro (with the company’s product names, sizes and reference photos), as described above;</li>
         <li><b>push services</b> (such as Google, Apple, Mozilla or Microsoft), only to deliver signing alerts a seller turned on;</li>
         <li><b>authorities,</b> if the law requires it.</li>
       </ul>

@@ -41,11 +41,12 @@ function startGemini() {
     req.on("end", () => {
       let body = {}; try { body = JSON.parse(raw); } catch { /* */ }
       const parts = body.contents?.[0]?.parts || [];
-      gemini.calls.push({ path: req.url, key: req.headers["x-goog-api-key"], prompt: parts.find((p) => p.text)?.text || "", image: parts.find((p) => p.inline_data)?.inline_data || null, schema: body.generationConfig?.responseSchema || null });
+      const imgs = parts.filter((p) => p.inline_data);
+      gemini.calls.push({ path: req.url, key: req.headers["x-goog-api-key"], prompt: parts.find((p) => p.text)?.text || "", texts: parts.filter((p) => p.text).map((p) => p.text), image: imgs[imgs.length - 1]?.inline_data || null, images: imgs.length, schema: body.generationConfig?.responseSchema || null });
       const send = (status, obj) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
       if (gemini.mode === "limit") return send(429, { error: { code: 429, message: "You exceeded your current quota.", status: "RESOURCE_EXHAUSTED" } });
       if (/gemini-flash-lite-latest/.test(req.url) && gemini.mode === "retired") return send(404, { error: { code: 404, message: "This model is no longer available to new users." } });
-      const answer = { products: [{ name: "Mango Juice", count: 6 }, { name: "Imaginary Soda", count: 3 }, { name: "eggs", count: 2 }] };
+      const answer = { products: [{ name: "Mango Juice", count: 6 }, { name: "Imaginary Soda", count: 3 }, { name: "eggs", count: 2 }], unknown: [{ description: "red can", count: 2 }] };
       send(200, { candidates: [{ content: { parts: [{ text: JSON.stringify(answer) }] } }] });
     });
   });
@@ -113,7 +114,8 @@ async function logReturn(page, store, lines, { signer = "" } = {}) {
 }
 async function openDashboard(page, create) {
   await page.click("#owner-link");
-  await page.waitForSelector(".dash-key");
+  await page.waitForSelector(".dash-key, .dash-tablist");
+  if (!create && !(await page.locator(".dash-key").isVisible().catch(() => false))) return; // still unlocked from earlier (on the last tab used)
   const pin = async () => { for (const d of "1357") await page.locator(`.dash-key[aria-label="${d}"]`).click(); };
   await pin();
   if (create) { await page.getByRole("button", { name: "Continue" }).click(); await page.waitForSelector("text=Enter the same PIN again"); await pin(); }
@@ -365,6 +367,13 @@ async function shelfJpeg(page) {
     await S.goto(`${BASE}/?k=${solo.buyer.id}`);
     await setUp(S);
     await S.waitForSelector("#pro-return");
+    // My Products: a solo business's own list becomes its company list (once), and the phone then uses that list.
+    await S.evaluate(() => window.__catalogSync());
+    await S.waitForFunction(async () => (await (await import("/js/db.js")).products.all()).every((p) => p.company), null, { timeout: 8000 });
+    const seeded = await S.evaluate(async () => { const db = await import("/js/db.js"); const c = await db.settings.get("catalog"); const list = await db.products.all(); return { n: c.products.length, edit: c.canEdit, names: list.map((p) => p.name), mango: list.find((p) => p.name === "Mango Juice") }; });
+    check(seeded.n === 12 && seeded.edit && seeded.names.length === 12 && seeded.mango?.price === 250 && seeded.mango.unit === "each",
+      "My Products: a solo business's 12 products become its saved company list the first time (nothing lost), and the phone uses that list", JSON.stringify({ n: seeded.n, phone: seeded.names.length }));
+    check((await buyers()).buyers.find((b) => b.id === solo.buyer.id).productCount === 12, "the maker's console counts the company's products (12)");
     check(await S.locator("#pro-bar .pro-tag").textContent() === "Pro" && await S.locator("#pro-shelf").isVisible(), "a Pro company: Return and Shelf photo show under 'Speak the invoice'");
     await S.screenshot({ path: path.join(OUT, "pro-2-invoice-screen.png") });
 
@@ -441,6 +450,54 @@ async function shelfJpeg(page) {
     const released = await S.evaluate(async (id) => { const db = await import("/js/db.js"); await db.invoices.remove(id); const cn1 = (await db.credits.all()).find((c) => c.number === 1); return db.credits.left(cn1); }, inv3.id);
     check(released === 480, "deleting an invoice gives its credit back to the credit note ($480.00 to come off again)", String(released));
 
+    // ── My Products (owner dashboard → Pro): add with camera photos, edit, delete ────────────────────────────────
+    await openDashboard(S, true);
+    await S.getByRole("tab", { name: "Pro" }).click();
+    await S.waitForSelector("#my-products .mp-item");
+    check(/12 products/.test(await S.textContent("#mp-count")) && await S.locator("#mp-add").isVisible(), "dashboard → Pro → My Products lists the company's 12 products, with “Add a product”");
+    await S.click("#mp-add");
+    await S.fill(".mp-editor .mp-in-name", "Pineapple Juice");
+    await S.fill(".mp-editor .mp-in-size", "1 L");
+    await S.fill(".mp-editor .mp-in-price", "3.50");
+    await S.setInputFiles(".mp-editor .mp-file", await shelfJpeg(S));
+    await S.waitForSelector(".mp-editor .mp-ph.is-new img");
+    await S.screenshot({ path: path.join(OUT, "pro-11a-my-products-add.png") });
+    await S.click(".mp-editor .mp-save");
+    await S.waitForSelector("#my-products .mp-msg:not(.is-bad)");
+    check(/Added Pineapple Juice \(1 L\)/.test(await S.textContent("#my-products .mp-msg")) && /13 products/.test(await S.textContent("#mp-count")), "a new product with its name, size, price and a camera photo is saved (13 products)");
+    const pine = () => S.evaluate(async () => { const r = await (await import("/js/catalog.js")).catalogApi(""); return r.data.products.find((p) => p.name === "Pineapple Juice"); });
+    let pj = await pine();
+    check(pj && pj.size === "1 L" && pj.price === 3.5 && pj.unit === "each" && pj.photos.length === 1 && pj.photos[0].thumb.length > 300, "…on the server, for this company: size 1 L, $3.50 each, 1 photo (with a small thumbnail)", JSON.stringify({ size: pj?.size, price: pj?.price, photos: pj?.photos.length }));
+    await S.waitForFunction(async () => (await (await import("/js/db.js")).products.all()).some((p) => p.name === "Pineapple Juice 1 L" && p.price === 3.5), null, { timeout: 6000 });
+    check(true, "the phone's product list (invoices, returns, orders) gets it as “Pineapple Juice 1 L”");
+    const item = S.locator(".mp-item", { hasText: "Pineapple Juice" });
+    await item.locator(".mp-edit").click();
+    await S.fill(".mp-editor .mp-in-price", "3.75");
+    await S.setInputFiles(".mp-editor .mp-file", await shelfJpeg(S));
+    await S.waitForFunction(() => document.querySelectorAll(".mp-editor .mp-ph:not(.is-new)").length === 2);
+    await S.click(".mp-editor .mp-save");
+    await S.waitForFunction(() => /Saved Pineapple Juice/.test(document.querySelector("#my-products .mp-msg")?.textContent || ""));
+    pj = await pine();
+    check(pj.price === 3.75 && pj.photos.length === 2 && /\$3\.75 each/.test(await S.textContent(".mp-item:has-text('Pineapple Juice')")), "editing changes the price ($3.75) and adds a second photo");
+    await S.locator(".mp-item", { hasText: "Pineapple Juice" }).locator(".mp-thumb").first().click();
+    await S.waitForSelector(".mp-viewer img");
+    check((await S.getAttribute(".mp-viewer img", "src")).startsWith("data:image/jpeg;base64,"), "tapping a photo shows it full size");
+    await S.click(".mp-viewer .btn");
+    await S.locator(".mp-item", { hasText: "Scallion" }).locator(".mp-edit").click();
+    S.once("dialog", (d) => d.accept());
+    await S.click(".mp-editor .mp-delete");
+    await S.waitForFunction(() => /Deleted Scallion/.test(document.querySelector("#my-products .mp-msg")?.textContent || ""));
+    check(/12 products/.test(await S.textContent("#mp-count")) && !(await S.evaluate(async () => (await (await import("/js/db.js")).products.all()).some((p) => p.name === "Scallion"))),
+      "deleting a product removes it from My Products and from the phone's list");
+    const dupe = await S.evaluate(async () => (await (await import("/js/catalog.js")).catalogApi("/save", { product: { name: "pineapple juice", size: "1 l", price: 1 } })).status);
+    check(dupe === 409, "the same name and size can't be saved twice", String(dupe));
+    check(!/null|undefined/.test(await S.textContent("#my-products")), "My Products shows no stray “null” text");
+    await S.screenshot({ path: path.join(OUT, "pro-11b-my-products.png"), fullPage: true });
+    await S.getByRole("tab", { name: "Settings" }).click();
+    check(/in My Products \(the Pro tab\)/.test(await S.textContent("#dash-products-managed")), "Settings → Products points to My Products (one place to change the list)");
+    await S.evaluate(() => { location.hash = "#/"; });
+    await S.waitForSelector("#pro-shelf");
+
     // Offline: a return works with no signal.
     await ctxS.setOffline(true);
     await S.evaluate(() => window.scrollTo(0, 0));
@@ -463,10 +520,15 @@ async function shelfJpeg(page) {
     const imgBytes = Buffer.from(call.image?.data || "", "base64");
     check(gemini.calls.length === 1 && call.key === "test-gemini-key" && call.image?.mime_type === "image/jpeg" && imgBytes.length > 2000 && imgBytes.length < 400000 && /Mango Juice/.test(call.prompt) && /Never add a product/.test(call.prompt),
       "back online: the photo (shrunk on the phone) goes to Gemini once, with the company's product list", `${imgBytes.length} bytes sent (the original was a 2400×1600 photo)`);
+    check(/- Pineapple Juice \(1 L\)/.test(call.prompt) && !/Scallion/.test(call.prompt) && call.images === 2 && call.texts.includes("Reference photo: Pineapple Juice (1 L)") && /goes in "unknown"/.test(call.prompt),
+      "shelf photo matches only the company's saved products (with sizes; the deleted one is gone), sending a product's photo as a labelled reference", `${call.images} images`);
     await S.locator(".shelf-past summary").first().click();
     const past = await S.textContent(".shelf-past");
     check(/Mango Juice/.test(past) && /× 6/.test(past) && /Eggs/.test(past) && /× 2/.test(past) && !/Imaginary Soda/.test(past) && /Not seen:/.test(past) && /Counted by AI/.test(past),
-      "results: which of the company's products are there and how many (Mango Juice × 6, Eggs × 2); an invented product is dropped", past.replace(/\s+/g, " ").slice(0, 160));
+      "results: which of the company's products are there and how many (Mango Juice × 6, Eggs × 2)", past.replace(/\s+/g, " ").slice(0, 160));
+    const unk = (await S.locator(".shelf-past .shelf-unknown li").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim());
+    check(unk.length === 2 && unk[0] === "Unknown product× 3" && unk[1] === "Unknown product · red can× 2",
+      "anything that isn't one of the company's products shows as “Unknown product” (a name Gemini made up is never shown as if it were real)", JSON.stringify(unk));
     await S.setInputFiles("#shelf-file", await shelfJpeg(S));
     await S.waitForSelector(".shelf-out .shelf-found");
     await S.screenshot({ path: path.join(OUT, "pro-6-shelf-photo.png") });
@@ -583,7 +645,7 @@ async function shelfJpeg(page) {
     check(noOrdBefore === 2, "orders are in the phone's backup file", String(noOrdBefore));
 
     // The solo dashboard's Pro tab: accountant summary and returns.
-    await openDashboard(S, true);
+    await openDashboard(S, false);
     await S.getByRole("tab", { name: "Pro" }).click();
     await S.waitForSelector("#dash-accountant");
     const yearCard = (await S.textContent('#dash-accountant .pro-q.is-year')).replace(/\s+/g, " ");
@@ -630,6 +692,45 @@ async function shelfJpeg(page) {
     await B.click("button[type=submit]");
     await B.waitForSelector("#boss-accountant");
     check(/Pro/.test(await B.textContent(".boss-pro-tag")), "the boss dashboard shows Pro");
+    // ── My Products for a team: the boss manages them; every rep phone gets them (and can't change them) ─────────
+    await B.waitForSelector("#my-products #mp-add");
+    check(/0 products/.test(await B.textContent("#mp-count")), "boss → My Products: the team starts with no company products");
+    const repOwn = await R.evaluate(async () => (await (await import("/js/db.js")).products.all()).length);
+    for (const [n, size, price, photo] of [["Coconut Water", "330 ml", "1.80", true], ["Mango Juice", "", "2.50", false]]) {
+      await B.click("#mp-add");
+      await B.fill(".mp-editor .mp-in-name", n);
+      await B.fill(".mp-editor .mp-in-size", size);
+      await B.fill(".mp-editor .mp-in-price", price);
+      if (photo) { await B.setInputFiles(".mp-editor .mp-file", await shelfJpeg(B)); await B.waitForSelector(".mp-editor .mp-ph.is-new"); }
+      await B.click(".mp-editor .mp-save");
+      await B.waitForFunction((x) => new RegExp(`Added ${x}`).test(document.querySelector("#my-products .mp-msg")?.textContent || ""), n);
+    }
+    check(/2 products/.test(await B.textContent("#mp-count")) && await B.locator("#my-products .mp-thumb img").count() === 1, "the boss adds products with a size, price and photo (2 products)");
+    check(!/null|undefined/.test(await B.textContent("#my-products")), "the boss's My Products shows no stray “null” text");
+    await B.screenshot({ path: path.join(OUT, "pro-11c-boss-my-products.png"), clip: await B.locator("#my-products").boundingBox() });
+    await R.evaluate(() => window.__catalogSync());
+    await R.waitForFunction(async () => (await (await import("/js/db.js")).products.all()).length === 2, null, { timeout: 8000 });
+    const repList = await R.evaluate(async () => (await (await import("/js/db.js")).products.all()).map((p) => `${p.name}:${p.price}`).join(","));
+    check(repOwn === 12 && repList === "Coconut Water 330 ml:1.8,Mango Juice:2.5", "once the boss saves products, the rep's phone uses exactly the company list (its own 12 are hidden, not deleted)", `${repOwn} → ${repList}`);
+    const rLicMp = await R.evaluate(async () => (await import("/js/db.js")).settings.get("license"));
+    const repTry = await post("/api/pro/products/save", { key: rLicMp.key, device: rLicMp.device, product: { name: "Rep Soda", size: "", price: 1 } });
+    check(repTry.status === 403 && /boss manages/.test((await repTry.json()).error), "a rep can't add, change or delete company products (only the boss)", `HTTP ${repTry.status}`);
+    const teamCat = await (await post("/api/pro/products", { key: rLicMp.key, device: rLicMp.device })).json();
+    const teamPhoto = teamCat.products.find((p) => p.photos.length).photos[0].id;
+    check(teamCat.canEdit === false && teamCat.products.length === 2 && (await (await post("/api/pro/products/photo-get", { key: rLicMp.key, device: rLicMp.device, photoId: teamPhoto })).json()).image?.length > 1000,
+      "a rep's phone can read the company list and its photos");
+    const sLicMp = await S.evaluate(async () => (await import("/js/db.js")).settings.get("license"));
+    const foreign = await post("/api/pro/products/photo-get", { key: sLicMp.key, device: sLicMp.device, photoId: teamPhoto });
+    const soloCat = await (await post("/api/pro/products", { key: sLicMp.key, device: sLicMp.device })).json();
+    await post("/api/pro/products/delete", { key: sLicMp.key, device: sLicMp.device, id: teamCat.products[0].id });
+    const stillThere = (await (await post("/api/pro/products", { key: rLicMp.key, device: rLicMp.device })).json()).products.length;
+    check(foreign.status === 404 && !soloCat.products.some((p) => teamCat.products.some((t) => t.id === p.id)) && stillThere === 2, "each company's products stay private: another company can't see, open or delete them", JSON.stringify({ foreign: foreign.status, still: stillThere }));
+    check((await buyers()).buyers.find((b) => b.id === team.buyer.id).productCount === 2, "the maker's console shows the team's product count (2)");
+    await con.reload();
+    await con.waitForSelector(".con-buyer .con-products");
+    const conTeam = (await con.locator(".con-buyer", { hasText: "Coastline Foods" }).first().locator(".con-products").textContent()).replace(/\s+/g, " ");
+    const conSolo = (await con.locator(".con-buyer", { hasText: "Island Fresh Distributors" }).first().locator(".con-products").textContent()).replace(/\s+/g, " ");
+    check(conTeam === "My Products: 2 products" && conSolo === "My Products: 12 products", "the console's buyer cards show each company's product count", `${conTeam} | ${conSolo}`);
     const retRep = await B.textContent("#boss-ret-rep");
     check(/Corner Shop/.test(await B.textContent("#boss-ret-store")) && /Mango Juice/.test(await B.textContent("#boss-ret-product")) && /3 expired/.test(await B.textContent("#boss-ret-product")) && /Dana Reid/.test(retRep) && /\$750\.00/.test(retRep),
       "boss: returns by store, by product (with the reason) and by rep", retRep.replace(/\s+/g, " "));
@@ -673,7 +774,11 @@ async function shelfJpeg(page) {
     await post("/api/console/pro", { id: team.buyer.id, pro: false, discountPct: 0 }, token);
     await B.reload();
     await B.waitForSelector("#boss-reps");
-    check(await B.locator("#boss-accountant").count() === 0 && await B.locator("#boss-returns").count() === 0 && await B.locator("#boss-orders").count() === 0, "Pro switched off: the boss's Pro sections (orders too) disappear (the data is kept)");
+    check(await B.locator("#boss-accountant").count() === 0 && await B.locator("#boss-returns").count() === 0 && await B.locator("#boss-orders").count() === 0 && await B.locator("#my-products").count() === 0, "Pro switched off: the boss's Pro sections (orders and My Products too) disappear (the data is kept)");
+    const offCat = await (await post("/api/pro/products", { key: rLicMp.key, device: rLicMp.device })).json();
+    const offSave = await post("/api/pro/products/save", { key: sLicMp.key, device: sLicMp.device, product: { name: "X" } });
+    check(offCat.pro === false && (await buyers()).buyers.find((b) => b.id === team.buyer.id).productCount === 2, "without Pro, My Products isn't served (the saved list is kept for when Pro comes back)");
+    void offSave;
     const rLic = await R.evaluate(async () => (await import("/js/db.js")).settings.get("license"));
     const offSync = await (await post("/api/team/sync", { key: rLic.key, device: rLic.device, invoices: [], orders: [{ id: "or_test1", number: 9, date: today, store: "X", status: "pending", lines: [], signer: "Y", signature: "", signedAt: "", updatedAt: "" }] })).json();
     check(offSync.ok && offSync.storedOrders.length === 0, "without Pro, the server doesn't take shelf orders");

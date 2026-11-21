@@ -613,3 +613,5 @@ dialog.pro-sheet::backdrop { background: rgba(10, 12, 9, .55); }
 .shelf-past summary small { color: var(--muted); }
 .shelf-past .shelf-result { border: 0; border-top: 1px solid var(--line); border-radius: 0; }
 .ord-filter .ret-chip { flex: 1 1 40%; }
+.shelf-unknown li { background: #f3f0e8; color: #5b5f57; }
+.shelf-unknown small { font-weight: 500; }
