@@ -810,6 +810,9 @@ async function shelfJpeg(page) {
     const terms = (await T.textContent("#marlon-pro")).replace(/\s+/g, " ");
     check(/\$25 \(US dollars\) per rep, per month/.test(terms) && /same automatic team discount as regular Marlon/.test(terms) && /5–9 reps ?10% off/.test(terms) && /100\+ reps ?30% off/.test(terms) && /special deal .* on top of the team discount/.test(terms) && /billed monthly, in advance, for every rep place/.test(terms) && /cancel Marlon Pro at any time/.test(terms),
       "the Terms page has a Marlon Pro section: price with the team discount table, per-rep monthly billing and cancellation");
+    check(/adds My Products, Shelf photo, Shelf Order/.test(terms) && /up to 3 photos per product/.test(terms) && /Reps can see the list but can't change it/.test(terms) && /for your company only/.test(terms)
+      && /"Unknown product"/.test(terms) && /one photo of each product \(up to 40\)/.test(terms) && /ORD-0001/.test(terms) && /Pending, Delivered or Cancelled/.test(terms) && /stored encrypted/.test(terms),
+      "the Terms' Marlon Pro section covers My Products and Shelf Order (and what shelf photo sends to Google)");
     await T.screenshot({ path: path.join(OUT, "pro-9-terms.png"), fullPage: true });
 
     check(errors.length === 0, "no page errors anywhere", errors.join(" | "));
