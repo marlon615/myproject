@@ -361,3 +361,23 @@ table.t.compact { min-width: 0; }
 /* Short screenshots (a dialog, a credit note): the frame follows the picture's own height */
 .phone.auto .screen { aspect-ratio: auto; }
 .phone.auto .screen img { height: auto; }
+/* Tables on phones: each row becomes a small card with labelled values (no sideways scrolling) */
+@media (max-width: 640px) {
+  .table-wrap { overflow: visible; border: 0; background: transparent; border-radius: 0; }
+  table.t.stack { min-width: 0; border-collapse: separate; border-spacing: 0; }
+  table.t.stack thead { display: none; }
+  table.t.stack, table.t.stack tbody, table.t.stack tr, table.t.stack td { display: block; width: 100%; }
+  table.t.stack tr { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 6px 16px; margin: 0 0 12px; box-shadow: var(--shadow); }
+  table.t.stack td { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); text-align: right; white-space: normal; }
+  table.t.stack td:last-child { border-bottom: 0; }
+  table.t.stack td::before { content: attr(data-label); text-align: left; font-size: .86rem; font-weight: 650; color: var(--ink-3); flex: 1 1 auto; }
+  table.t.stack td:first-child { font-weight: 750; font-size: 1.05rem; color: var(--ink); }
+  table.t.stack td.num { text-align: right; }
+}
+/* Two real screenshots side by side (Shelf Order) */
+.pro-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+.pro-pair .phone.sm { width: 100%; padding: 7px; border-radius: 30px; }
+.pro-pair .phone.sm::before { top: 13px; height: 14px; }
+.pro-pair .phone.sm .screen { border-radius: 24px; }
+.pro-pair .shot-cap { grid-column: 1 / -1; }
+.pro-pair .phone.sm::before { display: none; }

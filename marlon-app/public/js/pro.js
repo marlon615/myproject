@@ -8,8 +8,10 @@
  *   Shelf photo  The rep photographs a store shelf; Marlon shows which of the company's own products are on it and how
  *                many (counted by Google's Gemini on the free tier, through /api/pro/shelf). The photo is shrunk on the
  *                phone first (about 200 KB). With no signal it waits on the phone and is checked once back online.
+ *                Each result has "Make an order" (Shelf Order, orders.js).
+ *   Orders       Shelf orders taken on this phone: Pending, Delivered or Cancelled; open one at delivery.
  *
- *   setupPro({ bar, pro, getStore, getAddress, onCreditCreated })   // app.js, once
+ *   setupPro({ bar, pro, getStore, getAddress, onCreditCreated, invoiceFromOrder, onOrderSaved })   // app.js, once
  */
 import { credits, products, invoices, settings } from "./db.js";
 import { business, creditNo, h, money, parseAmount, priceInputText, prettyDate, qtyWithUnit, storeKey, tidy, todayISO, withTotals, uid } from "./util.js";
@@ -18,6 +20,8 @@ import { alertSheet, toast } from "./ui.js";
 import { canvasToPdfBlob } from "./pdf.js";
 import { deliverFile } from "./share.js";
 import { LETTER_PT } from "./letter.js";
+import { openOrderForm, openOrders, setupOrders } from "./orders.js";
+import { orders } from "./db.js";
 
 const SHELF_QUEUE = "shelfQueue";     // photos taken offline, waiting to be checked: [{ id, at, store, image, products }]
 const SHELF_HISTORY = "shelfChecks";  // the last checks on this phone: [{ id, at, store, found, missing, thumb }]
@@ -37,10 +41,14 @@ const ICON = {
   camera: "M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.5-2.5h6L16.5 7h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5zM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z",
   close: "M6.5 6.5l11 11M17.5 6.5l-11 11",
   plus: "M12 5.5v13M5.5 12h13",
+  orders: "M8 6h11M8 12h11M8 18h11M4 6h.01M4 12h.01M4 18h.01",
 };
 
 export function setupPro(o) {
   opts = o;
+  setupOrders({ sheet, icon: (name) => icon(ICON[name]), invoiceFromOrder: (order) => opts.invoiceFromOrder(order),
+    onOrderSaved: (order) => { document.dispatchEvent(new Event("pro:orders")); opts.onOrderSaved?.(order); } });
+  document.addEventListener("pro:orders", () => { refreshOrderCount().catch(() => {}); });
   setPro(Boolean(o.pro));
   document.addEventListener("license:pro", (e) => {
     setPro(Boolean(e.detail?.pro));
@@ -59,8 +67,20 @@ function setPro(on) {
   bar.replaceChildren(
     h("span", { class: "pro-tag" }, "Pro"),
     h("button", { type: "button", class: "btn pro-btn", id: "pro-return", onclick: () => openReturn() }, icon(ICON.ret), "Return"),
-    h("button", { type: "button", class: "btn pro-btn", id: "pro-shelf", onclick: () => openShelf() }, icon(ICON.camera), "Shelf photo"));
+    h("button", { type: "button", class: "btn pro-btn", id: "pro-shelf", onclick: () => openShelf() }, icon(ICON.camera), "Shelf photo"),
+    h("button", { type: "button", class: "btn pro-btn", id: "pro-orders", onclick: () => openOrders() }, icon(ICON.orders), "Orders", h("span", { class: "pro-count", id: "pro-order-count", hidden: true })));
   bar.hidden = false;
+  refreshOrderCount().catch(() => {});
+}
+
+/** The number of pending orders, on the Orders button. */
+async function refreshOrderCount() {
+  const badge = document.getElementById("pro-order-count");
+  if (!badge) return;
+  const n = (await orders.all()).filter((x) => x.status === "pending").length;
+  badge.textContent = String(n);
+  badge.hidden = !n;
+  badge.setAttribute("aria-label", `${n} pending`);
 }
 
 /** A full-screen sheet in the app's style. → { dlg, body, foot, close } */
@@ -342,14 +362,17 @@ export async function processShelfQueue() {
   } finally { draining = false; document.dispatchEvent(new Event("pro:shelf")); }
 }
 
-function resultView(entry) {
+function resultView(entry, from = null) {
   if (entry.error) return h("div", { class: "shelf-result is-error" }, h("p", {}, entry.error));
+  const orderBtn = h("button", { type: "button", class: "btn btn-primary btn-block shelf-order", dataset: { check: entry.id },
+    onclick: () => openOrderForm({ store: entry.store || "", found: entry.found, shelfCheckId: entry.id, from }) }, "Make an order");
   const total = entry.found.reduce((n, f) => n + f.count, 0);
   return h("div", { class: "shelf-result" },
     h("p", { class: "shelf-summary" }, entry.found.length ? `${entry.found.length} of your products seen · ${total} unit${total === 1 ? "" : "s"}` : "None of your products were seen in this photo."),
     entry.found.length ? h("ul", { class: "shelf-found" }, entry.found.map((f) => h("li", {}, h("span", {}, f.name), h("strong", { class: "num" }, `× ${f.count}`)))) : null,
     entry.missing?.length ? h("p", { class: "shelf-missing" }, h("strong", {}, "Not seen: "), entry.missing.join(", ")) : null,
-    h("p", { class: "shelf-note" }, "Counted by AI from the photo. Check the shelf before relying on it."));
+    h("p", { class: "shelf-note" }, "Counted by AI from the photo. Check the shelf before relying on it."),
+    isPro ? orderBtn : null);
 }
 
 async function openShelf() {
@@ -373,7 +396,7 @@ async function openShelf() {
       ...(done || []).slice(0, 10).map((e) => h("details", { class: "shelf-past" },
         h("summary", {}, e.thumb ? h("img", { src: e.thumb, alt: "" }) : null,
           h("span", {}, h("strong", {}, e.store || "Shelf photo"), h("small", {}, `${new Date(e.at).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })} · ${e.error ? "couldn't be checked" : `${e.found.length} product${e.found.length === 1 ? "" : "s"} seen`}`))),
-        resultView(e))));
+        resultView(e, s))));
   };
   document.addEventListener("pro:shelf", renderHistory);
   s.dlg.addEventListener("close", () => document.removeEventListener("pro:shelf", renderHistory));
@@ -399,7 +422,7 @@ async function openShelf() {
       const r = await checkPhoto(entry.image, names);
       const done = { id: entry.id, at: entry.at, checkedAt: new Date().toISOString(), store: entry.store, found: r.found, missing: missingFrom(r.found, names), thumb: entry.thumb };
       await saveCheck(done);
-      result.replaceChildren(resultView(done));
+      result.replaceChildren(resultView(done, s));
       renderHistory();
     } catch (e) {
       if (e.offline) return queueIt(entry);

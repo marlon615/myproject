@@ -78,7 +78,7 @@
       <div class="grid g2">
         <article class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/><rect x="9" y="9.8" width="6" height="4.7" rx="1"/><path d="M10.2 9.8V8.7a1.8 1.8 0 0 1 3.6 0v1.1"/></svg></div><h3>One link, one phone</h3><p>Each personal link locks to the first phone that opens it. Any other phone is blocked.</p></article>
         <article class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 8.8a15 15 0 0 1 4.2-2.6M22 8.8A15 15 0 0 0 10.7 5M5.5 12.5a9.6 9.6 0 0 1 3.1-1.9M18.5 12.5a9.6 9.6 0 0 0-2.4-1.6M9 16.2a4.8 4.8 0 0 1 6 0"/><circle cx="12" cy="19.5" r=".6" fill="currentColor"/><path d="m3 3 18 18"/></svg></div><h3>Data on the phone</h3><p>A solo business’s products, customers and invoices stay on its own phone.</p></article>
-        <article class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="7.5" cy="15.5" r="4"/><path d="m10.5 12.5 9-9M16 7l3 3M14 9l2 2"/></svg></div><h3>Encrypted where it’s shared</h3><p>Invoices sent for signature, signatures and alert subscriptions are encrypted with AES-256-GCM.</p></article>
+        <article class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="7.5" cy="15.5" r="4"/><path d="m10.5 12.5 9-9M16 7l3 3M14 9l2 2"/></svg></div><h3>Encrypted where it’s shared</h3><p>Invoices sent for signature, signatures, shelf-order signatures and alert subscriptions are encrypted with AES-256-GCM.</p></article>
         <article class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></div><h3>No ads, no data selling</h3><p>The website has no cookies, analytics or trackers. We never sell or rent your data.</p></article>
       </div>
 
@@ -109,13 +109,14 @@
       <h2 id="encryption">Encryption</h2>
       <ul>
         <li><b>In transit:</b> everything between the phone, the boss dashboard and our server goes over HTTPS.</li>
+        <li><b>Shelf orders (Pro):</b> the orderer’s name and signature are encrypted on our server with AES-256-GCM before they’re stored.</li>
         <li><b>Send for signature:</b> the frozen invoice copy, the buyer’s name and their signature are encrypted on our server with AES-256-GCM. The secret link (256-bit random) is never stored, only a hash of it. Signing checks the copy’s SHA-256 fingerprint, so nobody can change a sent copy, and a signed copy can’t be sent again or cancelled. Unsigned links expire after 7 days.</li>
         <li><b>Signing alerts:</b> push alerts are encrypted end to end (RFC 8291, signed with VAPID), and the alert subscriptions are kept encrypted on our server.</li>
         <li><b>Customer QR page:</b> the whole invoice travels inside the link, after the “#”, a part of a web address that browsers never send to a server.</li>
       </ul>
 
       <h2 id="teams">Team invoices</h2>
-      <p>For a team, invoices and Marlon Pro credit notes are kept on our server so the boss dashboard can show them. They are reached only through your boss’s passcode-locked dashboard, and each rep’s phone only sends its own invoices. The store’s signature picture stays on the rep’s phone; only “signed: yes or no” is sent.</p>
+      <p>For a team, invoices and Marlon Pro credit notes are kept on our server so the boss dashboard can show them. They are reached only through your boss’s passcode-locked dashboard, and each rep’s phone only sends its own invoices. For invoices and credit notes, the store’s signature picture stays on the rep’s phone; only “signed: yes or no” is sent. Shelf orders are the exception: the orderer’s name and signature are sent so the boss and drivers can see who ordered, and they are stored encrypted.</p>
       <ul>
         <li>The boss <b>can’t write or edit invoices</b>. The boss’s only changes are marking an invoice paid and managing reps.</li>
         <li>A rep’s phone <b>can never undo</b> “paid”.</li>
@@ -127,7 +128,7 @@
       <ul>
         <li><b>Activation and checks:</b> the personal link, a random id for the phone, the type of phone and browser, and the days it was seen.</li>
         <li><b>Anonymous counts</b> (you can turn these off in Settings): a random id plus “what happened, which day”, such as an invoice made or a receipt printed. Never names, customers, products, prices or amounts. Nothing is sent before setup is finished.</li>
-        <li><b>Team invoices</b> and, with Pro, credit notes, as described above.</li>
+        <li><b>Team invoices</b> and, with Pro, credit notes and shelf orders, as described above. A shelf order includes the name and signature of the person who placed it; both are stored encrypted (AES-256-GCM) and the boss sees the signature only on request.</li>
         <li><b>Invoices sent for signature,</b> encrypted.</li>
         <li><b>Shelf photos</b> with Marlon Pro, passed on to be read. See below.</li>
       </ul>

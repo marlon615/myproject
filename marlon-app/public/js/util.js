@@ -195,6 +195,8 @@ export function allocateCredit(available, subtotal) {
 
 /** "CN-0007" — a credit note's number. */
 export const creditNo = (n) => `CN-${String(Math.max(0, Math.floor(Number(n) || 0))).padStart(4, "0")}`;
+/** "ORD-0001" — a Marlon Pro shelf order's number. */
+export const orderNo = (n) => `ORD-${String(Math.max(0, Math.floor(Number(n) || 0))).padStart(4, "0")}`;
 /** "Credit note CN-0003" or "Credit notes CN-0003, CN-0004" — the line shown above the total. */
 export const creditLabel = (credit) => {
   const nums = (credit?.notes || []).map((n) => creditNo(n.number)).filter((x) => x !== "CN-0000");

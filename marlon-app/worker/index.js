@@ -36,7 +36,10 @@
  *   /api/activate and /api/check also answer { pro } so phones show Pro features (remembered for offline)
  *   POST /api/team/sync          also takes { credits: [...] }: a rep's credit notes (returns) go to the boss too
  *   POST /api/pro/shelf          { key, device, image, mime, products } → { found: [{ name, count }] } (Gemini free tier)
- *   GET  /api/boss/data          also answers { pro, credits }
+ *   GET  /api/boss/data          also answers { pro, credits, orders } (orders: Marlon Pro shelf orders, without signatures)
+ *   POST /api/team/sync          also takes { orders: [...] } (Pro only): shelf orders; the orderer's name and signature
+ *                                are kept encrypted (AES-256-GCM, ENCRYPTION_KEY) → { storedOrders }
+ *   POST /api/boss/order-signature (Bearer) { id } → { signer, signature, signedAt }  one order's signature, on demand
  */
 import { DurableObject } from "cloudflare:workers";
 import { FILES, RULES } from "./assets.generated.js";
@@ -133,6 +136,24 @@ function cleanCreditNote(cn) {
   };
 }
 
+/** A shelf order from a rep's phone: what the boss sees, plus the orderer's name and signature (to be encrypted). */
+function cleanOrder(o) {
+  if (!o || typeof o !== "object" || typeof o.id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(o.id)) return null;
+  const txt = (v, n = 200) => String(v ?? "").slice(0, n);
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const iso = (v) => (/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(v || "") ? v : "");
+  const sig = typeof o.signature === "string" && o.signature.length < 120000 && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(o.signature) ? o.signature : "";
+  return {
+    order: {
+      id: o.id, number: num(o.number), date: /^\d{4}-\d{2}-\d{2}$/.test(o.date || "") ? o.date : null, store: txt(o.store, 120), address: txt(o.address, 300),
+      status: ["pending", "delivered", "cancelled"].includes(o.status) ? o.status : "pending",
+      lines: (Array.isArray(o.lines) ? o.lines.slice(0, 100) : []).map((l) => ({ name: txt(l?.name, 80), unit: txt(l?.unit, 10), onShelf: num(l?.onShelf), target: num(l?.target), qty: num(l?.qty) })),
+      signedAt: iso(o.signedAt), deliveredAt: iso(o.deliveredAt), cancelledAt: iso(o.cancelledAt), invoiceNumber: num(o.invoiceNumber), signed: Boolean(sig), updatedAt: txt(o.updatedAt, 30),
+    },
+    secret: { signer: txt(o.signer, 80), signature: sig, signedAt: iso(o.signedAt) },
+  };
+}
+
 /** Only the fields the boss dashboard shows, with sane sizes (a rep's phone sends these; nothing else is kept). */
 function cleanInvoice(inv) {
   if (!inv || typeof inv !== "object" || typeof inv.id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(inv.id)) return null;
@@ -222,6 +243,9 @@ export class Stats extends DurableObject {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS team_credits (buyer TEXT NOT NULL, device TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
       updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS shelf_daily (buyer TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (buyer, day))`);
+    // Marlon Pro shelf orders from reps' phones. `data` has no name or signature; `sealed` has both, encrypted.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS team_orders (buyer TEXT NOT NULL, device TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
+      sealed TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (buyer, id))`);
   }
 
   #meta(k) { return this.sql.exec("SELECT v FROM meta WHERE k = ?", k).toArray()[0]?.v ?? null; }
@@ -551,7 +575,7 @@ export class Stats extends DurableObject {
   /** Deletes a buyer or team completely: its phones, rep links, boss phones, passcode, sessions and team invoices. */
   deleteBuyer(id) {
     if (!this.#buyer(id)) return false;
-    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions", "team_credits", "shelf_daily", "pro_notices"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
+    for (const t of ["buyer_devices", "team_slots", "team_invoices", "boss_paid", "boss_sessions", "team_credits", "shelf_daily", "pro_notices", "team_orders"]) this.sql.exec(`DELETE FROM ${t} WHERE buyer = ?`, id);
     this.sql.exec("DELETE FROM buyers WHERE id = ?", id);
     return true;
   }
@@ -560,7 +584,7 @@ export class Stats extends DurableObject {
   leftovers(id) {
     const n = (t, col = "buyer") => this.sql.exec(`SELECT COUNT(*) AS n FROM ${t} WHERE ${col} = ?`, id).toArray()[0].n;
     return { buyers: n("buyers", "id"), devices: n("buyer_devices"), slots: n("team_slots"), invoices: n("team_invoices"), paid: n("boss_paid"), sessions: n("boss_sessions"),
-      credits: n("team_credits"), shelf: n("shelf_daily"), notices: n("pro_notices") };
+      credits: n("team_credits"), shelf: n("shelf_daily"), notices: n("pro_notices"), orders: n("team_orders") };
   }
 
   setBuyerOff(id, off) {
@@ -643,7 +667,7 @@ export class Stats extends DurableObject {
     return { key, buyer: this.#buyer(id) };
   }
 
-  teamSync(key, device, repName, invoices, credits = []) {
+  teamSync(key, device, repName, invoices, credits = [], orders = []) {
     const { b } = this.#resolve(key);
     const id = b?.id;
     if (!b || b.kind !== "team") return { ok: false, reason: "unknown" };
@@ -668,10 +692,19 @@ export class Stats extends DurableObject {
         ON CONFLICT(buyer, id) DO UPDATE SET data = excluded.data, updated = excluded.updated, device = excluded.device`, id, device, cn.id, JSON.stringify(cn), now);
       storedCredits.push(cn.id);
     }
+    // Shelf orders: Marlon Pro only (the name and signature arrive already encrypted in `sealed`).
+    const storedOrders = [];
+    if (b.pro) {
+      for (const { order, sealed } of orders) {
+        this.sql.exec(`INSERT INTO team_orders (buyer, device, id, data, sealed, updated) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(buyer, id) DO UPDATE SET data = excluded.data, sealed = excluded.sealed, updated = excluded.updated, device = excluded.device`, id, device, order.id, JSON.stringify(order), sealed, now);
+        storedOrders.push(order.id);
+      }
+    }
     // What the boss marked paid on this phone's invoices, so the phone shows it too.
     const paid = this.sql.exec("SELECT p.id, p.paid_at FROM boss_paid p JOIN team_invoices t ON t.buyer = p.buyer AND t.id = p.id WHERE p.buyer = ? AND t.device = ?", id, device)
       .toArray().map((r) => ({ id: r.id, paidAt: r.paid_at }));
-    return { ok: true, stored, storedCredits, paid };
+    return { ok: true, stored, storedCredits, storedOrders, paid };
   }
 
   /** The boss ticks an invoice as paid (the only change the boss can make). */
@@ -745,20 +778,42 @@ export class Stats extends DurableObject {
   }
 
   /** Everything the boss dashboard shows, for a signed-in boss phone that's still switched on. */
-  bossData(token) {
+  async bossData(token) {
     const s = this.sql.exec("SELECT buyer, device FROM boss_sessions WHERE token = ? AND expires > ?", token, Date.now()).toArray()[0];
     if (!s) return { error: "signin" };
     const b = this.#buyer(s.buyer);
     if (!this.#bossDeviceOk(b, s.device)) return { error: "off" };
+    // Shelf orders (Pro): who ordered is decrypted for the list; the signature itself comes on demand (order-signature).
+    const orders = [];
+    if (b.pro) {
+      for (const r of this.sql.exec("SELECT device, data, sealed, updated FROM team_orders WHERE buyer = ?", b.id).toArray()) {
+        let signer = "";
+        try { signer = JSON.parse(await unseal(this.env, r.sealed)).signer || ""; } catch { /* key changed: the name can't be read */ }
+        orders.push({ ...JSON.parse(r.data), signer, rep: r.device, receivedAt: r.updated });
+      }
+    }
     const invoices = this.sql.exec("SELECT device, data, updated FROM team_invoices WHERE buyer = ?", b.id).toArray()
       .map((r) => ({ ...JSON.parse(r.data), rep: r.device, receivedAt: r.updated }));
     const credits = b.pro ? this.sql.exec("SELECT device, data, updated FROM team_credits WHERE buyer = ?", b.id).toArray()
       .map((r) => ({ ...JSON.parse(r.data), rep: r.device, receivedAt: r.updated })) : [];
-    return { company: b.name, places: b.devices, slots: this.#bossSlots(b), pro: b.pro, credits,
+    return { company: b.name, places: b.devices, slots: this.#bossSlots(b), pro: b.pro, credits, orders,
       reps: b.phones.map((d, i) => ({ device: d.device, name: d.repName || `Rep ${i + 1}`, label: d.label, off: d.off, lastSeen: d.lastAt })), invoices };
   }
 
   bossLogout(token) { this.sql.exec("DELETE FROM boss_sessions WHERE token = ?", token); }
+
+  /** One shelf order's signature and the orderer's name, for a signed-in boss phone (Pro only). */
+  async bossOrderSignature(token, orderId) {
+    const s = this.sql.exec("SELECT buyer, device FROM boss_sessions WHERE token = ? AND expires > ?", token, Date.now()).toArray()[0];
+    if (!s) return { error: "signin" };
+    const b = this.#buyer(s.buyer);
+    if (!this.#bossDeviceOk(b, s.device)) return { error: "off" };
+    if (!b.pro) return { error: "unknown" };
+    const row = this.sql.exec("SELECT sealed FROM team_orders WHERE buyer = ? AND id = ?", b.id, orderId).toArray()[0];
+    if (!row) return { error: "unknown" };
+    try { const x = JSON.parse(await unseal(this.env, row.sealed)); return { signer: x.signer || "", signature: x.signature || "", signedAt: x.signedAt || "" }; }
+    catch { return { error: "unreadable" }; }
+  }
 
   #bossSession(token) {
     const s = this.sql.exec("SELECT buyer, device FROM boss_sessions WHERE token = ? AND expires > ?", token, Date.now()).toArray()[0];
@@ -962,14 +1017,19 @@ async function api(request, env, path) {
   }
   if (path === "/api/team/sync" && request.method === "POST") {
     let body;
-    try { body = await readJson(request, 400000); } catch { return json({ error: "too big or not JSON" }, 400); }
+    try { body = await readJson(request, 1000000); } catch { return json({ error: "too big or not JSON" }, 400); }
     const key = hex32(body.key), device = hex32(body.device);
     const list = Array.isArray(body.invoices) ? body.invoices.slice(0, 50) : null;
     if (!key || !device || !list) return json({ ok: false, reason: "unknown" }, 400);
     const clean = list.map(cleanInvoice).filter(Boolean);
     const credits = (Array.isArray(body.credits) ? body.credits.slice(0, 50) : []).map(cleanCreditNote).filter(Boolean);
-    const r = await stub.teamSync(key, device, String(body.rep || "").replace(/\s+/g, " ").trim().slice(0, 60), clean, credits);
-    return r.ok ? json({ ok: true, stored: r.stored, storedCredits: r.storedCredits, paid: r.paid }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
+    // Shelf orders: the orderer's name and signature are encrypted here, before they're stored.
+    const orders = [];
+    if (SIGN_KEY_OK(env)) {
+      for (const c of (Array.isArray(body.orders) ? body.orders.slice(0, 10) : []).map(cleanOrder).filter(Boolean)) orders.push({ order: c.order, sealed: await seal(env, JSON.stringify(c.secret)) });
+    }
+    const r = await stub.teamSync(key, device, String(body.rep || "").replace(/\s+/g, " ").trim().slice(0, 60), clean, credits, orders);
+    return r.ok ? json({ ok: true, stored: r.stored, storedCredits: r.storedCredits, storedOrders: r.storedOrders, paid: r.paid }) : json({ ok: false, reason: r.reason, contact: await stub.contact() }, 403);
   }
   if (path === "/api/pro/shelf" && request.method === "POST") {
     let body;
@@ -1021,6 +1081,17 @@ async function api(request, env, path) {
     if (r.error === "off") return json({ error: "This phone's access has been switched off.", reason: "off", contact: await stub.contact() }, 403);
     const origin = new URL(request.url).origin;
     return json({ ...r, slots: r.slots.map((x) => ({ ...x, link: `${origin}/?k=${x.key}`, key: undefined })) });
+  }
+  if (path === "/api/boss/order-signature" && request.method === "POST") {
+    let body;
+    try { body = await readJson(request, 500); } catch { return json({ error: "bad request" }, 400); }
+    const oid = typeof body.id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(body.id) ? body.id : null;
+    if (!oid) return json({ error: "bad request" }, 400);
+    const r = await stub.bossOrderSignature(bossToken, oid);
+    if (r.error === "signin") return json({ error: "Please enter your passcode again." }, 401);
+    if (r.error === "off") return json({ error: "This phone's access has been switched off.", reason: "off", contact: await stub.contact() }, 403);
+    if (r.error) return json({ error: "That order's signature isn't here." }, 404);
+    return json(r);
   }
   if (path === "/api/boss/paid" && request.method === "POST") {
     let body;

@@ -67,8 +67,10 @@ async function startDev() {
         await pg.evaluate(async () => { for (let y = 0; y < document.body.scrollHeight; y += 500) { scrollTo(0, y); await new Promise((r) => setTimeout(r, 40)); } });
         await pg.waitForFunction(() => [...document.images].every((i) => i.complete), null, { timeout: 15000 }).catch(() => {});
         const r = await pg.evaluate(() => ({ sw: document.documentElement.scrollWidth, w: innerWidth, broken: [...document.images].filter((i) => !i.naturalWidth).map((i) => i.getAttribute("src")),
-          wide: [...document.querySelectorAll("main *")].filter((e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.right > innerWidth + 1 && !e.closest(".table-wrap") && getComputedStyle(e).position !== "fixed"; }).slice(0, 3).map((e) => e.tagName + "." + e.className) }));
-        check(r.sw <= r.w && r.wide.length === 0, `${p}: no sideways scrolling on ${tag}`, r.sw > r.w ? `${r.sw}px wide: ${r.wide.join(", ")}` : "");
+          wide: [...document.querySelectorAll("main *")].filter((e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.right > innerWidth + 1 && getComputedStyle(e).position !== "fixed" && !e.closest(".sr"); }).slice(0, 3).map((e) => e.tagName + "." + e.className) }));
+        check(r.sw <= r.w && r.wide.length === 0, `${p}: no sideways scrolling on ${tag}`, r.sw > r.w || r.wide.length ? `${r.sw}px wide: ${r.wide.join(", ")}` : "");
+        const tables = await pg.evaluate(() => [...document.querySelectorAll("main table, main .table-wrap")].map((t) => ({ over: t.scrollWidth - t.clientWidth, right: Math.round(t.getBoundingClientRect().right) })));
+        if (tables.length) check(tables.every((t) => t.over <= 1 && t.right <= r.w), `${p}: every table fits the screen on ${tag} (nothing cut off or scrolling sideways)`, JSON.stringify(tables));
         check(r.broken.length === 0, `${p}: every picture loads on ${tag}`, r.broken.join(", "));
         check(errs.length === 0, `${p}: no errors or blocked content on ${tag}`, errs.join(" | ").slice(0, 200));
         if (tag === "phone") await pg.screenshot({ path: path.join(OUT, `site-${p === "/" ? "home" : p.slice(1)}-phone.png`), fullPage: true });
@@ -112,10 +114,10 @@ async function startDev() {
     const pricing = await import(path.join(ROOT, "..", "marlon-app", "public", "js", "pricing.js"));
     const usd = (c) => (c / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
     const marlonCents = (n) => { const t = pricing.tierFor(n), g = n * 7900, d = Math.round(g * t.pct / 100); return { g, d, net: g - d, pct: t.pct }; };
-    const rows = [...(allText.find(([p]) => p === "/pricing")[1].match(/<tbody>([\s\S]*?)<\/tbody>/) || [])[1].matchAll(/<tr><td>([^<]+)<\/td><td>([^<]+)<\/td><td class="num">([^<]+)<\/td><td class="num">([^<]+)<\/td><\/tr>/g)];
+    const rows = [...(allText.find(([p]) => p === "/pricing")[1].match(/<tbody>([\s\S]*?)<\/tbody>/) || [])[1].matchAll(/<tr><td[^>]*>([^<]+)<\/td><td[^>]*>([^<]+)<\/td><td class="num"[^>]*>([^<]+)<\/td><td class="num"[^>]*>([^<]+)<\/td><\/tr>/g)];
     const tableOk = rows.length === 6 && rows.every(([, reps, , m, pro]) => { const n = parseInt(reps, 10); return m === usd(marlonCents(n).net / n) && pro === usd(pricing.proPrice(n).netCents / n); });
     check(tableOk, "the discount table's per-rep prices match pricing.js for every tier", rows.map((r) => `${r[1]} ${r[3]} ${r[4]}`).join(" | "));
-    const proRows = [...allText.find(([p]) => p === "/pro")[1].matchAll(/<td class="num">(\d+) reps?: (\$[\d,.]+)<\/td>/g)];
+    const proRows = [...allText.find(([p]) => p === "/pro")[1].matchAll(/<td class="num"[^>]*>(\d+) reps?: (\$[\d,.]+)<\/td>/g)];
     check(proRows.length === 6 && proRows.every(([, n, v]) => v === usd(pricing.proPrice(Number(n)).netCents)), "the Pro page's examples match pricing.js", proRows.map((r) => `${r[1]}: ${r[2]}`).join(", "));
     const cp = await phone.newPage();
     await cp.goto(BASE + "/pricing#calculator");

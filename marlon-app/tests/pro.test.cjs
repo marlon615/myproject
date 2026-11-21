@@ -480,6 +480,108 @@ async function shelfJpeg(page) {
     gemini.mode = "ok";
     await S.locator("dialog.pro-shelf .pro-x").click();
 
+    // ── Shelf Order: from the shelf count to a signed order, then an invoice ────────────────────────────────────
+    check(await S.locator("#pro-orders").isVisible() && await S.locator("#pro-order-count").isHidden(), "Pro: an Orders button sits next to Return and Shelf photo (no pending orders yet)");
+    await S.click("#pro-shelf");
+    await S.waitForSelector("dialog.pro-shelf[open]");
+    const firstPast = S.locator(".shelf-past").filter({ hasText: "Mango Juice" }).first();
+    await firstPast.locator("summary").click();
+    check(await firstPast.locator(".shelf-order").isVisible(), "after a shelf photo, the products seen and their counts come with a “Make an order” button");
+    await firstPast.locator(".shelf-order").click();
+    await S.waitForSelector("dialog.pro-order[open]");
+    const ordLines = async () => S.evaluate(() => [...document.querySelectorAll(".ord-line")].map((li) => ({
+      name: li.querySelector(".ord-product").selectedOptions[0]?.textContent, shelf: li.querySelector(".ord-shelf").value, target: li.querySelector(".ord-target").value, qty: li.querySelector(".ord-qty").value })));
+    let ol = await ordLines();
+    check(await S.inputValue("#ord-store") === "Hill Top Grocery" && ol.length === 2 && ol[0].name === "Mango Juice" && ol[0].shelf === "6" && ol[1].name === "Eggs" && ol[1].shelf === "2",
+      "the order form fills itself from the shelf count: Mango Juice 6 on the shelf, Eggs 2, at the same store", JSON.stringify(ol));
+    check(ol[0].target === "20" && ol[0].qty === "14" && ol[1].qty === "18", "with a target of 20 each, Marlon orders the difference: 20 − 6 = 14 Mango Juice, 20 − 2 = 18 Eggs", JSON.stringify(ol.map((x) => x.qty)));
+    await S.fill("#ord-all-target", "24");
+    await S.locator("#ord-all-target").dispatchEvent("change");
+    ol = await ordLines();
+    check(ol[0].target === "24" && ol[0].qty === "18" && ol[1].qty === "22", "changing the target for every product (24) works the orders out again: 18 and 22", JSON.stringify(ol));
+    await S.locator(".ord-line").nth(1).locator(".ord-target").fill("10");
+    await S.locator(".ord-line").nth(0).locator(".ord-qty").fill("15");
+    await S.click("#ord-add");
+    await S.locator(".ord-line").nth(2).locator(".ord-product").selectOption({ label: "Coconut Water" });
+    await S.locator(".ord-line").nth(2).locator(".ord-target").fill("12");
+    await S.click("#ord-add");
+    await S.locator(".ord-line").nth(3).locator(".ord-product").selectOption({ label: "Ginger Beer" });
+    await S.locator(".ord-line").nth(3).locator(".ord-shelf").fill("30");
+    ol = await ordLines();
+    check(ol[0].qty === "15" && ol[1].qty === "8" && ol[2].qty === "12" && ol[3].qty === "0",
+      "the rep can change any amount (15 Mango Juice), one product's target (Eggs 10 − 2 = 8), add products (Coconut Water 12); a shelf above target orders 0", JSON.stringify(ol.map((x) => `${x.name}:${x.qty}`)));
+    await S.fill("#ord-store", "Sunrise Mart");
+    check(await S.locator("#ord-save").isDisabled() && /types their name/.test(await S.textContent("dialog.pro-order .ret-why")), "Save waits for the name of the person ordering");
+    await S.fill("#ord-signer", "Marcia Brown");
+    check(await S.locator("#ord-save").isDisabled() && /signs below/.test(await S.textContent("dialog.pro-order .ret-why")), "…and their signature");
+    await signOn(S, "#ord-sign");
+    await S.waitForFunction(() => !document.getElementById("ord-save").disabled, null, { timeout: 4000 });
+    await S.screenshot({ path: path.join(OUT, "pro-10a-order-form.png") });
+    await S.click("#ord-save");
+    await S.waitForSelector("dialog.pro-order.is-done");
+    check((await S.textContent("dialog.pro-order h2")).trim() === "Order ORD-0001" && await S.locator("dialog.pro-shelf").count() === 0, "the order is saved as ORD-0001 (the shelf screen closes)");
+    const card = (await S.textContent("dialog.pro-order .ord-card")).replace(/\s+/g, " ");
+    check(/Pending/.test(card) && /Sunrise Mart/.test(card) && /Ordered by Marcia Brown/.test(card) && await S.locator("dialog.pro-order .ord-sig img").count() === 1 && !/Ginger Beer/.test(card) && /8 dozen/.test(card),
+      "the order shows Pending, the store, every product ordered (Ginger Beer at 0 left out), and who ordered with their signature", card.slice(0, 220));
+    const saved = await S.evaluate(async () => (await (await import("/js/db.js")).orders.all())[0]);
+    check(saved.number === 1 && saved.status === "pending" && saved.store === "Sunrise Mart" && saved.signerName === "Marcia Brown" && saved.signature.startsWith("data:image/png;base64,")
+      && /T\d{2}:\d{2}/.test(saved.signedAt) && saved.date === today && saved.lines.map((l) => `${l.name}:${l.onShelf}/${l.target}/${l.qty}`).join(",") === "Mango Juice:6/24/15,Eggs:2/10/8,Coconut Water:0/12/12",
+      "saved on the phone with the store, the name, the signature, the date and time, and shelf / target / order for each product", JSON.stringify({ n: saved.number, st: saved.status, at: saved.signedAt, l: saved.lines.length }));
+    const [opdf] = await Promise.all([S.waitForEvent("download"), S.click("#ord-pdf")]);
+    const opdfBytes = fs.readFileSync(await opdf.path());
+    check(opdf.suggestedFilename() === "order-ORD-0001.pdf" && opdfBytes.subarray(0, 5).toString() === "%PDF-" && opdfBytes.length > 15000, "Share PDF makes a one-page PDF of the order (with the signature) for a driver on another phone", `${opdfBytes.length} bytes`);
+    await S.screenshot({ path: path.join(OUT, "pro-10b-order-saved.png") });
+    await S.click("#ord-done");
+    await S.waitForFunction(() => document.getElementById("pro-order-count")?.textContent === "1");
+    check(await S.locator("#pro-order-count").isVisible(), "Done: the Orders button shows 1 pending order");
+    // At delivery, offline: the driver opens the order and shows who ordered it.
+    await ctxS.setOffline(true);
+    await S.click("#pro-orders");
+    await S.waitForSelector("dialog.pro-orders[open] .ord-row");
+    check(/ORD-0001 · Sunrise Mart/.test(await S.textContent(".ord-row")) && /Pending \(1\)/.test(await S.textContent(".ord-filter")), "Orders lists the pending order (offline too)");
+    await S.click(".ord-row");
+    await S.waitForSelector("dialog.pro-order-view[open]");
+    check(/Ordered by Marcia Brown/.test(await S.textContent("dialog.pro-order-view .ord-sig")) && await S.locator("dialog.pro-order-view .ord-sig img").isVisible(),
+      "offline at delivery: the order shows who ordered it, with their name and signature");
+    await S.screenshot({ path: path.join(OUT, "pro-10c-order-at-delivery.png") });
+    await ctxS.setOffline(false);
+    await S.click("#ord-deliver");
+    await S.waitForFunction(() => document.getElementById("store").value === "Sunrise Mart" && document.querySelectorAll("dialog[open]").length === 0, null, { timeout: 6000 });
+    await S.waitForTimeout(700);
+    const fromOrder = await S.evaluate(async () => { const db = await import("/js/db.js"); const o = (await db.orders.all())[0]; const inv = await db.invoices.get(o.invoiceId); return { o, inv }; });
+    check(fromOrder.o.status === "delivered" && fromOrder.inv && fromOrder.o.invoiceNumber === fromOrder.inv.number && fromOrder.inv.store === "Sunrise Mart"
+      && fromOrder.inv.items.map((i) => `${i.name}:${i.qty}:${i.price}`).sort().join(",") === "Coconut Water:12:180,Eggs:8:480,Mango Juice:15:250" && (await S.textContent("#grand-amount")).trim() === "$9,750.00",
+      "“Delivered: make the invoice” turns it into an invoice in one tap: the store, each product with its amount and usual price ($9,750.00); the order shows Delivered with the invoice number",
+      JSON.stringify({ st: fromOrder.o.status, inv: fromOrder.o.invoiceNumber, invNo: fromOrder.inv?.number, store: fromOrder.inv?.store, items: fromOrder.inv?.items.map((i) => `${i.name}:${i.qty}:${i.price}`), total: fromOrder.inv?.total }));
+    check(await S.locator("#pro-order-count").isHidden(), "the Orders button has no pending orders left");
+    await S.evaluate(async (id) => (await import("/js/db.js")).invoices.remove(id), fromOrder.inv.id); // (keeps the accountant numbers below as they were)
+    await S.click("#new-btn").catch(() => {});
+    // A second order, then cancelled.
+    await S.click("#pro-shelf");
+    await S.waitForSelector("dialog.pro-shelf[open]");
+    await S.locator(".shelf-past").filter({ hasText: "Mango Juice" }).first().locator("summary").click();
+    await S.locator(".shelf-past").filter({ hasText: "Mango Juice" }).first().locator(".shelf-order").click();
+    await S.waitForSelector("dialog.pro-order[open]");
+    check((await ordLines())[0].target === "24", "the next order remembers the last target used (24)");
+    await S.fill("#ord-signer", "Paul Green");
+    await signOn(S, "#ord-sign");
+    await S.waitForFunction(() => !document.getElementById("ord-save").disabled, null, { timeout: 4000 });
+    await S.click("#ord-save");
+    await S.waitForSelector("dialog.pro-order.is-done");
+    check((await S.textContent("dialog.pro-order h2")).trim() === "Order ORD-0002", "the next order is ORD-0002");
+    await S.click("#ord-done");
+    await S.click("#pro-orders");
+    await S.waitForSelector("dialog.pro-orders[open] .ord-row");
+    await S.click(".ord-row");
+    await S.waitForSelector("dialog.pro-order-view[open]");
+    await S.click("#ord-cancel");
+    await S.getByRole("button", { name: "Cancel the order" }).click();
+    await S.waitForFunction(async () => ((await (await import("/js/db.js")).orders.all()).find((o) => o.number === 2) || {}).status === "cancelled", null, { timeout: 5000 });
+    check(true, "an order can be cancelled (ORD-0002 shows Cancelled)");
+    await S.locator("dialog.pro-orders .pro-x").click().catch(() => {});
+    const noOrdBefore = await S.evaluate(async () => (await (await import("/js/db.js")).exportBackup()).orders?.length || 0);
+    check(noOrdBefore === 2, "orders are in the phone's backup file", String(noOrdBefore));
+
     // The solo dashboard's Pro tab: accountant summary and returns.
     await openDashboard(S, true);
     await S.getByRole("tab", { name: "Pro" }).click();
@@ -495,6 +597,9 @@ async function shelfJpeg(page) {
       "Download for accountant: a CSV with the quarters, the year and every invoice and credit note line", csvDl.suggestedFilename());
     const retStore = await S.textContent("#dash-ret-store");
     check(/Hill Top Grocery/.test(retStore) && /Bay Market/.test(retStore) && /Mango Juice/.test(await S.textContent("#dash-ret-product")), "returns by store and by product");
+    const dOrd = (await S.textContent("#dash-orders")).replace(/\s+/g, " ");
+    check(/1 pending|0 pending/.test(dOrd) && /1 delivered · 1 cancelled/.test(dOrd) && /ORD-0001 · Sunrise Mart/.test(dOrd) && /ordered by Marcia Brown/.test(dOrd),
+      "solo dashboard → Pro: Shelf orders with their status (1 delivered, 1 cancelled) and who ordered", dOrd.slice(0, 160));
     await S.screenshot({ path: path.join(OUT, "pro-7-solo-dashboard.png"), fullPage: true });
     await S.getByRole("tab", { name: "Settings" }).click();
     check(await S.locator(".dash-terms a[href='/terms']").count() === 1, "Settings links to the Terms (with the Marlon Pro section)");
@@ -536,13 +641,42 @@ async function shelfJpeg(page) {
     const [bcsv] = await Promise.all([B.waitForEvent("download"), B.click("#boss-csv")]);
     const bText = fs.readFileSync(await bcsv.path(), "utf8");
     check(/Coastline Foods — sales summary/.test(bText) && /Dana Reid/.test(bText) && /CN-0001,Dana Reid,Corner Shop,Mango Juice,3,each,Expired/.test(bText), "boss: the accountant's CSV names the rep on every line");
+    // Shelf orders reach the boss: who ordered is shown, the signature only on request.
+    await R.evaluate(async () => {
+      const db = await import("/js/db.js");
+      const c = document.createElement("canvas"); c.width = 300; c.height = 100; const x = c.getContext("2d"); x.lineWidth = 4; x.beginPath(); x.moveTo(10, 70); x.bezierCurveTo(80, 0, 150, 120, 290, 30); x.stroke();
+      await db.orders.create({ store: "Corner Shop", address: "", lines: [{ name: "Mango Juice", unit: "each", onShelf: 4, target: 20, qty: 16 }], signature: c.toDataURL("image/png"), signerName: "Owen Clarke" });
+    });
+    await R.evaluate(() => window.__teamSync());
+    await B.click("text=Refresh");
+    await B.waitForSelector("#boss-orders .boss-ord");
+    const bOrd = (await B.textContent("#boss-orders")).replace(/\s+/g, " ");
+    check(/1 pending/.test(bOrd) && /ORD-0001 · Corner Shop/.test(bOrd) && /by Dana Reid/.test(bOrd) && /ordered by Owen Clarke/.test(bOrd) && /order 16/.test(bOrd),
+      "boss: Shelf orders shows the rep's order: number, store, rep, who ordered, and what to deliver", bOrd.slice(0, 200));
+    const bossRaw = await (await fetch(`${BASE}/api/boss/data`, { headers: { Authorization: `Bearer ${await B.evaluate(() => { const t = sessionStorage.getItem("marlon.boss.token"); try { return JSON.parse(t); } catch { return t; } })}` } })).json();
+    check(bossRaw.orders?.length === 1 && bossRaw.orders[0].signer === "Owen Clarke" && !("signature" in bossRaw.orders[0]) && !JSON.stringify(bossRaw).includes("data:image/png"),
+      "the boss's data carries the orderer's name but not the signature picture (that comes only on request)", JSON.stringify({ n: bossRaw.orders?.length, signer: bossRaw.orders?.[0]?.signer, keys: Object.keys(bossRaw.orders?.[0] || {}), err: bossRaw.error, png: JSON.stringify(bossRaw).indexOf("data:image/png") }));
+    await B.click(".boss-ord-show");
+    await B.waitForSelector(".boss-ord-sig img");
+    check((await B.getAttribute(".boss-ord-sig img", "src")).startsWith("data:image/png;base64,") && /Ordered by Owen Clarke for Corner Shop/.test(await B.textContent(".boss-ord-sig")),
+      "“Show signature” shows the orderer's signature, decrypted on the server for the signed-in boss");
+    await B.screenshot({ path: path.join(OUT, "pro-8b-boss-orders.png"), fullPage: false, clip: await B.locator("#boss-orders").boundingBox() });
+    await R.evaluate(async () => { const db = await import("/js/db.js"); const o = (await db.orders.all())[0]; await db.orders.setStatus(o.id, "delivered", { invoiceId: "x", invoiceNumber: 3 }); });
+    await R.evaluate(() => window.__teamSync());
+    await B.click("text=Refresh");
+    await B.selectOption("#boss-ord-status", "delivered");
+    await B.waitForSelector('#boss-orders .boss-ord[data-status="delivered"]');
+    check(/Delivered/.test(await B.textContent("#boss-orders .boss-ord")) && /invoice No\. 0003/.test(await B.textContent("#boss-orders .boss-ord")), "a delivered order shows Delivered on the boss dashboard, with its invoice number");
     await B.screenshot({ path: path.join(OUT, "pro-8-boss.png"), fullPage: true });
 
     // A team without Pro: the boss sees no Pro sections, and the server sends no credit notes.
     await post("/api/console/pro", { id: team.buyer.id, pro: false, discountPct: 0 }, token);
     await B.reload();
     await B.waitForSelector("#boss-reps");
-    check(await B.locator("#boss-accountant").count() === 0 && await B.locator("#boss-returns").count() === 0, "Pro switched off: the boss's Pro sections disappear (the data is kept)");
+    check(await B.locator("#boss-accountant").count() === 0 && await B.locator("#boss-returns").count() === 0 && await B.locator("#boss-orders").count() === 0, "Pro switched off: the boss's Pro sections (orders too) disappear (the data is kept)");
+    const rLic = await R.evaluate(async () => (await import("/js/db.js")).settings.get("license"));
+    const offSync = await (await post("/api/team/sync", { key: rLic.key, device: rLic.device, invoices: [], orders: [{ id: "or_test1", number: 9, date: today, store: "X", status: "pending", lines: [], signer: "Y", signature: "", signedAt: "", updatedAt: "" }] })).json();
+    check(offSync.ok && offSync.storedOrders.length === 0, "without Pro, the server doesn't take shelf orders");
     await post("/api/console/pro", { id: team.buyer.id, pro: true, discountPct: 0 }, token);
 
     // ── Pro switched off reaches the phone; credit notes already given still count ─────────────────────────────────

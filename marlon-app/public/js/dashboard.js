@@ -8,10 +8,11 @@
  * or print) and returns (credit notes) by store and by product.
  */
 import {
-  credits, eraseEverything, exportBackup, importBackup, invoices, products, profile, requestPersistence, settings, storageStatus,
+  credits, eraseEverything, exportBackup, importBackup, invoices, orders, products, profile, requestPersistence, settings, storageStatus,
 } from "./db.js";
 import { accountantSummary, reportYears, returnsBreakdown, summaryCsv } from "./pro-report.js";
 import { creditNoteView, shareCreditNotePdf } from "./pro.js";
+import { STATUS_TEXT, openOrder, orderView, shareOrderPdf } from "./orders.js";
 import {
   UNITS, UNIT_NAMES, business, parseAmount, priceInputText, setBusiness, h, invoiceNo, money, monthLabel, normalizeUnit, parseISODate, prettyDate, qtyText, qtyWithUnit, storeKey, tidy, toCents, todayISO,
   weekStartISO, withTotals, signedByText,
@@ -452,10 +453,10 @@ function cancelPinFlow() {
 // ── Dashboard shell ──────────────────────────────────────────────────────
 
 async function loadData() {
-  const [list, prods, paper, pinResetAt, lic, cns] = await Promise.all([
-    invoices.all(), products.all({ includeHidden: true }), settings.get("paper", 58), settings.get("pinResetAt", null), settings.get("license", null), credits.all(),
+  const [list, prods, paper, pinResetAt, lic, cns, ods] = await Promise.all([
+    invoices.all(), products.all({ includeHidden: true }), settings.get("paper", 58), settings.get("pinResetAt", null), settings.get("license", null), credits.all(), orders.all(),
   ]);
-  data = { invoices: list.map(withTotals), products: prods, paper: Number(paper) === 80 ? 80 : 58, pinResetAt, pro: Boolean(lic?.pro), credits: cns };
+  data = { invoices: list.map(withTotals), products: prods, paper: Number(paper) === 80 ? 80 : 58, pinResetAt, pro: Boolean(lic?.pro), credits: cns, orders: ods };
   TABS = data.pro ? [BASE_TABS[0], BASE_TABS[1], ["pro", "Pro"], BASE_TABS[2]] : BASE_TABS;
   if (view.tab === "pro" && !data.pro) view.tab = "overview";
 }
@@ -604,7 +605,25 @@ function proView() {
             h("button", { type: "button", class: "btn btn-block", onclick: (e) => shareCreditNotePdf(cn, e.currentTarget) }, "Share PDF"));
         })),
       ] : [])),
+    ordersView(),
   ];
+}
+
+/** Shelf orders taken on this phone (a solo business's "boss dashboard" is its own dashboard). */
+function ordersView() {
+  const all = data.orders || [];
+  const n = (st) => all.filter((o) => o.status === st).length;
+  const ordNo = (x) => `ORD-${String(x || 0).padStart(4, "0")}`;
+  return h("section", { class: "dash-section", id: "dash-orders", "aria-labelledby": "dash-h-ord" },
+    h("h2", { class: "section-title", id: "dash-h-ord" }, "Shelf orders"),
+    h("p", { class: "dash-note" }, all.length ? `${n("pending")} pending · ${n("delivered")} delivered · ${n("cancelled")} cancelled.` : "No orders yet. Take a shelf photo, then tap “Make an order”."),
+    all.length ? h("div", { class: "pro-cns" }, [...all].sort((a, b) => (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) || (b.createdAt || "").localeCompare(a.createdAt || "")).map((o) =>
+      h("details", { class: "pro-cn pro-ord", dataset: { id: o.id, status: o.status } },
+        h("summary", {}, h("span", {}, h("strong", {}, `${ordNo(o.number)} · ${o.store}`), h("small", {}, `${prettyDate(o.date)} · ordered by ${o.signerName}`)),
+          h("span", { class: `ord-status is-${o.status}` }, STATUS_TEXT[o.status] || o.status)),
+        orderView(o),
+        o.status === "pending" ? h("button", { type: "button", class: "btn btn-primary btn-block", onclick: () => openOrder(o.id, () => loadData().then(renderPanel)) }, "Open (deliver or cancel)") : null,
+        h("button", { type: "button", class: "btn btn-block", onclick: (e) => shareOrderPdf(o, e.currentTarget) }, "Share PDF")))) : null);
 }
 
 async function shareText(text, name) {

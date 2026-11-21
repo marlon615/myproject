@@ -128,6 +128,18 @@ Same app, no separate version: Pro features appear only for companies with **Pro
   dropped. Offline, photos wait on the phone and are checked once online. Limit: 100 photos per company per day. If
   Google's free daily limit is reached, the rep is told to try tomorrow; without a key, shelf photo says it isn't set up.
   Cost: $0 within Google's free limit; Marlon never turns on paid use.
+- **Shelf Order:** after a shelf photo, **Make an order** opens the order form filled in from the shelf count. The rep sets a
+  target per product (or one for all; the last one is remembered) and Marlon orders `target − on shelf` (never below 0);
+  any amount can be changed, products added or left out. The store person types their name and signs; the order is saved
+  on the phone (IndexedDB store `orders`, DB version 3) with the store, name, signature, date and time, numbered
+  ORD-0001… per phone, status Pending / Delivered / Cancelled. **Orders** (third Pro button, with a pending count) lists
+  them; opening one shows who ordered with the signature (offline too), **Share PDF** sends it to a driver on another
+  phone, **Delivered: make the invoice** starts a new invoice with the same store, products, amounts and usual prices and
+  marks the order Delivered with that invoice number, **Cancel order** asks first. For a team, orders go to the boss with
+  the team sync (5 per request; Pro only): the server keeps the orderer's name and signature encrypted (AES-256-GCM,
+  `ENCRYPTION_KEY`), the boss dashboard's **Shelf orders** lists them with who ordered, and **Show signature** fetches
+  the signature on demand (`POST /api/boss/order-signature`). A solo business sees its orders in its dashboard's Pro tab.
+  Orders are in backups and are erased with "erase everything".
 - **Accountant summary** (boss dashboard; a solo business's own dashboard → Pro tab): by quarter (Jan–Mar …) and for the
   year ending 31 December: invoices, gross sales, returns (credit notes), net sales, received, not yet paid. **Download
   for accountant (CSV)** (summary + every invoice and credit-note line, with the rep) or **Print / Save as PDF**, with

@@ -11,7 +11,8 @@
  *    same link is free for a new rep ("Give to new rep").
  *  - Refreshes every 30 seconds while open. Offline, it shows what it last loaded (and says when that was).
  *  - Marlon Pro (when the company has Pro on): the accountant summary (by quarter and for the year, to download or
- *    print for the accountant) and returns (credit notes) by store, by product and by rep.
+ *    print for the accountant), returns (credit notes) by store, by product and by rep, and shelf orders (Pending,
+ *    Delivered, Cancelled) with who ordered; the orderer's signature is fetched only when "Show signature" is tapped.
  */
 import { accountantSummary, reportYears, returnsBreakdown, summaryCsv } from "./pro-report.js";
 const root = document.getElementById("boss");
@@ -202,7 +203,7 @@ async function load() {
   refreshTimer = setTimeout(load, 30000);
 }
 
-const view = { rep: "all", status: "all", year: null };
+const view = { rep: "all", status: "all", year: null, orders: "pending" };
 
 // ── Marlon Pro ───────────────────────────────────────────────────────────
 const cnNo = (n) => `CN-${String(n || 0).padStart(4, "0")}`;
@@ -259,6 +260,42 @@ function returnsSection(data, repName) {
           el("p", { class: "boss-inv-meta" }, `${dateText(c.date)} · by ${repName.get(c.rep) || "a rep"} · ${c.signed ? `signed${c.signer ? ` by ${c.signer}` : ""}` : "not signed"}`),
           el("ul", { class: "boss-items" }, (c.lines || []).map((l) => el("li", {}, el("span", {}, `${qtyText(l.qty, l.unit)} × ${l.name} · ${l.reason === "damaged" ? "damaged" : "expired"}`), el("span", { class: "num" }, money(l.total))))),
           el("p", { class: "boss-note" }, c.applied >= c.total ? "Fully taken off invoices." : c.applied ? `${money(c.applied)} taken off invoices so far · ${money(c.total - c.applied)} still to come off.` : "Comes off this store's next invoice.")))))] : null);
+}
+
+/** Shelf orders from the reps' phones: Pending first; who ordered, with their signature on demand. */
+const ordNo = (n) => `ORD-${String(n || 0).padStart(4, "0")}`;
+const ORDER_STATUS = { pending: "Pending", delivered: "Delivered", cancelled: "Cancelled" };
+const whenText = (isoTime) => (isoTime ? new Date(isoTime).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "");
+function ordersSection(data, repName, offline) {
+  const all = [...(data.orders || [])].sort((a, b) => (b.signedAt || "").localeCompare(a.signedAt || "") || (b.number || 0) - (a.number || 0));
+  const count = (st) => all.filter((o) => o.status === st).length;
+  const shown = all.filter((o) => view.orders === "all" || o.status === view.orders);
+  const sel = el("select", { id: "boss-ord-status", "aria-label": "Which orders", onchange: (e) => { view.orders = e.target.value; render(data, offline); } },
+    ["pending", "delivered", "cancelled", "all"].map((st) => el("option", { value: st }, st === "all" ? `All (${all.length})` : `${ORDER_STATUS[st]} (${count(st)})`)));
+  sel.value = view.orders;
+  const showSig = async (o, box, button) => {
+    button.disabled = true;
+    let r; try { r = await call("/api/boss/order-signature", { method: "POST", auth: true, body: { id: o.id } }); } catch { r = null; }
+    button.disabled = false;
+    if (!r?.ok) { box.replaceChildren(el("p", { class: "boss-error" }, r ? r.data.error || "The signature couldn't be loaded." : "No connection. The signature loads when you're online.")); return; }
+    box.replaceChildren(el("figure", { class: "boss-ord-sig" }, r.data.signature ? el("img", { src: r.data.signature, alt: `Signature of ${r.data.signer}` }) : null,
+      el("figcaption", {}, `Ordered by ${r.data.signer || "—"} for ${o.store} · ${whenText(r.data.signedAt || o.signedAt)}`)));
+    button.remove();
+  };
+  return el("section", { class: "card boss-card boss-pro-card", id: "boss-orders" },
+    el("div", { class: "boss-rep-head" }, el("h2", {}, "Shelf orders"), all.length ? sel : null),
+    el("p", { class: "boss-note" }, all.length ? `${count("pending")} pending · ${count("delivered")} delivered · ${count("cancelled")} cancelled. Orders come from your reps' shelf photos; the store person signs each one.`
+      : "No orders yet. When a rep takes a shelf photo and makes an order, it appears here with who ordered it."),
+    shown.length ? el("ul", { class: "boss-list" }, shown.map((o) => {
+      const sigBox = el("div", { class: "boss-ord-sigbox" });
+      return el("li", { class: "boss-inv boss-ord", "data-id": o.id, "data-status": o.status },
+        el("div", { class: "boss-inv-head" }, el("strong", {}, `${ordNo(o.number)} · ${o.store || "No store name"}`), el("span", { class: `boss-badge boss-ord-${o.status}` }, ORDER_STATUS[o.status] || o.status)),
+        el("p", { class: "boss-inv-meta" }, `${whenText(o.signedAt)} · by ${repName.get(o.rep) || "a rep"} · ordered by ${o.signer || "—"}`),
+        el("ul", { class: "boss-items" }, (o.lines || []).map((l) => el("li", {}, el("span", {}, `${l.name} · shelf ${l.onShelf ?? 0}, target ${l.target ?? "—"}`), el("strong", { class: "num" }, `order ${qtyText(l.qty, l.unit)}`)))),
+        o.status === "delivered" ? el("p", { class: "boss-note" }, `Delivered ${whenText(o.deliveredAt)}${o.invoiceNumber ? ` · invoice No. ${String(o.invoiceNumber).padStart(4, "0")}` : ""}`) : null,
+        o.status === "cancelled" ? el("p", { class: "boss-note" }, `Cancelled ${whenText(o.cancelledAt)}`) : null,
+        o.signed ? [sigBox, el("button", { type: "button", class: "btn boss-ord-show", onclick: (e) => showSig(o, sigBox, e.currentTarget) }, "Show signature")] : null);
+    })) : all.length ? el("p", { class: "boss-note" }, "No orders here.") : null);
 }
 
 const slug = (s) => String(s || "marlon").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "marlon";
@@ -319,6 +356,7 @@ function render(data, offline) {
     repsSection(data),
     data.pro ? accountantSection(data, repName, offline) : null,
     data.pro ? returnsSection(data, repName) : null,
+    data.pro ? ordersSection(data, repName, offline) : null,
     el("section", { class: "card boss-card" }, el("h2", {}, "By rep"),
       el("table", { class: "boss-table", id: "boss-reps" },
         el("thead", {}, el("tr", {}, el("th", {}, "Rep"), el("th", {}, "Today"), el("th", {}, "This week"), el("th", {}, "This month"))),

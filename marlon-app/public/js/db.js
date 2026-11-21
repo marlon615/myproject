@@ -16,11 +16,15 @@
  *             the same transaction, which credit notes an unsigned invoice uses (oldest first, never more than its
  *             subtotal) and records it on both. A signed (or sent-for-signature) invoice keeps the credit it had.
  *             Deleting an invoice gives its credit back.
+ *   orders    (Marlon Pro: shelf orders) { id, number, store, address, date, lines[{ productId, name, unit, onShelf, target, qty }],
+ *             signerName, signature, signedAt, status: "pending"|"delivered"|"cancelled", deliveredAt, cancelledAt,
+ *             invoiceId, invoiceNumber, shelfCheckId, createdAt, updatedAt }
+ *             Numbered ORD-0001, ORD-0002… on this phone. The store person who orders types their name and signs.
  */
 import { allocateCredit, parseAmount, normalizeUnit, storeKey, tidy, toCents, uid, withTotals } from "./util.js";
 
 const DB_NAME = "marlon-invoices";
-const DB_VERSION = 2; // 2: + credits (Marlon Pro returns). Upgrading keeps everything already saved.
+const DB_VERSION = 3; // 2: + credits (Marlon Pro returns). 3: + orders (Marlon Pro shelf orders). Upgrading keeps everything already saved.
 let dbPromise = null;
 
 function openDb() {
@@ -38,6 +42,7 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains("settings")) db.createObjectStore("settings", { keyPath: "key" });
       if (!db.objectStoreNames.contains("credits")) db.createObjectStore("credits", { keyPath: "id" }).createIndex("date", "date");
+      if (!db.objectStoreNames.contains("orders")) db.createObjectStore("orders", { keyPath: "id" }).createIndex("date", "date");
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -337,6 +342,62 @@ export const credits = {
   },
 };
 
+// ── Marlon Pro: shelf orders ────────────────────────────────────────────
+
+const ORDER_STATUSES = new Set(["pending", "delivered", "cancelled"]);
+/** What to order: the target minus what's on the shelf, never below nothing. */
+export const orderQty = (target, onShelf) => {
+  const t = parseAmount(target), o = parseAmount(onShelf) || 0;
+  return t === null ? null : Math.max(0, Math.round((t - o) * 1000) / 1000);
+};
+
+export const orders = {
+  /** All shelf orders, newest first. */
+  async all() {
+    const rows = await run("orders", "readonly", (s) => done(s.orders.getAll()));
+    return rows.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "") || (b.number || 0) - (a.number || 0));
+  },
+  async get(id) { return (await run("orders", "readonly", (s) => done(s.orders.get(id)))) || null; },
+  /**
+   * A new numbered order (ORD-0001, ORD-0002… on this phone), status Pending.
+   * lines: [{ productId, name, unit, onShelf, target, qty }] — lines ordering nothing are left out.
+   * The store person's name and signature are both required.
+   */
+  async create({ store, address = "", lines, signature, signerName, shelfCheckId = null }) {
+    const clean = tidy(store).replace(/\n/g, " ");
+    if (!clean) throw new Error("Type the store's name first.");
+    const name = tidy(signerName).replace(/\n/g, " ").slice(0, 80);
+    if (!name) throw new Error("The person placing the order types their name first.");
+    if (!signature) throw new Error("The person placing the order needs to sign first.");
+    const items = (lines || []).map((l) => ({ productId: l.productId ?? null, name: tidy(l.name).replace(/\n/g, " ").slice(0, 80), unit: normalizeUnit(l.unit),
+      onShelf: parseAmount(l.onShelf) ?? 0, target: parseAmount(l.target), qty: parseAmount(l.qty) })).filter((l) => l.name && l.qty > 0);
+    if (!items.length) throw new Error("Order at least one product (an amount above 0).");
+    const at = nowISO();
+    return run(["orders", "settings"], "readwrite", async (s) => {
+      const row = await done(s.settings.get("nextOrderNumber"));
+      const number = Math.max(1, Number(row?.value) || 1);
+      await done(s.settings.put({ key: "nextOrderNumber", value: number + 1 }));
+      const o = { id: uid("or_"), number, store: clean, address: tidy(address), date: at.slice(0, 10), lines: items, signerName: name, signature, signedAt: at,
+        status: "pending", deliveredAt: null, cancelledAt: null, invoiceId: null, invoiceNumber: null, shelfCheckId, createdAt: at, updatedAt: at };
+      await done(s.orders.put(o));
+      return o;
+    });
+  },
+  /** Pending → Delivered (with the invoice made from it) or Cancelled. A delivered or cancelled order doesn't change again. */
+  async setStatus(id, status, { invoiceId = null, invoiceNumber = null } = {}) {
+    if (!ORDER_STATUSES.has(status) || status === "pending") throw new Error("Unknown order status.");
+    return run("orders", "readwrite", async (s) => {
+      const o = await done(s.orders.get(id));
+      if (!o) throw new Error("That order no longer exists.");
+      if (o.status !== "pending") return o;
+      const at = nowISO();
+      Object.assign(o, { status, updatedAt: at }, status === "delivered" ? { deliveredAt: at, invoiceId, invoiceNumber } : { cancelledAt: at });
+      await done(s.orders.put(o));
+      return o;
+    });
+  },
+};
+
 // ── Setup, backup and restore ───────────────────────────────────────────
 
 /** Opens storage, adds the starting products on first run and asks the browser to keep data. */
@@ -380,9 +441,9 @@ const PRIVATE_SETTINGS = new Set(["pin", "printer", "currentId", "deviceId", "us
 
 /** Everything needed to restore on another phone (the dashboard PIN and printer are left out). */
 export async function exportBackup() {
-  const [p, inv, st, cn] = await Promise.all([products.all({ includeHidden: true }), invoices.all(), settings.all(), credits.all()]);
+  const [p, inv, st, cn, od] = await Promise.all([products.all({ includeHidden: true }), invoices.all(), settings.all(), credits.all(), orders.all()]);
   const safeSettings = Object.fromEntries(Object.entries(st).filter(([k]) => !PRIVATE_SETTINGS.has(k)));
-  return { app: "marlon-invoices", version: 1, exportedAt: nowISO(), products: p, invoices: inv, settings: safeSettings, ...(cn.length ? { credits: cn } : {}) };
+  return { app: "marlon-invoices", version: 1, exportedAt: nowISO(), products: p, invoices: inv, settings: safeSettings, ...(cn.length ? { credits: cn } : {}), ...(od.length ? { orders: od } : {}) };
 }
 
 /**
@@ -394,7 +455,18 @@ export async function importBackup(data) {
     throw new Error("That file isn't a backup from this app.");
   }
   const counts = { invoicesAdded: 0, invoicesUpdated: 0, productsAdded: 0 };
-  await run(["products", "invoices", "settings", "credits"], "readwrite", async (s) => {
+  await run(["products", "invoices", "settings", "credits", "orders"], "readwrite", async (s) => {
+    let maxOrder = 0;
+    for (const o of Array.isArray(data.orders) ? data.orders : []) {
+      if (!o || typeof o.id !== "string" || !Array.isArray(o.lines)) continue;
+      const cur = await done(s.orders.get(o.id));
+      if (!cur || (o.updatedAt || "") > (cur.updatedAt || "")) await done(s.orders.put(o));
+      maxOrder = Math.max(maxOrder, Number(o.number) || 0);
+    }
+    if (maxOrder) {
+      const r = await done(s.settings.get("nextOrderNumber"));
+      await done(s.settings.put({ key: "nextOrderNumber", value: Math.max(Number(r?.value) || 1, maxOrder + 1) }));
+    }
     let maxCredit = 0;
     for (const cn of Array.isArray(data.credits) ? data.credits : []) {
       if (!cn || typeof cn.id !== "string" || !Array.isArray(cn.lines)) continue;
@@ -423,7 +495,7 @@ export async function importBackup(data) {
     const next = Math.max(Number(row?.value) || 1, maxNumber + 1);
     await done(s.settings.put({ key: "nextNumber", value: next }));
     for (const [k, v] of Object.entries(data.settings || {})) {
-      if (PRIVATE_SETTINGS.has(k) || k === "nextNumber" || k === "nextCreditNumber") continue;
+      if (PRIVATE_SETTINGS.has(k) || k === "nextNumber" || k === "nextCreditNumber" || k === "nextOrderNumber") continue;
       const cur = await done(s.settings.get(k));
       if (!cur) await done(s.settings.put({ key: k, value: v }));
     }
@@ -433,11 +505,12 @@ export async function importBackup(data) {
 
 /** Deletes every invoice, product and setting on this phone, then re-seeds the starting products. */
 export async function eraseEverything() {
-  await run(["products", "invoices", "settings", "credits"], "readwrite", async (s) => {
+  await run(["products", "invoices", "settings", "credits", "orders"], "readwrite", async (s) => {
     await done(s.products.clear());
     await done(s.invoices.clear());
     await done(s.settings.clear());
     await done(s.credits.clear());
+    await done(s.orders.clear());
   });
   return init();
 }

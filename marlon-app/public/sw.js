@@ -4,7 +4,7 @@
  * newest version; the open app reloads itself if it's still on the splash, or offers "Refresh" otherwise.
  * VERSION is stamped by scripts/stamp-sw.cjs.
  */
-const VERSION = "e619ddbe58e3";
+const VERSION = "9ce1b0b84f65";
 const CACHE = `marlon-app-${VERSION}`;
 
 // On Cloudflare "/index.html" redirects to "/" and "/v.html" to "/v", so the pages are cached by those URLs.
@@ -45,6 +45,7 @@ const PRECACHE = [
   "/js/team.js",
   "/js/remote.js",
   "/js/pro.js",
+  "/js/orders.js",
   "/js/pro-report.js",
   "/js/pricing.js",
   "/terms",

@@ -21,6 +21,7 @@ path: /privacy
       <a href="#app">The Marlon app</a>
       <a href="#teams">Teams and the boss dashboard</a>
       <a href="#signing">Send for signature and alerts</a>
+      <a href="#orders">Marlon Pro shelf orders</a>
       <a href="#pro">Marlon Pro shelf photo</a>
       <a href="#counts">Anonymous usage counts</a>
       <a href="#sharing">Who we share with</a>
@@ -66,6 +67,9 @@ path: /privacy
         <li>If a seller turns on signing alerts, the phone’s push subscription is stored encrypted, and used only to tell that phone when an invoice is signed. Subscriptions that the push service reports as gone are deleted.</li>
       </ul>
 
+      <h2 id="orders">Marlon Pro shelf orders</h2>
+      <p>A shelf order is saved on the rep’s phone with the store, the products and amounts, and the name and signature of the person who placed it, with the date and time. For a team with Marlon Pro, the order is also sent to our server so the company’s boss dashboard can show it. The orderer’s name and signature are stored encrypted (AES-256-GCM). The boss dashboard shows the name, and shows the signature only when the boss taps “Show signature”. For a solo business, orders stay on its own phone.</p>
+
       <h2 id="pro">Marlon Pro shelf photo</h2>
       <p>When a rep takes a shelf photo with Marlon Pro, the photo (shrunk on the phone) and the company’s product names are sent through our server to Google’s Gemini service, which reads the photo. Our server doesn’t keep the photo after it has been read. The phone keeps a small copy in its own history. Google processes the photo under its own <a href="https://ai.google.dev/gemini-api/terms" rel="noopener">Gemini API terms</a>. Please don’t photograph people or private documents.</p>
 
@@ -85,7 +89,7 @@ path: /privacy
       <ul>
         <li>Contact form messages: as long as we need them to answer you and keep a record of your purchase, or until you ask us to delete them.</li>
         <li>Spam-protection hashes: up to 24 hours.</li>
-        <li>Team invoices and credit notes: while your company uses Marlon. Ask us to delete them when you stop.</li>
+        <li>Team invoices, credit notes and shelf orders: while your company uses Marlon. Ask us to delete them when you stop.</li>
         <li>Information on a phone stays on the phone until the business deletes it or the browser’s data is cleared. Marlon’s settings include a way to erase everything on the phone.</li>
       </ul>
 

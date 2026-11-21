@@ -7,7 +7,7 @@ import { setupPro } from "./pro.js";
 import { runSetup } from "./setup.js";
 import { track } from "./usage.js";
 import { ensureAccess } from "./license.js";
-import { startTeamSync } from "./team.js";
+import { startTeamSync, syncNow } from "./team.js";
 import {
   business, setBusiness, UNITS, UNIT_NAMES, debounce, defaultUnitFor, fillUsualPrice, h, invoiceNo, itemsMissingPrice, lineTotal, money,
   normalizeUnit, parseAmount, priceInputText, qtyText, signedOnText, storeKey, sumTotals, todayISO, uid, withTotals,
@@ -123,7 +123,22 @@ async function start() {
   wireEvents();
   // Marlon Pro: Return (credit notes) and Shelf photo, only when the company has Pro on (remembered for offline).
   setupPro({ bar: el.proBar, pro: access.pro, getStore: () => el.store.value.trim(), getAddress: () => el.address.value.trim(),
-    onCreditCreated: () => refreshCredit() });
+    onCreditCreated: () => refreshCredit(),
+    // Shelf Order: "Done" sends the order to the boss right away when there's signal (otherwise it waits on the phone).
+    onOrderSaved: () => { if (access.team) syncNow().catch(() => {}); },
+    // A delivered order becomes a new invoice: the store, address and each product with its amount and usual price.
+    invoiceFromOrder: async (order) => {
+      await flushSave();
+      const items = order.lines.map((l) => {
+        const p = state.products.find((x) => x.id === l.productId) || state.products.find((x) => storeKey(x.name) === storeKey(l.name));
+        return { productId: p?.id || null, name: p?.name || l.name, qty: l.qty, unit: l.unit, price: p?.price ?? null };
+      });
+      await newDraft({ store: order.store, address: order.address, items });
+      await flushSave();
+      go("#/");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return { id: state.inv.id, number: state.inv.number };
+    } });
   startRemoteWatch(); // invoices sent for signature: news comes in by itself (it stops when nothing is waiting)
   initDashboard(el.dash, hooks);
   window.addEventListener("hashchange", route);
