@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /inbox
+Disallow: /api/
+
+Sitemap: https://marlon.marlon615.workers.dev/sitemap.xml

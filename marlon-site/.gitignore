@@ -1,0 +1,5 @@
+.wrangler/
+.video-tmp/
+tests/output/
+node_modules/
+worker/assets.generated.js

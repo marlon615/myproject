@@ -1,0 +1,13 @@
+{
+  "name": "marlon-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Marlon's public website (marketing pages, demo, contact form with a private inbox).",
+  "scripts": {
+    "build": "node scripts/build-site.cjs && node scripts/build-worker.cjs",
+    "dev": "npm run build && ../chief-of-staff/node_modules/.bin/wrangler dev --port 8820",
+    "deploy": "npm run build && ../chief-of-staff/node_modules/.bin/wrangler deploy",
+    "test": "node tests/site.test.cjs",
+    "demo-video": "node scripts/record-demo.cjs"
+  }
+}

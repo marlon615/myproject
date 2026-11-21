@@ -1,0 +1,76 @@
+<!--
+title: Contact Marlon · Email the Marlon Team
+description: Ask about Marlon or Marlon Pro, get your exact price, or get help. Send a message or email marlonapp.sales@gmail.com. We reply by email.
+path: /contact
+-->
+<section class="page-head">
+  <div class="wrap">
+    <p class="crumbs"><a href="/">Home</a> / Contact</p>
+    <h1>Talk to the Marlon Team</h1>
+    <p class="lead">Tell us about your business and how many reps you have. We reply by email with your exact price, the terms and the next steps.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="split">
+      <div class="card form-card">
+        <form id="contact-form" novalidate>
+          <div class="form-grid">
+            <div class="field"><label for="f-name">Your name</label><input id="f-name" name="name" type="text" autocomplete="name" maxlength="100" required></div>
+            <div class="field"><label for="f-company">Company or business</label><input id="f-company" name="company" type="text" autocomplete="organization" maxlength="120" required></div>
+            <div class="field"><label for="f-email">Email</label><input id="f-email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="160" required></div>
+            <div class="field"><label for="f-role">Your role <span class="opt">(optional)</span></label><input id="f-role" name="role" type="text" autocomplete="organization-title" maxlength="100" placeholder="e.g. Owner, Sales manager"></div>
+            <div class="field"><label for="f-topic">What’s it about?</label>
+              <select id="f-topic" name="topic">
+                <option value="Buy Marlon for my business">Buy Marlon for my business</option>
+                <option value="Marlon Pro">Marlon Pro</option>
+                <option value="A question before buying">A question before buying</option>
+                <option value="Help with Marlon I already have">Help with Marlon I already have</option>
+                <option value="Something else">Something else</option>
+              </select></div>
+            <div class="field"><label for="f-reps">How many reps?</label>
+              <select id="f-reps" name="reps">
+                <option value="Just me (solo business)">Just me (solo business)</option>
+                <option value="2–4 reps">2–4 reps</option>
+                <option value="5–9 reps">5–9 reps</option>
+                <option value="10–24 reps">10–24 reps</option>
+                <option value="25–49 reps">25–49 reps</option>
+                <option value="50–99 reps">50–99 reps</option>
+                <option value="100+ reps">100+ reps</option>
+                <option value="Not sure yet" selected>Not sure yet</option>
+              </select></div>
+            <div class="field full"><label for="f-message">Message</label><textarea id="f-message" name="message" maxlength="4000" required placeholder="Tell us what you sell, how your routes work, and anything you’d like to know."></textarea></div>
+            <div class="hp" aria-hidden="true"><label for="f-website">Leave this empty</label><input id="f-website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
+          </div>
+          <p class="fine">We use your details only to reply to you. See our <a href="/privacy">privacy policy</a>.</p>
+          <button class="btn btn-primary btn-lg" type="submit">Send message</button>
+          <p class="form-msg" id="form-msg" role="alert"></p>
+        </form>
+        <div class="form-done" id="form-done" hidden tabindex="-1">
+          <div class="icon">{{icon:check}}</div>
+          <h3>Thank you, your message has been sent</h3>
+          <p>We’ll reply by email from <b>{{email}}</b>. Please check your spam folder if you don’t see our reply.</p>
+          <p><a href="/demo">Watch the demo</a> while you wait.</p>
+        </div>
+      </div>
+      <aside class="contact-side">
+        <div class="card">
+          <div class="icon">{{icon:mail}}</div>
+          <h3>Prefer email?</h3>
+          <p class="mail-big"><a href="mailto:{{email}}">{{email}}</a></p>
+          <p>Write to us directly. Include your company name and number of reps for the fastest answer.</p>
+        </div>
+        <div class="card">
+          <h3>How we work</h3>
+          <ul class="ticks">
+            <li><b>In writing only.</b> We answer every question by email, so you have a record of what was agreed. We don’t take phone calls or hold meetings.</li>
+            <li><b>Your price in writing.</b> Your exact price, with any team discount, is confirmed before you pay.</li>
+            <li><b>No payment here.</b> Payment details come only on your official invoice. See <a href="/how-to-pay">How to pay</a>.</li>
+          </ul>
+        </div>
+        <p class="fine">M. D. Williams Enterprise · Gutters, St. Catherine, Jamaica</p>
+      </aside>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="114" fill="#17633f"/>
+<g transform="translate(256 262) scale(1) translate(-256 -254)"><path d="M158 104 H354 Q376 104 376 126 V404 L361 386 L346 404 L331 386 L316 404 L301 386 L286 404 L271 386 L256 404 L241 386 L226 404 L211 386 L196 404 L181 386 L166 404 L151 386 L136 404 V126 Q136 104 158 104 Z" fill="#f3efe4"/>
+<rect x="176" y="150" width="160" height="22" rx="11" fill="#17633f"/>
+<rect x="176" y="206" width="112" height="14" rx="7" fill="#24493a" opacity=".55"/><rect x="304" y="206" width="32" height="14" rx="7" fill="#24493a" opacity=".55"/>
+<rect x="176" y="242" width="96" height="14" rx="7" fill="#24493a" opacity=".55"/><rect x="296" y="242" width="40" height="14" rx="7" fill="#24493a" opacity=".55"/>
+<rect x="176" y="278" width="124" height="14" rx="7" fill="#24493a" opacity=".55"/><rect x="316" y="278" width="20" height="14" rx="7" fill="#24493a" opacity=".55"/>
+<rect x="176" y="318" width="160" height="4" rx="2" fill="#24493a" opacity=".35"/>
+<rect x="176" y="338" width="64" height="18" rx="9" fill="#24493a"/><rect x="264" y="336" width="72" height="22" rx="11" fill="#17633f"/></g>
+</svg>
