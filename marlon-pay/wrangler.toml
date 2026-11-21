@@ -1,0 +1,20 @@
+# Marlon Pay: the store's signed cash-payout book. A separate app from Marlon (marlon-app).
+# The Worker serves the app (packed in by scripts/build.cjs) and its API. One Durable Object (SQLite), PayHub, keeps
+# every store's data, each store private to itself. The maker's console (in marlon-app) reaches it only through the
+# PayAdmin entrypoint (a Worker-to-Worker binding, not reachable from the internet).
+name = "marlon-pay"
+main = "worker/index.js"
+compatibility_date = "2026-10-01"
+account_id = "30f2c89d75621ddef8b783383296410f"
+workers_dev = true
+preview_urls = false
+
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "PayHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PayHub"]
+
+# Secrets (set with wrangler secret put, never in this file): ENCRYPTION_KEY (32 bytes, base64) encrypts signatures.

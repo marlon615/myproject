@@ -1,0 +1,13 @@
+{
+  "name": "marlon-pay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Marlon Pay: the store's signed cash-payout book (the store-side partner to Marlon).",
+  "scripts": {
+    "build": "node scripts/build.cjs",
+    "dev": "npm run build && ../chief-of-staff/node_modules/.bin/wrangler dev --port 8850",
+    "deploy": "npm run build && ../chief-of-staff/node_modules/.bin/wrangler deploy",
+    "test": "node tests/pay.test.cjs",
+    "icons": "node scripts/make-icons.cjs"
+  }
+}

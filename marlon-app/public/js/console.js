@@ -594,9 +594,73 @@ function buyersSection(data, refresh) {
       el("h2", { id: "con-h-buyers" }, "Buyers"),
       data.buyers.length ? data.buyers.map((b) => buyerCard(b, () => refresh())) : el("p", { class: "con-note" }, "No buyers yet. Create a link above for each person who buys Marlon.")),
     tiersCard(data.teamTiers),
+    paySection(),
     contactForm(data.contact, () => refresh()),
     el("p", { class: "con-note con-terms" }, el("a", { href: "/terms", target: "_blank", rel: "noopener" }, "Marlon terms and conditions (with the Marlon Pro section)")),
   ];
+}
+
+// ── Marlon Pay (the store-side app): every store, paid or unpaid, counts and problems — never names or amounts ──
+const PAY_PROBLEMS = {
+  "other-device": "A second device tried to open a link that's already in use",
+  "staff-off": "A switched-off staff link tried to work",
+  "store-off": "Someone tried to use the store while it's switched off",
+  "changed-record": "A device sent a changed copy of a signed record (refused, the original kept)",
+};
+function paySection() {
+  const box = el("section", { class: "con-pay", id: "con-pay", "aria-labelledby": "con-h-pay" }, el("h2", { id: "con-h-pay" }, "Marlon Pay stores"), el("p", { class: "con-note" }, "Loading…"));
+  const name = el("input", { type: "text", id: "pay-name", maxlength: "80", autocomplete: "off", autocapitalize: "words", placeholder: "e.g. Hill Top Grocery" });
+  const places = el("input", { type: "number", id: "pay-places", min: "0", max: "50", step: "1", inputmode: "numeric", value: "2" });
+  const msg = el("p", { class: "con-error", role: "alert", hidden: true });
+  let created = null;
+  async function draw() {
+    const r = await api("/api/console/pay", { auth: true }).catch(() => ({ ok: false, data: {} }));
+    const d = r.data || {};
+    if (!r.ok || !d.connected) {
+      box.replaceChildren(el("h2", { id: "con-h-pay" }, "Marlon Pay stores"), el("p", { class: "con-note", id: "pay-off" }, d.error || "Marlon Pay isn't connected yet."));
+      return;
+    }
+    const card = (st) => {
+      const toggle = (label, on, change) => el("button", { type: "button", class: `btn btn-small ${on ? "is-on" : ""}`, "aria-pressed": String(on), onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        const x = await api("/api/console/pay/set", { method: "POST", auth: true, body: { id: st.id, ...change } }).catch(() => null);
+        if (!x?.ok) { msg.textContent = x?.data?.error || "That didn't work."; msg.hidden = false; }
+        draw();
+      } }, label);
+      return el("article", { class: `card con-card con-pay-store${st.off ? " is-off" : ""}`, "data-id": st.id },
+        el("div", { class: "con-buyer-head" }, el("h3", {}, st.name),
+          el("span", { class: `con-badge ${st.paid ? "con-badge-pro" : "con-badge-off"} pay-paid-badge` }, st.paid ? "Paid" : "Unpaid"), st.off ? el("span", { class: "con-badge con-badge-off" }, "Switched off") : null),
+        el("p", { class: "con-note" }, `Since ${dayText(st.created.slice(0, 10), false)} · ${st.devices} device${st.devices === 1 ? "" : "s"} in use · ${st.staffNamed} of ${st.places} staff place${st.places === 1 ? "" : "s"} named${st.lastActive ? ` · last active ${dayText(st.lastActive.slice(0, 10), false)}` : ""}`),
+        el("dl", { class: "con-pay-counts" },
+          el("dt", {}, "Suppliers"), el("dd", {}, String(st.suppliers)),
+          el("dt", {}, "Payments signed"), el("dd", {}, `${st.payouts} in all · ${st.payouts30} in 30 days`),
+          el("dt", {}, "Problems"), el("dd", { class: st.problems30 ? "con-pay-has-problems" : "" }, st.problems30 ? `${st.problems30} in 30 days` : "None")),
+        st.problems.length ? el("details", { class: "con-pay-problems" }, el("summary", {}, "Latest problems"),
+          el("ul", {}, st.problems.map((p) => el("li", {}, el("strong", {}, `${dayText(p.at.slice(0, 10), false)}: `), PAY_PROBLEMS[p.kind] || p.kind, p.detail ? ` (${p.detail})` : "")))) : null,
+        el("details", { class: "con-buyer-link" }, el("summary", {}, "Owner link"), linkBox(st.ownerLink)),
+        el("div", { class: "con-actions" },
+          toggle(st.paid ? "Mark unpaid" : "Mark paid", st.paid, { paid: !st.paid }),
+          toggle(st.off ? "Switch store on" : "Switch store off", st.off, { off: !st.off })));
+    };
+    box.replaceChildren(...[ // (flattened and without empty values: replaceChildren would print them)
+      el("h2", { id: "con-h-pay" }, "Marlon Pay stores"),
+      el("p", { class: "con-note" }, "Stores using Marlon Pay, the signed cash-payout book. You see counts and problems only: each store's suppliers, amounts and signatures stay private to that store."),
+      el("form", { class: "card con-card con-pay-new", onsubmit: async (e) => {
+        e.preventDefault(); msg.hidden = true;
+        const x = await api("/api/console/pay", { method: "POST", auth: true, body: { name: name.value, places: Number(places.value) } }).catch(() => null);
+        if (!x?.ok) { msg.textContent = x?.data?.error || "That didn't work."; msg.hidden = false; return; }
+        created = x.data.store; name.value = ""; draw();
+      } },
+        el("h3", {}, "New Marlon Pay store"),
+        el("label", { class: "con-field" }, el("span", {}, "Store name"), name),
+        el("label", { class: "con-field" }, el("span", {}, "Staff places (links for staff, besides the owner)"), places),
+        msg, el("button", { type: "submit", class: "btn btn-primary", id: "pay-create" }, "Create store and owner link")),
+      created ? el("div", { class: "card con-card con-created", id: "pay-created" }, el("h3", {}, `Owner link for ${created.name}`),
+        el("p", { class: "con-note" }, "Send this to the store owner. It works on the first device that opens it. The owner adds staff and sends their links from Marlon Pay."), linkBox(created.ownerLink)) : null,
+      d.stores.length ? d.stores.map(card) : el("p", { class: "con-note" }, "No Marlon Pay stores yet.")].flat().filter(Boolean));
+  }
+  draw();
+  return box;
 }
 
 let lastStats = null, lastBuyers = null;

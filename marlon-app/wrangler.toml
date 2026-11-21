@@ -20,3 +20,13 @@ new_sqlite_classes = ["Stats"]
 # /console before you did). The counts are kept.
 [vars]
 CONSOLE_GENERATION = "1"
+# Marlon Pay (the store-side app, its own Worker "marlon-pay"): where its links point, for the console and the
+# "Record cash payment in Marlon Pay" button on the customer invoice page.
+PAY_ORIGIN = "https://marlon-pay.marlon615.workers.dev"
+
+# The maker's console reaches Marlon Pay through its PayAdmin entrypoint (Worker to Worker; not on the internet).
+# Deploy marlon-pay before this Worker so the binding can connect.
+[[services]]
+binding = "PAY"
+service = "marlon-pay"
+entrypoint = "PayAdmin"

@@ -58,3 +58,7 @@ html, body { background: #ebe8df; color: #1a1c19; color-scheme: light; }
 .credit-lines { display: grid; gap: 4px; margin: 10px 0 0; padding-top: 10px; border-top: 1px dashed #cfc8b8; }
 .credit-line { display: flex; justify-content: space-between; gap: 12px; margin: 0; font-size: 15px; color: #454a43; }
 .credit-line:last-child { color: #17633f; font-weight: 700; }
+/* Marlon Pay: a store paying in cash records it there (supplier, invoice number and total filled in) */
+.view-pay { text-align: center; margin: 14px 0 0; }
+.view-pay .btn { color: #17633f; font-weight: 700; }
+@media print { .view-pay { display: none; } }

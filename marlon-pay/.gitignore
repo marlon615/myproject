@@ -1,0 +1,4 @@
+worker/assets.generated.js
+tests/output/
+.wrangler/
+tests/pay.log

@@ -40,6 +40,10 @@
  *   POST /api/team/sync          also takes { orders: [...] } (Pro only): shelf orders; the orderer's name and signature
  *                                are kept encrypted (AES-256-GCM, ENCRYPTION_KEY) → { storedOrders }
  *   POST /api/boss/order-signature (Bearer) { id } → { signer, signature, signedAt }  one order's signature, on demand
+ *   Marlon Pay (the store-side app, Worker "marlon-pay", reached through the PAY service binding):
+ *   GET  /api/console/pay        (Bearer) → { connected, stores: [{ …counts and problems, ownerLink }] }   never names or amounts
+ *   POST /api/console/pay        (Bearer) { name, places } → { store }   a new store and its owner link
+ *   POST /api/console/pay/set    (Bearer) { id, paid?, off?, places? } → { store }
  *   Marlon Pro · My Products (each company's own product list, private to that company; shelf photo matches only these):
  *   POST /api/pro/products        { key, device } or boss Bearer → { pro, canEdit, version, products: [{ id, name, size, price,
  *                                unit, photos: [{ id, thumb }] }] }   (a solo phone and the boss can edit; reps only read)
@@ -1308,6 +1312,19 @@ async function api(request, env, path) {
   if (path.startsWith("/api/console/") && !["/api/console/state", "/api/console/claim", "/api/console/login", "/api/console/logout"].includes(path)
     && !(await stub.check(token))) return json({ error: "Please enter your passcode again." }, 401);
   if (path === "/api/console/buyers" && request.method === "GET") return json(await stub.buyers());
+  if (path === "/api/console/pay" || path === "/api/console/pay/set") {
+    const origin = String(env.PAY_ORIGIN || "https://marlon-pay.marlon615.workers.dev").replace(/\/$/, "");
+    const withLink = (s) => ({ ...s, ownerLink: `${origin}/?k=${s.ownerKey}`, ownerKey: undefined });
+    if (!env.PAY) return json({ connected: false, error: "Marlon Pay isn't connected yet (deploy marlon-pay, then this app)." });
+    try {
+      if (request.method === "GET") return json({ connected: true, payOrigin: origin, stores: (await env.PAY.stores()).stores.map(withLink) });
+      let body;
+      try { body = await readJson(request, 2000); } catch { return json({ error: "bad request" }, 400); }
+      const r = path === "/api/console/pay" ? await env.PAY.createStore(body.name, body.places) : await env.PAY.setStore(body.id, { paid: body.paid, off: body.off, places: body.places });
+      if (r.error) return json({ error: r.error === "unknown" ? "That store isn't there." : r.error }, 400);
+      return json({ connected: true, store: withLink(r.store) });
+    } catch { return json({ connected: false, error: "Marlon Pay couldn't be reached. Try again in a moment." }); }
+  }
   if (path === "/api/console/buyers" && request.method === "POST") {
     let body;
     try { body = await readJson(request, 2000); } catch { return json({ error: "bad request" }, 400); }

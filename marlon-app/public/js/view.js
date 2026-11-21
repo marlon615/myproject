@@ -51,7 +51,20 @@ function render() {
       h("footer", { class: "sheet-foot" }, `Shared by QR code${inv.seller ? ` by ${inv.seller}` : ""}. The details come from the code itself and are never sent to a server.`, h("br"), h("span", { class: "made-with" }, "Made with Marlon"))),
     h("div", { class: "view-actions" },
       h("button", { type: "button", class: "btn btn-primary", onclick: (e) => savePdf(e.currentTarget, inv) }, icon("download"), "Save PDF"),
-      h("button", { type: "button", class: "btn", onclick: () => window.print() }, icon("printer"), "Print")));
+      h("button", { type: "button", class: "btn", onclick: () => window.print() }, icon("printer"), "Print")),
+    payLink(inv));
+}
+
+/**
+ * Marlon Pay (the store's cash-payout book): a store paying this invoice in cash opens Marlon Pay with the supplier,
+ * invoice number and total filled in; the supplier just signs there. The details travel after "#" (never to a server).
+ */
+const PAY_ORIGIN = (() => { try { return localStorage.getItem("marlon.payOrigin") || "https://marlon-pay.marlon615.workers.dev"; } catch { return "https://marlon-pay.marlon615.workers.dev"; } })();
+function payLink(inv) {
+  if (!inv.seller || !inv.number || !(inv.total > 0)) return null;
+  const q = new URLSearchParams({ s: inv.seller, n: invoiceNo(inv.number), t: inv.total.toFixed(2), d: inv.date || "" });
+  if (inv.sellerPhone) q.set("p", inv.sellerPhone);
+  return h("p", { class: "view-pay" }, h("a", { class: "btn btn-ghost", id: "pay-link", href: `${PAY_ORIGIN}/#/marlon?${q}` }, "Paying cash? Record it in Marlon Pay ›"));
 }
 
 const ICONS = {
