@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Draxly demo</title>
+  <meta name="description" content="Try Draxly on your own sales: upload 21 months that end at least 4 months ago, and see how close Draxly gets to the 3 finished months after them. No sign-up.">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/site-chrome.css">
+  <script src="/site.js" defer></script>
+  <script type="module" src="/demo.js"></script>
+</head>
+<body>
+<!--site:header-->
+<a class="skip" href="#main">Skip to content</a>
+<header class="sitenav" data-site-header>
+  <div class="nav-in">
+    <a class="logo" href="/" aria-label="Draxly home"><img src="/icon.svg" alt="" width="30" height="30"><span>Draxly</span></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu"><span class="sr">Menu</span><span class="bars" aria-hidden="true"></span></button>
+    <nav class="nav-menu" id="nav-menu" aria-label="Main">
+      <a href="/how-it-works" data-nav="how-it-works">How it works</a>
+      <a href="/integrations" data-nav="integrations">Integrations</a>
+      <a href="/security" data-nav="security">Security</a>
+      <a href="/pricing" data-nav="pricing">Pricing</a>
+      <a href="/faq" data-nav="faq">FAQ</a>
+      <a href="/about" data-nav="about">About</a>
+      <a href="/contact" data-nav="contact">Contact</a>
+      <span class="nav-cta">
+        <a class="btn btn-ghost" href="/app">Sign in</a>
+        <a class="btn btn-primary" href="/free-demo">Free demo</a>
+      </span>
+    </nav>
+  </div>
+</header>
+<!--/site:header-->
+  <main>
+    <section id="d-start">
+      <h1>Test Draxly on your own sales</h1>
+      <p class="lead">No sign-up. Upload 21 months of sales, keep the 3 finished months after them to yourself, and see how close Draxly's prediction gets to the real numbers you kept.</p>
+      <div class="card rule" id="d-rule">
+        <h2>Today's cut-off</h2>
+        <p>Your file must end in <b class="r-latest">the cut-off month</b> or earlier. Draxly will predict <b class="r-f1">the 3 months</b> to <b class="r-f3">after it</b>, which have already finished, so you can compare them with your real sales.</p>
+        <p class="hint">To keep the test fair, the demo only predicts months that are over. It never forecasts the future; that's what the full product is for. The cut-off moves forward by one month at the start of each month.</p>
+      </div>
+      <div class="card">
+        <h2>How it works</h2>
+        <ol class="steps">
+          <li><b>Export 24 months of sales</b>, <span class="r-first">21 months before the cut-off</span> to <span class="r-f3">your last full month</span>, as a spreadsheet (CSV or Excel): one row per sale, day, week or month, with a <b>date</b>, a <b>product</b> and the <b>sales amount</b> (or quantity).</li>
+          <li><b>Keep the last 3 months back</b> (<span class="r-f1">the 3 months</span> to <span class="r-f3">after the cut-off</span>). Remove them from the file and put them aside; don't upload them.</li>
+          <li><b>Upload the 21 months</b>, <span class="r-first">21 months before the cut-off</span> to <span class="r-latest">the cut-off month</span>, below. Check what Draxly found, then press “Predict the 3 months after my file”.</li>
+          <li><b>Compare.</b> Draxly predicts <span class="r-f1">the 3 months</span> to <span class="r-f3">after the cut-off</span>, the 3 months you kept, for every product and in total. Download the CSV and put your real numbers next to it.</li>
+        </ol>
+        <p class="hint"><b>Private:</b> your file is read here in your browser. Only monthly totals are sent to Draxly, to be forecast and sent straight back — they're never stored, and no one else can see them. When you close this page or press “Start over”, they're gone.</p>
+      </div>
+      <div class="card">
+        <h2>Your sales file (21 months, ending in <span class="r-latest">the cut-off month</span> or earlier)</h2>
+        <label class="file-btn primary">Choose file<input type="file" id="d-file" accept=".csv,.txt,.tsv,.xlsx,.xls" hidden></label>
+        <p class="error" id="d-file-error" role="alert" hidden></p>
+        <div id="d-map" hidden>
+          <p class="hint" id="d-map-file"></p>
+          <div class="grid3">
+            <label>Date column<select id="d-date"></select></label>
+            <label>Product column<select id="d-product"></select></label>
+            <label>Sales column<select id="d-value"></select></label>
+          </div>
+          <div class="grid3">
+            <label>The sales column is<select id="d-kind"><option value="money">Money ($)</option><option value="units">Quantity (units)</option></select></label>
+            <label id="d-order-row" hidden>Dates are written<select id="d-order"><option value="">— choose —</option><option value="dmy">Day/Month/Year (31/01/2025)</option><option value="mdy">Month/Day/Year (01/31/2025)</option></select></label>
+          </div>
+          <h3>What Draxly found</h3>
+          <div class="preview" id="d-preview" aria-live="polite"></div>
+          <p class="error" id="d-map-error" role="alert" hidden></p>
+          <button type="button" class="primary" id="d-run" disabled>Predict the 3 months after my file</button>
+          <div class="progress" id="d-progress" hidden><div class="bar"><span id="d-bar"></span></div><p class="hint" id="d-progress-text"></p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="d-result" hidden>
+      <div class="row-between"><h1 id="d-r-title">Draxly's prediction</h1><button type="button" class="secondary small" id="d-restart">Start over</button></div>
+      <p class="lead" id="d-r-lead"></p>
+      <div class="card">
+        <ul class="summary" id="d-summary"></ul>
+        <label class="inline">Show<select id="d-pick"></select></label>
+        <div id="d-chart"></div>
+      </div>
+      <div class="card">
+        <div class="row-between"><h2>By product</h2><button type="button" class="primary small" id="d-csv">Download all products (CSV)</button></div>
+        <label class="inline">Find a product<input id="d-search" type="search" placeholder="Type a product name"></label>
+        <p class="hint" id="d-table-note"></p>
+        <div class="table-wrap"><table id="d-table"></table></div>
+      </div>
+      <div class="card" id="d-interest">
+        <h2>Want Draxly for your company?</h2>
+        <p class="hint">Leave your details and we'll be in touch. (Your sales numbers aren't included.)</p>
+        <form id="d-form" novalidate>
+          <div class="grid3">
+            <label>Your name<input id="d-name" autocomplete="name" maxlength="100"></label>
+            <label>Work email<input id="d-email" type="email" autocomplete="email" maxlength="200"></label>
+            <label>Company<input id="d-company" autocomplete="organization" maxlength="150"></label>
+          </div>
+          <label>Anything else? (optional)<textarea id="d-message" maxlength="2000" rows="2"></textarea></label>
+          <label class="hp" aria-hidden="true">Website<input id="d-website" tabindex="-1" autocomplete="off"></label>
+          <p class="error" id="d-form-error" role="alert" hidden></p>
+          <button type="submit" class="secondary" id="d-send">Request access</button>
+        </form>
+        <p class="ok" id="d-form-ok" role="status" hidden></p>
+      </div>
+    </section>
+  </main>
+<!--site:footer-->
+<footer class="foot-site" data-site-footer>
+  <div class="foot-in">
+    <div class="foot-brand">
+      <a class="logo" href="/"><img src="/icon.svg" alt="" width="26" height="26"><span>Draxly</span></a>
+      <p>Know what to stock before you need it.</p>
+      <p>Sales forecasting for US food and drink distributors and wholesalers.</p>
+      <p><a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+    </div>
+    <div class="foot-col">
+      <h2>Product</h2>
+      <a href="/how-it-works">How it works</a>
+      <a href="/integrations">Integrations</a>
+      <a href="/pricing">Pricing and contract</a>
+      <a href="/free-demo">Free test demo</a>
+      <a href="/docs">API guide</a>
+    </div>
+    <div class="foot-col">
+      <h2>Company</h2>
+      <a href="/about">About</a>
+      <a href="/security">Security and privacy</a>
+      <a href="/faq">FAQ</a>
+      <a href="/contact">Contact us</a>
+      <a href="/app">Customer sign-in</a>
+    </div>
+    <div class="foot-col">
+      <h2>Legal</h2>
+      <a href="/terms">Terms of Service</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/dpa">Data Processing Addendum</a>
+      <a href="/legal">All legal documents</a>
+    </div>
+  </div>
+  <div class="foot-base">
+    <p>© 2026 M. D. Williams Enterprise, trading as Draxly. All rights reserved.</p>
+    <p>Contact us: <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+  </div>
+</footer>
+<!--/site:footer-->
+</body>
+</html>

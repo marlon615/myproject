@@ -1,0 +1,93 @@
+<!--
+title: How it works · Draxly
+description: How Draxly turns your sales history into 3-month forecasts by product, warehouse and region, tests its own accuracy, and suggests what to reorder.
+path: /how-it-works
+-->
+<section class="page-head">
+  <div class="wrap">
+    <span class="eyebrow">How it works</span>
+    <h1>From your sales history to a 3-month buying plan</h1>
+    <p class="lead">Draxly learns from what your customers actually bought, checks itself against your own recent months, and gives your buyers forecasts and reorder suggestions they can trust.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="steps long">
+      <div class="step">
+        <h3>1. Bring in your sales</h3>
+        <p>Connect your system once and Draxly pulls sales every night: Oracle NetSuite, SAP S/4HANA, Microsoft Dynamics 365 Business Central, QuickBooks Online, Shopify or Square. Any other system can send data through the API, drop a CSV over HTTPS, or publish a nightly file at a web address. You can also upload a CSV or Excel export at any time.</p>
+        <p class="fine">When you upload a spreadsheet, it's read in your browser. Only monthly totals are sent to Draxly.</p>
+      </div>
+      <div class="step">
+        <h3>2. Draxly tests itself on your numbers</h3>
+        <p>Before you rely on anything, Draxly hides the last 3 months of your data, predicts them from the months before, and compares its prediction with what really happened. You see an accuracy score for your total, for every product, and for every store, warehouse and region.</p>
+      </div>
+      <div class="step">
+        <h3>3. A forecast for every product and location</h3>
+        <p>Draxly forecasts the next 3 months for every product at every store or warehouse. These add up by region and in total, so every view agrees with every other one.</p>
+      </div>
+      <div class="step">
+        <h3>4. Reorder suggestions and alerts</h3>
+        <p>Add stock on hand, stock on order, lead times, case packs and minimum orders, from a connection, the API or a file. Draxly then works out days of cover, safety stock and a reorder point for each item, and suggests what to order and how much. Low-stock alerts go out by email.</p>
+      </div>
+      <div class="step">
+        <h3>5. Every night, and every week</h3>
+        <p>With a connection, new sales arrive every night at about 2 a.m. in your time zone, and the accuracy test and forecasts refresh on their own. Team members can also choose to get a weekly forecast report by email.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band alt">
+  <div class="wrap split">
+    <div>
+      <span class="eyebrow">The forecasting method</span>
+      <h2>The best method for each product, chosen on your own data</h2>
+      <p>Products don't all behave the same. A steady staple, a seasonal drink and a fast-growing new line need different treatment. Draxly tries several proven forecasting methods on each product and keeps the one that best predicted that product's own recent months:</p>
+      <ul class="ticks">
+        <li>Recent average, for steady products</li>
+        <li>Trend, for products that are growing or shrinking</li>
+        <li>Smoothing with a damped trend, so a recent jump isn't projected forever</li>
+        <li>Seasonal patterns, using last year's same months, once there are 2 or more years of history</li>
+      </ul>
+      <p>Forecasts never go below zero, and the total is always the sum of its parts.</p>
+    </div>
+    <div class="panel">
+      <h3>What you need</h3>
+      <dl class="kv">
+        <dt>Data</dt><dd>Sales by date and product; store, warehouse and region if you have them</dd>
+        <dt>Measures</dt><dd>Sales dollars, units, or both</dd>
+        <dt>History</dt><dd>At least 6 months of sales to forecast and 9 for the accuracy test; 12 to 24 months works best. (The free demo: 21 months recommended (at least 6), ending at least 4 months before the current month.)</dd>
+        <dt>Size</dt><dd>Up to 50,000 product and location combinations per data set</dd>
+        <dt>Formats</dt><dd>Direct connection, API, HTTPS file drop, CSV or Excel</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">What your team sees</span>
+      <h2>Clear views for buyers, managers and leadership</h2>
+    </div>
+    <div class="grid g3">
+      <div class="card"><h3>Charts and tables</h3><p>Total, product, location and region views, each with history, the 3-month forecast, and the change against the last 3 months.</p></div>
+      <div class="card"><h3>Plain-English summary</h3><p>A short written summary of what's expected to rise and fall, so the main points are clear at a glance.</p></div>
+      <div class="card"><h3>Downloads</h3><p>Forecasts and reorder suggestions download as CSV for your ERP, spreadsheets or purchasing process.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="cta-band">
+      <div>
+        <h2>See it on your own sales</h2>
+        <p>The free test demo needs no sign-up and stores nothing.</p>
+      </div>
+      <div class="cta-row"><a class="btn btn-light btn-lg" href="/free-demo">Start the free test demo</a></div>
+    </div>
+  </div>
+</section>

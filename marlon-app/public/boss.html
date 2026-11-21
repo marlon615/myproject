@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#000000">
+  <title>Boss dashboard · Marlon</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/base.css">
+  <style>
+    body { background: var(--bg); }
+    .boss-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: calc(10px + var(--safe-top)) 16px 10px; background: #000; color: #f3efe4; }
+    .boss-bar strong { font-family: var(--font-display); font-size: 20px; }
+    .boss-bar span { color: #6cc495; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+    .boss { max-width: 760px; margin: 0 auto; padding: 18px 16px calc(40px + var(--safe-bottom)); display: grid; gap: 14px; }
+    .boss h1 { margin: 0; font-family: var(--font-display); font-size: clamp(24px, 7vw, 32px); line-height: 1.15; }
+    .boss h2 { margin: 0 0 8px; font-size: 1.05rem; }
+    .boss-lead, .boss-note { margin: 0; color: var(--ink-2); }
+    .boss-note { font-size: .88rem; color: var(--muted); }
+    .boss-card { padding: 16px; }
+    .boss-gate { display: grid; gap: 12px; max-width: 420px; }
+    .boss-gate label { display: grid; gap: 6px; font-size: .85rem; font-weight: 650; color: var(--ink-2); }
+    .boss-error { margin: 0; color: var(--danger); font-weight: 650; }
+    .boss-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .boss-tile { padding: 12px; min-width: 0; }
+    .boss-tile p { margin: 0; }
+    .boss-tile-label { font-size: .8rem; font-weight: 650; color: var(--ink-2); }
+    .boss-tile-value { font-family: var(--font-display); font-size: clamp(17px, 5vw, 24px); font-weight: 700; margin-top: 2px !important; overflow-wrap: anywhere; }
+    .boss-tile-sub { font-size: .78rem; color: var(--muted); }
+    .boss-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .boss-table th, .boss-table td { padding: 7px 6px; border-bottom: 1px solid var(--line); text-align: right; }
+    .boss-table th:first-child, .boss-table td:first-child { text-align: left; }
+    .boss-table tfoot td { font-weight: 800; border-top: 2px solid var(--line-strong); }
+    .boss-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+    .boss-filters select { min-height: 42px; }
+    .boss-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .boss-inv { padding: 14px; display: grid; gap: 6px; }
+    .boss-inv-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+    .boss-inv-head strong { font-size: 1.02rem; }
+    .boss-inv-meta { margin: 0; color: var(--ink-2); font-size: .88rem; }
+    .boss-items { margin: 0; padding: 0; list-style: none; font-size: .9rem; color: var(--ink-2); display: grid; gap: 2px; }
+    .boss-items li { display: flex; justify-content: space-between; gap: 10px; }
+    .boss-badge { justify-self: start; font-size: 12px; font-weight: 800; letter-spacing: .04em; padding: 3px 9px; border-radius: 999px; }
+    .boss-badge.is-paid { background: #e3f3e9; color: #17633f; }
+    .boss-badge.is-unpaid { background: var(--danger-bg, #fbe9e7); color: var(--danger); }
+    .boss-pay { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .boss-mark-paid { min-height: 40px; padding: 0 14px; }
+    .boss-rep-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .boss-rep-head h2 { margin: 0; }
+    .boss-reps { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+    .boss-rep { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper-2); }
+    .boss-rep > div:first-child { display: grid; gap: 2px; min-width: 0; }
+    .boss-rep-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .boss-rep-actions .btn { min-height: 38px; padding: 0 12px; font-size: .88rem; }
+    .boss-rep-off { color: var(--danger); }
+    .boss-new-link { display: grid; gap: 8px; margin-top: 10px; padding: 12px; border-radius: var(--radius-sm); background: #e3f3e9; }
+    .boss-new-link p { margin: 0; }
+    .boss-link-input { font-size: 14px; }
+    .boss-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .num { font-variant-numeric: tabular-nums; }
+    /* Marlon Pro */
+    .boss-pro-tag { display: inline-block; vertical-align: middle; margin-left: 10px; font-family: var(--font); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; padding: 4px 9px; border-radius: 999px; background: #0f1411; color: #9be3b9; }
+    .boss-pro-card { display: grid; gap: 10px; }
+    .boss-pro-card h2 { margin: 0; }
+    .boss-rep-head select { min-height: 40px; }
+    .boss-quarters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .boss-q { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper-2); min-width: 0; }
+    .boss-q.is-year { grid-column: 1 / -1; background: #eef7f1; border-color: #2f7a52; }
+    .boss-q-head { display: flex; justify-content: space-between; gap: 6px; font-size: .82rem; color: var(--ink-2); }
+    .boss-q-head strong { color: var(--ink); }
+    .boss-q-net { margin: 6px 0 0; font-family: var(--font-display); font-size: clamp(19px, 5.4vw, 26px); font-weight: 700; overflow-wrap: anywhere; }
+    .boss-q-label { margin: 0 0 6px; font-size: .74rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    .boss-q-rows { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin: 0; font-size: .84rem; }
+    .boss-q-rows dt { color: var(--ink-2); }
+    .boss-q-rows dd { margin: 0; text-align: right; font-weight: 650; }
+    .boss-acct-note { margin: 0; padding: 10px 12px; border-radius: var(--radius-sm); background: #fff7e8; border-left: 4px solid #c2702a; font-size: .9rem; font-weight: 600; color: #6b4310; }
+    .boss-h3 { margin: 6px 0 0; font-size: .8rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
+    .boss-sub { display: block; font-size: .76rem; color: var(--muted); font-weight: 500; }
+    .boss-credit { color: #17633f; font-weight: 700; }
+    .boss-cn-list summary { cursor: pointer; font-weight: 700; min-height: 40px; display: flex; align-items: center; }
+    @media (prefers-color-scheme: dark) { .boss-q.is-year { background: #16271d; } .boss-acct-note { background: #2c2213; color: #f0c48a; } .boss-credit { color: #6cc495; } }
+    @media print {
+      body[data-print] .boss-bar, body[data-print] .boss-no-print { display: none !important; }
+      body[data-print="boss-accountant"] .boss > *:not(#boss-accountant) { display: none !important; }
+      body[data-print] { background: #fff; color: #000; }
+      body[data-print] .boss-q { break-inside: avoid; }
+    }
+    /* Marlon Pro shelf orders */
+    .boss-ord .boss-items strong { white-space: nowrap; }
+    .boss-ord-pending { background: #fbeedd; color: #8a4a12; }
+    .boss-ord-delivered { background: #e3f3e9; color: #17633f; }
+    .boss-ord-cancelled { background: #ececec; color: #555; }
+    .boss-ord-show { justify-self: start; min-height: 40px; }
+    .boss-ord-sig { margin: 4px 0 0; padding: 8px; border-radius: 10px; background: #fff; border: 1px solid var(--line, #e2ddd1); }
+    .boss-ord-sig img { display: block; width: 100%; max-width: 320px; height: auto; margin: 0 auto; }
+    .boss-ord-sig figcaption { text-align: center; font-size: 13px; color: #555; }
+  </style>
+  <script type="module" src="/js/boss.js"></script>
+</head>
+<body>
+  <header class="boss-bar"><strong>Marlon</strong><span>Boss dashboard</span></header>
+  <main class="boss" id="boss">
+    <p class="boss-note">Loading…</p>
+  </main>
+</body>
+</html>

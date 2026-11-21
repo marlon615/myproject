@@ -1,0 +1,213 @@
+# Marlon: delivery invoices on any phone (the sellable copy)
+
+An offline delivery-invoice app that installs on a phone's home screen. This copy is the one to sell: it starts
+completely blank, and each business sets itself up on its own phone.
+
+- **Live:** https://marlon-app.marlon615.workers.dev
+- **Maker's console (only for you):** https://marlon-app.marlon615.workers.dev/console
+- **Customer QR links:** `…/v#…`. The whole invoice travels inside the link after `#`, which browsers never send to
+  a server.
+
+**Buyers get in only through a personal link** that the maker creates in the console (`/?k=<key>`). Each link
+works on up to the number of devices the buyer paid for: the first phones to open it take the places, and any other
+phone is blocked and told to contact the maker. Opening the plain address without a link is blocked too.
+
+- After the first activation (which needs the internet once), the app works offline.
+- When online, the app checks that its phone is still switched on.
+- On iPhone, the link asks to "Add to Home Screen" first. Safari and a home-screen app keep separate storage, so one
+  iPhone would otherwise use two places. The personal link travels with the home-screen app through the manifest's
+  `start_url`.
+
+A business's details, products, customers and invoices are kept only on its own phone (IndexedDB, per browser), so
+nobody ever sees anyone else's data. The owner's own app
+(`marlon-invoices.marlon615.workers.dev`, folder `../invoices`) is a separate app and is not touched by this copy.
+
+## What a business gets
+
+- **First open:** the "Marlon" splash, then a setup screen. The business types its company name, address and phone,
+  and adds its products, each with a usual price and how it's sold (each, per dozen, per bag, per lb). The company
+  name then shows at the top of the app.
+- **Invoices:** store, address, date and a tickable product list. Ticking a product fills in its usual price, which can
+  be changed on any invoice. Line totals and the grand total add themselves up. Then the customer signs with a finger.
+- **Voice entry:** say the store, the address and the products ("two dozen mango juice, fifty pounds sweet potato at
+  one twenty"). Products are matched by sound against the business's own list. A review screen shows what the phone
+  heard, highlights anything unclear and fills in usual prices where none was said.
+- **Signing:** "Thank you, <store>" is written while the customer signs. Then Done shows a checkmark with a gentle tap.
+- **QR code** for the customer (a link, or plain text for phones with no internet). Also PDF, picture, and Bluetooth
+  thermal printing (58 or 80 mm, ESC/POS). Receipts carry the business's name, address and phone at the top and end
+  with "Thank you, <store>".
+- **Owner dashboard,** locked with a PIN:
+  - totals, unpaid invoices with due dates, and history;
+  - the private payment page (Cash, 7 days, 14 days);
+  - "Your business in numbers";
+  - Settings: business details, products and prices, backup and restore, printer, anonymous counts on or off.
+- **Offline:** works with no internet after the first open. Updates install by themselves.
+
+## Send for signature (buyer in another town)
+
+For online sellers (Instagram, WhatsApp, TikTok) whose buyer can't sign on the seller's phone.
+
+- **Seller:** makes the invoice as usual (buyer name, items, quantity, unit price), then taps **Send for signature**.
+  The server saves a frozen copy and makes a secret link (`/s/<64 hex characters>`, 256-bit random), and the phone's
+  share sheet opens (WhatsApp, Instagram, email, text). Where there's no share sheet, the link is copied instead.
+- **Buyer:** opens the link on their own phone, no app and no login. They see the whole invoice, read-only, and can
+  only type their name, sign, and tap **Sign and confirm**. Then: a green checkmark, "Signed by … on [date, time]",
+  and **Download PDF copy**. Opening the link again only shows the signed copy.
+- **The lock is on the server:** the buyer's page is drawn from the frozen copy; signing accepts only a name, a
+  signature and the copy's fingerprint (SHA-256), and refuses anything else or any other version. Nothing can change a
+  sent copy; a signed one can't be sent again or cancelled.
+- **Back to the seller:** the app checks every 20 seconds while it's open (and whenever it's opened). A signed copy
+  replaces the invoice on the phone with exactly what was signed, with a message, and the invoice is locked for good
+  (even against changes saved straight into the phone's storage). While a link is waiting, changing the invoice first
+  cancels the link ("Cancel and edit").
+- **Alerts with Marlon closed (web push):** while a link is waiting, the seller can tap **🔔 Alert me when they sign**
+  (one tap, once per phone). When the buyer signs, the server sends an encrypted push (RFC 8291, signed with VAPID)
+  to that phone only: "Invoice 0007 signed · Signed by Jada Brown on [date, time]". Tapping it opens Marlon, which
+  fetches the signed copy. The server makes its own VAPID key pair on first use and keeps it encrypted with
+  `ENCRYPTION_KEY`, so there's nothing extra to set up. It only calls real push services (Google, Apple, Mozilla,
+  Microsoft) and forgets subscriptions they report as gone. iPhone: only for Marlon added to the Home Screen, iOS 16.4+.
+- **Statuses:** Sent, Opened, Signed (and Expired) on the invoice and in the dashboard history. Unsigned links expire
+  after 7 days; the seller can send a new one, and the old link then says a newer one was sent.
+- **Privacy:** only a hash of each link is stored; the invoice, the buyer's name and their signature are encrypted
+  (AES-256-GCM) with the `ENCRYPTION_KEY` secret (`wrangler secret put ENCRYPTION_KEY`; without it, sending is switched
+  off). A seller's phone can only see the links it sent itself. Limit: 200 links per phone per day.
+
+## Team version
+
+When creating a buyer in the console, choose **Solo** (one business, as above) or **Team** (a company with one boss
+and several sales reps). A team gets two links:
+- **Rep links** (`/?k=…`), one per rep. Each locks to the first phone that opens it, so passing it on does nothing.
+  "Copy all rep links + boss link" puts them in one numbered message. "Replace link" kills a rep's link (and
+  switches off the phone on it) and makes a new one. Teams made before personal rep links keep their shared rep
+  link. Reps use Marlon like a solo business and type their own name at setup. Every invoice is saved on the phone
+  first. Whenever there's internet, it's sent to the boss automatically (new and changed invoices within about
+  10 seconds). With no signal it waits and goes as soon as there's a connection. The phone also asks once a minute
+  whether the boss marked any of its invoices paid.
+- **Boss link** (`/boss?b=…`): the boss's private dashboard, on up to 2 boss phones (on iPhone the browser and the
+  Home Screen icon count separately). The first visit sets the boss's own passcode (5 wrong tries per 15 minutes).
+  It shows:
+  - every invoice from every rep, with the rep, customer, products, total, and paid or not paid;
+  - **Reps**: "Add rep" names one of the rep places the company paid for and shows its link to copy or share. It
+    can never go beyond the paid number. "Switch off" a rep (e.g. they left): their phone stops working, their
+    invoices stay under their name, and the same link is freed. "Give to new rep" hands it on with a new name, and
+    the old phone can never come back on it;
+  - **Mark paid**, one of the boss's only two changes: he ticks a rep's unpaid invoice as paid. It shows as paid
+    on the rep's phone too, and a rep's phone can never undo it. The boss can't write or edit invoices;
+  - totals for today, this week (Monday to Sunday) and this month, per rep and for the whole company;
+  - when offline, the last data it loaded.
+
+In the console a team shows its boss phones and each rep phone by name. Switch off one rep (that phone is blocked
+and can't send) or the whole company (the boss and every rep are blocked). Team invoices are kept on the server,
+in the same Durable Object; solo businesses still send nothing.
+
+## Marlon Pro
+
+Same app, no separate version: Pro features appear only for companies with **Pro switched on** in the maker's console.
+
+- **Price:** $25 per rep per month, minus the **automatic team discount** for that many reps, minus any **special
+  deal %** on top (applied to the price after the team discount). One table, `public/js/pricing.js`, is used by plain
+  Marlon and Marlon Pro (console, Worker and tests): 1–4 reps 0%, 5–9 10%, 10–24 15%, 25–49 20%, 50–99 25%, 100+ 30%.
+  **Switch Pro on** asks how many reps the company has; its card then shows the reps (editable), the team discount, the
+  special deal and the monthly total, which changes as soon as the reps change. A **Pro each month** tile adds up every
+  company with Pro on, and a **Team discounts** card shows the table. Marlon takes no payment itself: the maker
+  collects it, as with regular Marlon.
+- **How phones know:** `/api/activate` and `/api/check` answer `{ pro }`; the phone remembers it, so Pro works offline,
+  and a change reaches the phone the next time it's online. Pro-only server requests (shelf photo) are refused for
+  companies without Pro, and the boss dashboard shows its Pro sections only for Pro companies.
+- **Return → credit note** (rep's phone, offline too): store, each returned product with quantity and reason
+  (expired / damaged), the store signs, and a numbered credit note is created (CN-0001, CN-0002… per phone; the boss
+  sees which rep issued each). Share it as a PDF. Its amount comes off that store's **next invoice automatically**:
+  invoices dated on or after the credit note, oldest credit first, never more than the invoice (the rest carries over).
+  The invoice shows "Subtotal / Credit note CN-0001 −$X / Total" on screen, receipts, the PDF, the QR page (an optional
+  11th field in the link; invoices without a credit keep the old link) and Send-for-signature copies. A signed, paid or
+  sent-for-signature invoice keeps the credit it had; deleting an invoice gives its credit back. Credit notes go to the
+  boss with the team sync, and into backups.
+- **Shelf photo:** the rep photographs a shelf; Marlon shows which of the company's products are on it and how many.
+  The photo is shrunk on the phone (about 200 KB) and sent through `/api/pro/shelf` to Google's **Gemini API on the free
+  tier** (`GEMINI_API_KEY` secret on this Worker; no billing is set up). Names that aren't the company's products are
+  dropped. Offline, photos wait on the phone and are checked once online. Limit: 100 photos per company per day. If
+  Google's free daily limit is reached, the rep is told to try tomorrow; without a key, shelf photo says it isn't set up.
+  Cost: $0 within Google's free limit; Marlon never turns on paid use.
+- **My Products:** each company's own products (name, size, price, how it's sold, up to 3 camera photos), kept on the
+  server for that company only (`company_products`, `product_photos`; every request is checked against the company's
+  phone link + device or the boss's session). A solo business edits them in its dashboard → Pro (its own list is copied
+  in once, the first time); for a team the boss edits them in the boss dashboard and reps can only read (`catalog.js`
+  keeps each phone's list in step every 5 minutes / when online, with thumbnails for offline). While the company has
+  saved products, the phone uses exactly those (its own are `hiddenByCompany`, not deleted; names include the size).
+  Shelf photo matches ONLY these products (names, sizes and the first photo of each, up to 40, as references) and
+  shows "Unknown product" for anything else. The maker's console shows each company's product count.
+  Limits: 200 products, 3 photos each (512 px + small thumbnail, shrunk on the phone).
+- **Shelf Order:** after a shelf photo, **Make an order** opens the order form filled in from the shelf count. The rep sets a
+  target per product (or one for all; the last one is remembered) and Marlon orders `target − on shelf` (never below 0);
+  any amount can be changed, products added or left out. The store person types their name and signs; the order is saved
+  on the phone (IndexedDB store `orders`, DB version 3) with the store, name, signature, date and time, numbered
+  ORD-0001… per phone, status Pending / Delivered / Cancelled. **Orders** (third Pro button, with a pending count) lists
+  them; opening one shows who ordered with the signature (offline too), **Share PDF** sends it to a driver on another
+  phone, **Delivered: make the invoice** starts a new invoice with the same store, products, amounts and usual prices and
+  marks the order Delivered with that invoice number, **Cancel order** asks first. For a team, orders go to the boss with
+  the team sync (5 per request; Pro only): the server keeps the orderer's name and signature encrypted (AES-256-GCM,
+  `ENCRYPTION_KEY`), the boss dashboard's **Shelf orders** lists them with who ordered, and **Show signature** fetches
+  the signature on demand (`POST /api/boss/order-signature`). A solo business sees its orders in its dashboard's Pro tab.
+  Orders are in backups and are erased with "erase everything".
+- **Accountant summary** (boss dashboard; a solo business's own dashboard → Pro tab): by quarter (Jan–Mar …) and for the
+  year ending 31 December: invoices, gross sales, returns (credit notes), net sales, received, not yet paid. **Download
+  for accountant (CSV)** (summary + every invoice and credit-note line, with the rep) or **Print / Save as PDF**, with
+  the note that the accountant still checks it.
+- **Returns reports:** by store, by product (with expired / damaged) and, for teams, by rep, plus every credit note.
+- **Terms:** `/terms` has a Marlon Pro section (price, per-rep monthly billing, cancellation), linked from Settings,
+  the boss dashboard and the console.
+
+## The maker's console
+
+**Buyers:**
+- **New buyer link** asks for the buyer's name, the number of devices (1, 2, 3 or another number) and the amount
+  paid. It can't be created until all three are filled in.
+- The console then shows the link to send, with a Copy button.
+- Every buyer is listed with their name, devices in use, amount paid, date and each phone (type, since when, last
+  seen).
+- You can switch off one phone, which frees its place, or a whole buyer, and switch them back on.
+- **Money collected** adds up every buyer's amount.
+- "What blocked phones are told" sets the contact shown on blocked phones.
+
+**Limits:**
+- A switched-off phone is blocked the next time it opens with internet. A phone that stays offline keeps working
+  until then.
+- A new phone, or a browser whose data was cleared, counts as a new device. Switch off the old one to free its place.
+- The server never activates more phones than a link allows. Someone technical who copies the app's files could get
+  around the lock on their own phone.
+
+**Anonymous counts:**
+
+`/console` is for the maker only. The first visit sets its passcode: **open it and set the passcode before sending
+the link to anyone.** After that only that passcode opens it. Five wrong tries in 15 minutes and it waits.
+
+The console shows:
+- businesses set up;
+- businesses using it today, this week and this month;
+- invoices made;
+- voice entries;
+- receipts printed or shared;
+- two 30-day charts.
+
+These are counts only. Each phone sends a random id plus "what happened, which day" (`open`, `setup`, `invoice`,
+`voice`, `print`, `pdf`, `picture`). It never sends names, customers, products, prices or amounts. Nothing is sent
+before setup is finished, and a business can turn counting off in Settings. A business using two phones counts as
+two.
+
+**Forgot the passcode, or someone opened /console first?** Raise `CONSOLE_GENERATION` in `wrangler.toml` and deploy.
+The passcode can then be set again, and every count is kept.
+
+## Develop
+
+```bash
+node tests/serve.cjs 8790        # local server that mimics the live site, with a stand-in for /api (open http://localhost:8790)
+npm test                         # every tests/*.test.cjs (Playwright + Node; worker.test.cjs runs the real Worker locally)
+npm run deploy                   # stamps the service-worker version, packs public/ into the Worker, deploys
+```
+
+Hosting is a Cloudflare Worker (`worker/index.js`):
+- It serves the files from `public/`, which `scripts/build-worker.cjs` packs in at deploy time.
+- It applies `public/_headers`, maps `/` to index.html, `/v` to v.html and `/console` to console.html, and uses ETags.
+- One Durable Object (SQLite), `Stats`, keeps the console's counts and passcode.
+
+The tests use a made-up business (`tests/fixture.cjs`), because the app itself ships with no products.

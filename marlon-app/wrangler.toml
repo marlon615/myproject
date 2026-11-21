@@ -1,0 +1,22 @@
+# Marlon — the sellable copy of the delivery invoice app. The Worker hands out the app's files (packed in by
+# scripts/build-worker.cjs); every business's data stays on its own phone. One Durable Object keeps only the
+# maker's anonymous counts (for /console).
+name = "marlon-app"
+main = "worker/index.js"
+compatibility_date = "2026-10-01"
+account_id = "30f2c89d75621ddef8b783383296410f"
+workers_dev = true
+preview_urls = false
+
+[[durable_objects.bindings]]
+name = "STATS"
+class_name = "Stats"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Stats"]
+
+# Raise this number and redeploy to let the console passcode be set again (forgotten passcode, or someone opened
+# /console before you did). The counts are kept.
+[vars]
+CONSOLE_GENERATION = "1"

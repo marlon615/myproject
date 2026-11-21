@@ -1,0 +1,94 @@
+/* Opening animation: a dark screen, then "Marlon" flies at the screen from far away and slams into place full size
+   with one small shake, holds 1 s, then the app opens — under 1.5 s (timing in js/splash.js). The throw starts on the
+   very first frame. All in the page, so it works offline. */
+
+#splash {
+  --splash-bg: #000000;      /* completely black */
+  --splash-ink: #f3efe4;     /* warm ivory for the name */
+}
+
+/* Paint the very first frame dark too, and stop the page behind from scrolling while the splash shows. */
+html.splash-active { background: #000000; }
+html.splash-active,
+html.splash-active body { overflow: hidden; }
+
+#splash {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: grid;
+  place-items: center;
+  padding: calc(24px + var(--safe-top)) 24px calc(24px + var(--safe-bottom));
+  background: var(--splash-bg);
+  color: var(--splash-ink);
+  color-scheme: dark;
+  cursor: pointer;                 /* tap anywhere to skip (also makes iOS deliver the tap as a click) */
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  opacity: 1;
+  transition: opacity .12s linear, visibility 0s linear .12s;
+}
+
+#splash.is-leaving {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+
+.splash-mark {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  /* Sit a touch above the optical centre, the way printed title pages do. */
+  transform: translateY(-3vh);
+}
+
+/* The name: an inline SVG wordmark (paths only, fill: currentColor). */
+.splash-name {
+  margin: 0;
+  line-height: 0;
+  color: var(--splash-ink);
+}
+.splash-name svg {
+  display: block;
+  width: min(80vw, 340px);
+  height: auto;
+  overflow: visible;
+  opacity: 0;
+}
+/* Thrown at the screen: from far away (tiny, faded) to full size, accelerating, landing at 0.22 s;
+   then the screen gives one small shake as it slams in. */
+.splash-name svg { animation: splash-fly .22s cubic-bezier(.55, 0, 1, .45) both; } /* from the very first frame */
+#splash { animation: splash-shake .14s linear .22s both; }
+@keyframes splash-fly {
+  0%   { opacity: 0; transform: scale(.04); }
+  15%  { opacity: 1; }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes splash-shake {
+  0%, 100% { transform: none; }
+  20% { transform: translate(-7px, 4px); }
+  45% { transform: translate(6px, -4px); }
+  70% { transform: translate(-3px, 2px); }
+}
+
+/* Fallback if the wordmark is plain text. */
+.splash-name:not(:has(svg)) {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(60px, 20vw, 112px);
+  line-height: 1;
+  letter-spacing: -.02em;
+}
+
+
+/* Reduced motion: no flying or shaking — the word simply appears, holds a second, then the app. */
+@media (prefers-reduced-motion: reduce) {
+  #splash { transition: opacity .12s linear, visibility 0s linear .12s !important; }
+  #splash { animation: none !important; }
+  #splash .splash-name svg { animation: splash-fade .15s ease both !important; }
+}
+@keyframes splash-fade { from { opacity: 0; } to { opacity: 1; } }

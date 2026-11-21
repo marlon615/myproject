@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Inbox · Marlon (private)</title>
+  <meta name="description" content="Private inbox for messages sent through the Marlon website's contact form.">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="canonical" href="https://marlon.marlon615.workers.dev/inbox">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Marlon">
+  <meta property="og:title" content="Inbox · Marlon (private)">
+  <meta property="og:description" content="Private inbox for messages sent through the Marlon website's contact form.">
+  <meta property="og:url" content="https://marlon.marlon615.workers.dev/inbox">
+  <meta property="og:image" content="https://marlon.marlon615.workers.dev/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Marlon: offline delivery invoicing and route sales for any business">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#0f1a14">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icons/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="stylesheet" href="/site.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://marlon.marlon615.workers.dev/#org","name":"M. D. Williams Enterprise","brand":{"@type":"Brand","name":"Marlon"},"url":"https://marlon.marlon615.workers.dev","logo":"https://marlon.marlon615.workers.dev/icons/icon-512.png","email":"marlonapp.sales@gmail.com","address":{"@type":"PostalAddress","addressLocality":"Gutters","addressRegion":"St. Catherine","addressCountry":"JM"}}]}</script>
+  <script src="/site.js" defer></script>
+  <script src="/inbox.js" defer></script>
+</head>
+<body class="page-inbox">
+<a class="skip" href="#main">Skip to content</a>
+<header class="sitenav">
+  <div class="nav-in">
+    <a class="logo" href="/" aria-label="Marlon home"><img src="/icons/icon.svg" alt="" width="32" height="32"><span>Marlon</span></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu"><span class="sr">Menu</span><span class="bars" aria-hidden="true"></span></button>
+    <nav class="nav-menu" id="nav-menu" aria-label="Main">
+      <a href="/how-it-works" data-nav="how-it-works">How it works</a>
+      <a href="/features" data-nav="features">Features</a>
+      <a href="/pro" data-nav="pro">Marlon Pro</a>
+      <a href="/pricing" data-nav="pricing">Pricing</a>
+      <a href="/security" data-nav="security">Security</a>
+      <a href="/faq" data-nav="faq">FAQ</a>
+      <a href="/about" data-nav="about">About</a>
+      <span class="nav-cta">
+        <a class="btn btn-ghost" href="/demo">Watch demo</a>
+        <a class="btn btn-primary" href="/contact">Get Marlon</a>
+      </span>
+    </nav>
+  </div>
+</header>
+<main id="main">
+<section class="page-head">
+  <div class="wrap">
+    <h1>Contact form inbox</h1>
+    <p class="lead">Private: only for the Marlon Team. Messages sent through the website’s contact form arrive here.</p>
+  </div>
+</section>
+<section class="band">
+  <div class="wrap">
+    <div class="inbox-gate card" id="inbox-gate" hidden>
+      <form id="inbox-form" novalidate>
+        <h2 id="inbox-gate-title">Sign in</h2>
+        <p id="inbox-gate-help" class="fine">Type the inbox passcode.</p>
+        <div class="field"><label for="inbox-pass">Passcode</label><input id="inbox-pass" type="password" autocomplete="current-password" minlength="10" maxlength="200" required></div>
+        <div class="field" id="inbox-pass2-wrap" hidden><label for="inbox-pass2">Type it again</label><input id="inbox-pass2" type="password" autocomplete="new-password" maxlength="200"></div>
+        <p class="form-msg err" id="inbox-msg" role="alert"></p>
+        <button class="btn btn-primary btn-lg mt" type="submit" id="inbox-go">Sign in</button>
+      </form>
+    </div>
+    <div id="inbox-main" hidden>
+      <div class="inbox-bar"><p class="fine" id="inbox-count"></p><div class="cta-row"><button class="btn btn-ghost" type="button" id="inbox-refresh">Refresh</button><button class="btn btn-ghost" type="button" id="inbox-out">Sign out</button></div></div>
+      <div class="inbox-list" id="inbox-list"></div>
+    </div>
+    <p class="fine" id="inbox-loading">Loading…</p>
+  </div>
+</section>
+</main>
+<footer class="foot-site">
+  <div class="foot-in">
+    <div class="foot-brand">
+      <a class="logo" href="/"><img src="/icons/icon.svg" alt="" width="32" height="32"><span>Marlon</span></a>
+      <p>Offline delivery invoicing and route sales software for any business, from one van to a hundred reps.</p>
+      <p><a href="mailto:marlonapp.sales@gmail.com">marlonapp.sales@gmail.com</a></p>
+      <p>Gutters, St. Catherine, Jamaica</p>
+    </div>
+    <nav class="foot-col" aria-label="Product">
+      <h2>Product</h2>
+      <a href="/how-it-works">How it works</a>
+      <a href="/features">Features</a>
+      <a href="/pro">Marlon Pro</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/demo">Demo video</a>
+    </nav>
+    <nav class="foot-col" aria-label="Company">
+      <h2>Company</h2>
+      <a href="/about">About</a>
+      <a href="/security">Security and privacy</a>
+      <a href="/faq">FAQ</a>
+      <a href="/contact">Contact</a>
+      <a href="/how-to-pay">How to pay</a>
+    </nav>
+    <nav class="foot-col" aria-label="Legal">
+      <h2>Legal</h2>
+      <a href="https://marlon-app.marlon615.workers.dev/terms" rel="noopener">Terms and conditions</a>
+      <a href="/privacy">Privacy policy</a>
+      <a href="/legal">Legal overview</a>
+    </nav>
+  </div>
+  <div class="foot-base">
+    <p>© 2026 M. D. Williams Enterprise. Marlon is a product of M. D. Williams Enterprise.</p>
+    <p>The Marlon Team, M. D. Williams Enterprise · Gutters, St. Catherine, Jamaica</p>
+  </div>
+</footer>
+</body>
+</html>

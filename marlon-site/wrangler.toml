@@ -1,0 +1,28 @@
+# Marlon's public website. Pages are built from site/ into public/ (scripts/build-site.cjs), then public/ is packed into
+# the Worker (scripts/build-worker.cjs). The Worker serves them, plus /api/*: the contact form and the private inbox.
+# The Marlon app itself is a separate Worker (marlon-app) and is not touched by this one.
+name = "marlon"
+main = "worker/index.js"
+compatibility_date = "2026-10-01"
+account_id = "30f2c89d75621ddef8b783383296410f"
+workers_dev = true
+preview_urls = false
+
+# Pictures and the demo video are packed into the Worker as binary modules (scripts/build-worker.cjs).
+[[rules]]
+type = "Data"
+globs = ["**/*.mp4", "**/*.webp", "**/*.png", "**/*.jpg", "**/*.ico"]
+fallthrough = false
+
+[[durable_objects.bindings]]
+name = "INBOX"
+class_name = "Inbox"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Inbox"]
+
+[vars]
+# Raise this number and redeploy to set the inbox passcode again (forgotten, or someone else got to /inbox first).
+# Messages are kept.
+INBOX_GENERATION = "1"

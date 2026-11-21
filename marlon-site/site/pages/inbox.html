@@ -1,0 +1,33 @@
+<!--
+title: Inbox · Marlon (private)
+description: Private inbox for messages sent through the Marlon website's contact form.
+path: /inbox
+sitemap: no
+robots: noindex, nofollow
+script: inbox.js
+-->
+<section class="page-head">
+  <div class="wrap">
+    <h1>Contact form inbox</h1>
+    <p class="lead">Private: only for the Marlon Team. Messages sent through the website’s contact form arrive here.</p>
+  </div>
+</section>
+<section class="band">
+  <div class="wrap">
+    <div class="inbox-gate card" id="inbox-gate" hidden>
+      <form id="inbox-form" novalidate>
+        <h2 id="inbox-gate-title">Sign in</h2>
+        <p id="inbox-gate-help" class="fine">Type the inbox passcode.</p>
+        <div class="field"><label for="inbox-pass">Passcode</label><input id="inbox-pass" type="password" autocomplete="current-password" minlength="10" maxlength="200" required></div>
+        <div class="field" id="inbox-pass2-wrap" hidden><label for="inbox-pass2">Type it again</label><input id="inbox-pass2" type="password" autocomplete="new-password" maxlength="200"></div>
+        <p class="form-msg err" id="inbox-msg" role="alert"></p>
+        <button class="btn btn-primary btn-lg mt" type="submit" id="inbox-go">Sign in</button>
+      </form>
+    </div>
+    <div id="inbox-main" hidden>
+      <div class="inbox-bar"><p class="fine" id="inbox-count"></p><div class="cta-row"><button class="btn btn-ghost" type="button" id="inbox-refresh">Refresh</button><button class="btn btn-ghost" type="button" id="inbox-out">Sign out</button></div></div>
+      <div class="inbox-list" id="inbox-list"></div>
+    </div>
+    <p class="fine" id="inbox-loading">Loading…</p>
+  </div>
+</section>

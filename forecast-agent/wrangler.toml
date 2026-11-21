@@ -1,0 +1,46 @@
+# Draxly. The Worker serves the app (packed in by scripts/build-worker.cjs) and the API.
+# Directory = logins, payments, switches, owner passcode. Company = one private store per customer company.
+name = "forecast-agent"
+main = "worker/index.js"
+compatibility_date = "2026-10-01"
+account_id = "30f2c89d75621ddef8b783383296410f"
+workers_dev = true
+preview_urls = false
+
+[[durable_objects.bindings]]
+name = "DIRECTORY"
+class_name = "Directory"
+
+[[durable_objects.bindings]]
+name = "COMPANY"
+class_name = "Company"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Directory", "Company"]
+
+# Raise this number and redeploy to set the owner passcode again (forgotten, or someone got to /owner first).
+# Customers and their data are kept.
+[vars]
+OWNER_GENERATION = "1"
+# Password hashing strength (PBKDF2-SHA256 rounds). Cloudflare's free plan allows ~10 ms of CPU per request, which
+# limits this; on the Workers Paid plan raise it to 600000 (OWASP's recommendation) — existing users are upgraded at
+# their next sign-in.
+PBKDF2_ITERATIONS = "5000"
+# "free" keeps every background step small enough for the free plan's ~10 ms CPU limit; "paid" (Workers Paid plan)
+# makes each step 10× bigger, so very large companies finish in fewer steps.
+CPU_PLAN = "free"
+# Your business details (also editable on the owner dashboard → Platform settings).
+BILLING_NAME = "M. D. Williams Enterprise, trading as Draxly"
+# Draxly's contact email: shown to customers and demo visitors, on invoices, and where demo access requests go.
+CONTACT_EMAIL = "draxlyforecast@gmail.com"
+# The website's address, e.g. "https://www.draxly.com" (no slash at the end). Used for page links (canonical, sitemap,
+# API examples) and links in emails. Leave empty to use whatever address the visitor came in on.
+SITE_URL = ""
+
+# ENCRYPTION_KEY (a secret, set with `wrangler secret put ENCRYPTION_KEY`, never in this file): the AES-256 key for
+# data at rest. Losing it makes the stored data unreadable; it lives only in Cloudflare's secret store.
+
+# Hourly safety net that keeps every company's nightly syncs and weekly reports scheduled.
+[triggers]
+crons = ["23 * * * *"]

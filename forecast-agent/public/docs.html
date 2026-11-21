@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>API guide · Draxly</title>
+  <meta name="description" content="Send sales, stock levels and CSV files to Draxly, and read forecasts and reorder suggestions.">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/site-chrome.css">
+  <script src="/site.js" defer></script>
+</head>
+<body>
+<!--site:header-->
+<a class="skip" href="#main">Skip to content</a>
+<header class="sitenav" data-site-header>
+  <div class="nav-in">
+    <a class="logo" href="/" aria-label="Draxly home"><img src="/icon.svg" alt="" width="30" height="30"><span>Draxly</span></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu"><span class="sr">Menu</span><span class="bars" aria-hidden="true"></span></button>
+    <nav class="nav-menu" id="nav-menu" aria-label="Main">
+      <a href="/how-it-works" data-nav="how-it-works">How it works</a>
+      <a href="/integrations" data-nav="integrations">Integrations</a>
+      <a href="/security" data-nav="security">Security</a>
+      <a href="/pricing" data-nav="pricing">Pricing</a>
+      <a href="/faq" data-nav="faq">FAQ</a>
+      <a href="/about" data-nav="about">About</a>
+      <a href="/contact" data-nav="contact">Contact</a>
+      <span class="nav-cta">
+        <a class="btn btn-ghost" href="/app">Sign in</a>
+        <a class="btn btn-primary" href="/free-demo">Free demo</a>
+      </span>
+    </nav>
+  </div>
+</header>
+<!--/site:header-->
+  <main class="doc">
+    <h1>API guide</h1>
+    <p class="lead">Send sales, stock levels or CSV exports from any system, and read forecasts and reorder suggestions back. An admin creates API keys in <b>Connections → API keys</b>. The API must be switched on for your company.</p>
+
+    <h2>Authentication</h2>
+    <p>Send the key as a bearer token over HTTPS:</p>
+    <pre>Authorization: Bearer fa_live_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</pre>
+    <p>Each key is limited to 120 calls a minute (you'll get <code>429</code> with <code>Retry-After</code> if you go over). Each key has its own permissions: <code>sales:write</code>, <code>inventory:write</code>, <code>forecasts:read</code>.</p>
+
+    <h2>POST /v1/sales</h2>
+    <p>Up to 5,000 rows per call. Dates can be days (<code>2026-11-15</code>) or months (<code>2026-11</code>). Rows are added up by month for each product × location × region.</p>
+    <pre>curl -X POST __SITE_URL__/v1/sales \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"mode":"replace_months","rows":[
+        {"date":"2026-10-03","product":"Mango Juice","location":"Store 12","region":"West","amount":250.00,"quantity":10}
+      ]}'</pre>
+    <p><b>mode</b> can be:</p>
+    <ul>
+      <li><code>replace_months</code> (default): each call holds the <i>complete</i> figures for every month it mentions, for every product and location. Those months replace what was stored, so re-sending is safe.</li>
+      <li><code>add</code>: figures are added to what's already stored.</li>
+    </ul>
+    <p>The answer is <code>202</code>. The accuracy test, and the forecast if it's switched on, then update in the background (see <code>/v1/jobs</code>).</p>
+
+    <h2>POST /v1/files: HTTPS file drop</h2>
+    <p>Send a CSV export as the request body (up to 20 MB; split bigger exports). The columns are recognised the same way as an upload. Name them in the query string if needed:</p>
+    <pre>curl -X POST "__SITE_URL__/v1/files?date=Order%20Date&amp;product=SKU&amp;location=Store&amp;amount=Net%20Sales&amp;units=Qty&amp;dateOrder=mdy" \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: text/csv" --data-binary @sales.csv</pre>
+    <p>The same <code>mode</code> options apply; the default replaces the months in the file. You can also have the service <b>pull</b> a file from a web address every night: add a "File from a web address" connection.</p>
+    <p class="hint">SFTP isn't offered: the service runs on Cloudflare, which doesn't accept SFTP connections. Most schedulers that can drop a file over SFTP can also send it to this HTTPS endpoint.</p>
+
+    <h2>POST /v1/inventory</h2>
+    <pre>{"replace": false, "items": [
+  {"product":"Mango Juice","location":"Store 12","on_hand":42,"on_order":0,"lead_time_days":10,"case_pack":12,"min_order":24,"unit_cost":12.5}
+]}</pre>
+    <p>Up to 20,000 items per call. Product and location names must match your sales data. Reorder suggestions update automatically.</p>
+
+    <h2>GET /v1/forecasts</h2>
+    <p><code>?view=total|product|location|region</code> and optionally <code>&amp;upload=main|api|&lt;id&gt;</code>. The default is <code>main</code>: your newest connected or API data, or the one chosen in Stock settings.</p>
+
+    <h2>GET /v1/reorder</h2>
+    <p>Reorder suggestions:</p>
+    <ul>
+      <li>status;</li>
+      <li>on hand and on order;</li>
+      <li>daily demand;</li>
+      <li>days of cover;</li>
+      <li>safety stock;</li>
+      <li>reorder point;</li>
+      <li>suggested quantity and order value.</li>
+    </ul>
+
+    <h2>GET /v1/jobs</h2>
+    <p>The latest background jobs (imports, accuracy tests, forecasts, syncs), with progress and any error.</p>
+
+    <h2>Errors</h2>
+    <ul>
+      <li><code>400</code>: the request needs fixing; the message says what.</li>
+      <li><code>401</code>: missing or invalid key.</li>
+      <li><code>402</code>: the feature isn't switched on for your company.</li>
+      <li><code>403</code>: the key lacks a permission, or the account is switched off.</li>
+      <li><code>413</code>: too big.</li>
+      <li><code>429</code>: slow down.</li>
+    </ul>
+  </main>
+<!--site:footer-->
+<footer class="foot-site" data-site-footer>
+  <div class="foot-in">
+    <div class="foot-brand">
+      <a class="logo" href="/"><img src="/icon.svg" alt="" width="26" height="26"><span>Draxly</span></a>
+      <p>Know what to stock before you need it.</p>
+      <p>Sales forecasting for US food and drink distributors and wholesalers.</p>
+      <p><a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+    </div>
+    <div class="foot-col">
+      <h2>Product</h2>
+      <a href="/how-it-works">How it works</a>
+      <a href="/integrations">Integrations</a>
+      <a href="/pricing">Pricing and contract</a>
+      <a href="/free-demo">Free test demo</a>
+      <a href="/docs">API guide</a>
+    </div>
+    <div class="foot-col">
+      <h2>Company</h2>
+      <a href="/about">About</a>
+      <a href="/security">Security and privacy</a>
+      <a href="/faq">FAQ</a>
+      <a href="/contact">Contact us</a>
+      <a href="/app">Customer sign-in</a>
+    </div>
+    <div class="foot-col">
+      <h2>Legal</h2>
+      <a href="/terms">Terms of Service</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/dpa">Data Processing Addendum</a>
+      <a href="/legal">All legal documents</a>
+    </div>
+  </div>
+  <div class="foot-base">
+    <p>© 2026 M. D. Williams Enterprise, trading as Draxly. All rights reserved.</p>
+    <p>Contact us: <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+  </div>
+</footer>
+<!--/site:footer-->
+</body>
+</html>

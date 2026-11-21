@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en" class="owner-page">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Owner dashboard · Draxly</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/owner.js"></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/owner"><img src="/icon.svg" alt="" width="28" height="28"> Owner dashboard</a>
+    <div class="who" id="o-who" hidden><span class="hint" id="o-updated" aria-live="polite"></span> <button class="link" id="o-refresh" type="button">Refresh</button> <button class="link" id="o-signout" type="button">Sign out</button></div>
+  </header>
+  <div class="ptr" id="o-ptr" aria-hidden="true"></div>
+  <main>
+    <p class="loading" id="o-loading">Loading…</p>
+
+    <section id="o-gate" hidden>
+      <div class="card auth-card">
+        <h1 id="o-gate-title">Owner sign in</h1>
+        <p class="hint" id="o-gate-hint"></p>
+        <form id="o-form" novalidate>
+          <label>Passcode<input id="o-pass" type="password" autocomplete="current-password" maxlength="200"></label>
+          <label id="o-pass2-row" hidden>Type it again<input id="o-pass2" type="password" autocomplete="new-password" maxlength="200"></label>
+          <p class="error" id="o-error" role="alert" hidden></p>
+          <button class="primary" type="submit" id="o-submit">Sign in</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="o-dash" hidden>
+      <div class="tiles" id="o-tiles"></div>
+      <div class="card">
+        <h2>Customers</h2>
+        <p class="hint" id="o-none">No customers yet. They sign up on the main page.</p>
+        <div id="o-customers"></div>
+      </div>
+      <div class="card" id="demo">
+        <h2>Demo and access requests</h2>
+        <p>Your open demo link — email it to anyone (no sign-up, nothing stored): <a id="dm-link" target="_blank" rel="noopener"></a></p>
+        <p class="hint" id="dm-counts"></p>
+        <h3>Access requests</h3>
+        <div class="table-wrap"><table id="dm-leads"></table></div>
+        <h3>Who used the demo</h3>
+        <p class="hint">One line per forecast run: when, roughly where (Cloudflare's view of the visitor's network), device, and the size of their file. Their sales data is never stored or shown here; no IP addresses are kept.</p>
+        <div class="table-wrap"><table id="dm-visits"></table></div>
+      </div>
+      <div class="card" id="platform">
+        <h2>Platform settings</h2>
+        <p class="hint">Keys you paste here are stored encrypted and never shown again (a saved key shows as “saved”). Leave a key box empty to keep it.</p>
+        <h3>Email (for invites, weekly reports and low-stock alerts)</h3>
+        <p class="hint">Uses <b>Resend</b> (free tier: 3,000 emails a month). Create an account at resend.com, verify your domain there, create an API key, and paste it with the From address (e.g. Draxly &lt;billing@yourdomain.com&gt;). Without a verified domain, Resend only delivers to your own address.</p>
+        <div class="pay-row"><input id="pl-emailFrom" class="note" placeholder="From: Draxly <reports@yourdomain.com>"><input id="pl-emailKey" class="note" type="password" autocomplete="off" placeholder="Resend API key"><span class="hint" id="pl-emailKey-state"></span></div>
+        <div class="pay-row"><input id="pl-test-to" class="note" type="email" placeholder="Send a test to…"><button class="secondary small" type="button" id="pl-test">Send test email</button> <span class="hint" id="pl-test-msg"></span></div>
+        <h3>Billing and the demo</h3>
+        <div class="pay-row"><input id="pl-billingName" class="note" placeholder="Your business name on invoices" aria-label="Business name on invoices"><input id="pl-ownerEmail" class="note" type="email" readonly title="Set in wrangler.toml (CONTACT_EMAIL)" aria-label="Draxly contact email"></div>
+        <p class="hint">Draxly contact email (shown on the demo page, invoices and every page footer; access requests go here): <b>draxlyforecast@gmail.com</b></p>
+        <label>Payment instructions printed on every invoice (bank transfer / ACH details)<textarea id="pl-paymentInstructions" rows="3" maxlength="1500" placeholder="e.g. ACH or wire to … routing … account … — please include the invoice number."></textarea></label>
+        <h3>Sign in with Microsoft</h3>
+        <p class="hint">In the Microsoft Entra admin center: App registrations → New registration → “Accounts in any organizational directory and personal Microsoft accounts”, redirect URI (Web): <code id="pl-cb-sso"></code>. Then Certificates &amp; secrets → New client secret.</p>
+        <div class="pay-row"><input id="pl-msClientId" class="note" placeholder="Application (client) ID"><input id="pl-msSecret" class="note" type="password" autocomplete="off" placeholder="Client secret value"><span class="hint" id="pl-msSecret-state"></span></div>
+        <h3>Sign in with Google</h3>
+        <p class="hint">In Google Cloud Console: APIs &amp; Services → Credentials → Create OAuth client ID (Web application), authorized redirect URI: the same address as above.</p>
+        <div class="pay-row"><input id="pl-googleClientId" class="note" placeholder="Client ID"><input id="pl-googleSecret" class="note" type="password" autocomplete="off" placeholder="Client secret"><span class="hint" id="pl-googleSecret-state"></span></div>
+        <h3>QuickBooks app</h3>
+        <p class="hint">At developer.intuit.com: create an app with the Accounting scope, add the redirect URI <code id="pl-cb-qb"></code>, and use its production Client ID and Secret.</p>
+        <div class="pay-row"><input id="pl-qbClientId" class="note" placeholder="Client ID"><input id="pl-qbSecret" class="note" type="password" autocomplete="off" placeholder="Client secret"><span class="hint" id="pl-qbSecret-state"></span></div>
+        <button class="primary small" type="button" id="pl-save">Save platform settings</button> <span class="hint" id="pl-saved"></span>
+      </div>
+      <div class="card" id="alerts">
+        <h2>Phone alerts</h2>
+        <p class="hint">Get a ping on your phone (with the free <b>ntfy</b> app) when a customer taps “Ask for a reset link”.</p>
+        <div id="al-off">
+          <button class="primary small" type="button" id="al-make">Turn on phone alerts</button>
+        </div>
+        <div id="al-on" hidden>
+          <p>Your private topic name — subscribe to it in the ntfy app:</p>
+          <p class="code topic" id="al-topic"></p>
+          <div class="pay-row"><button class="secondary small" type="button" id="al-copy">Copy topic name</button><button class="primary small" type="button" id="al-test">Send test alert</button></div>
+          <p class="hint" id="al-result" role="status"></p>
+          <p class="hint">Keep the topic name private: anyone who knows it can see these alerts. <button class="link" type="button" id="al-new">Make a new topic name</button> · <button class="link danger" type="button" id="al-stop">Turn alerts off</button></p>
+        </div>
+      </div>
+      <div class="card">
+        <h2>What locked customers are told</h2>
+        <p class="hint">Shown when a customer's forecast is locked or their account is switched off. Leave it empty to show draxlyforecast@gmail.com; any other email typed here is replaced with it.</p>
+        <div class="pay-row"><input id="o-contact" class="note" maxlength="300" placeholder="draxlyforecast@gmail.com"><button class="secondary small" type="button" id="o-contact-save">Save</button> <span class="hint" id="o-contact-saved"></span></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

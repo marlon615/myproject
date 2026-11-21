@@ -1,0 +1,146 @@
+/* Shared design tokens and base elements for every screen of the invoice app. Screen-specific styles live in app.css, dashboard.css and view.css. */
+
+:root {
+  color-scheme: light;
+  --bg: #f3f0e8;            /* warm paper background */
+  --paper: #ffffff;         /* cards and the invoice sheet */
+  --paper-2: #faf8f3;       /* subtle inset areas */
+  --ink: #1a1c19;           /* main text */
+  --ink-2: #454a43;         /* secondary text */
+  --muted: #73796f;         /* hints, labels */
+  --line: #e2ddd1;          /* hairlines and borders */
+  --line-strong: #cfc8b8;
+  --brand: #17633f;         /* fresh-produce green: primary actions, ticks */
+  --brand-hover: #12553a;
+  --brand-ink: #ffffff;     /* text on brand */
+  --brand-soft: #e4f1e8;    /* ticked row tint, badges */
+  --accent: #c2702a;        /* pumpkin: highlights, totals accent */
+  --accent-soft: #fbeedd;
+  --danger: #b3261e;
+  --danger-soft: #fbe9e7;
+  --focus: #2f6fd1;
+  --shadow: 0 1px 2px rgba(25, 28, 22, .06), 0 6px 18px rgba(25, 28, 22, .07);
+  --shadow-lg: 0 10px 40px rgba(25, 28, 22, .18);
+  --radius: 16px;
+  --radius-sm: 11px;
+  --tap: 48px;              /* minimum touch target */
+  --gutter: 16px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: ui-serif, "New York", "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", "Courier New", monospace;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #11130f;
+    --paper: #1a1d18;
+    --paper-2: #151813;
+    --ink: #eef0e9;
+    --ink-2: #c4c9bd;
+    --muted: #8e9488;
+    --line: #2b2f28;
+    --line-strong: #3a3f36;
+    --brand: #48b07a;
+    --brand-hover: #5bc08b;
+    --brand-ink: #07120c;
+    --brand-soft: #1c3426;
+    --accent: #e3994f;
+    --accent-soft: #3a2a19;
+    --danger: #ff7a6e;
+    --danger-soft: #3b1d1a;
+    --focus: #7aa7ff;
+    --shadow: 0 1px 0 rgba(255, 255, 255, .03);
+    --shadow-lg: 0 10px 40px rgba(0, 0, 0, .55);
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body { margin: 0; background: var(--bg); }
+body {
+  color: var(--ink);
+  font: 16px/1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+[hidden] { display: none !important; }
+img, svg, canvas { display: block; max-width: 100%; }
+a { color: var(--brand); }
+h1, h2, h3 { margin: 0; line-height: 1.2; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+
+/* Form controls — 16px+ text so iPhone never zooms in on focus. */
+input, textarea, select, button { font: inherit; color: inherit; }
+.field { display: grid; gap: 6px; }
+.field > label, .label { font-size: .8rem; font-weight: 650; letter-spacing: .02em; color: var(--ink-2); }
+.input, input[type="text"], input[type="search"], input[type="date"], input[type="tel"], input[type="password"], input[type="number"], textarea {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 11px 13px;
+  font-size: 17px;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+textarea { resize: vertical; line-height: 1.4; }
+input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent); }
+input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--muted) 80%, transparent); }
+input[readonly], textarea[readonly] { background: var(--paper-2); }
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: var(--tap); padding: 10px 18px;
+  border-radius: 999px; border: 1px solid var(--line-strong);
+  background: var(--paper); color: var(--ink);
+  font-weight: 650; font-size: 16px; line-height: 1.1;
+  cursor: pointer; user-select: none; -webkit-user-select: none;
+  transition: transform .06s ease, background-color .15s ease, border-color .15s ease;
+}
+.btn:active { transform: scale(.98); }
+.btn:disabled { opacity: .5; cursor: default; transform: none; }
+.btn-primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.btn-primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--brand); }
+.btn-danger { background: var(--danger-soft); border-color: transparent; color: var(--danger); }
+.btn-block { width: 100%; }
+.btn-icon { width: var(--tap); padding: 0; border-radius: 50%; }
+.btn svg { width: 20px; height: 20px; flex: none; }
+
+/* Surfaces */
+.card { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.section-title { font-size: .74rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0 4px 10px; }
+
+/* Toast: <div class="toast" role="status">Saved</div> */
+.toast {
+  position: fixed; left: 50%; bottom: calc(18px + var(--safe-bottom)); transform: translateX(-50%);
+  max-width: calc(100vw - 32px); padding: 12px 18px; border-radius: 999px;
+  background: var(--ink); color: var(--paper); font-weight: 600; font-size: 15px;
+  box-shadow: var(--shadow-lg); z-index: 1000; text-align: center;
+}
+
+/* Dialog sheet: <dialog class="sheet"> … </dialog> */
+dialog.sheet {
+  width: min(520px, calc(100vw - 24px)); max-height: calc(100dvh - 48px);
+  padding: 22px 20px calc(18px + var(--safe-bottom));
+  border: 0; border-radius: 22px; background: var(--paper); color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+dialog.sheet::backdrop { background: rgba(10, 12, 9, .45); }
+dialog.sheet h2 { font-size: 1.2rem; margin-bottom: 8px; }
+dialog.sheet p { margin: 0 0 14px; color: var(--ink-2); }
+.sheet-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

@@ -1,0 +1,1127 @@
+/**
+ * The invoice screen: one invoice at a time, saved on the phone as you type.
+ * Routes: "#/" (or none) = invoice, "#/owner" = private owner dashboard (dashboard.js).
+ */
+import { init as initDb, credits, invoices, products, profile, settings } from "./db.js";
+import { setupPro } from "./pro.js";
+import { startCatalogSync } from "./catalog.js";
+import { runSetup } from "./setup.js";
+import { track } from "./usage.js";
+import { ensureAccess } from "./license.js";
+import { startTeamSync, syncNow } from "./team.js";
+import {
+  business, setBusiness, UNITS, UNIT_NAMES, debounce, defaultUnitFor, fillUsualPrice, h, invoiceNo, itemsMissingPrice, lineTotal, money,
+  normalizeUnit, parseAmount, priceInputText, qtyText, signedOnText, storeKey, sumTotals, todayISO, uid, withTotals,
+  allocateCredit, cleanCreditOn, creditLabel, toCents,
+} from "./util.js";
+import { alertSheet, choiceSheet, confirmSheet, toast } from "./ui.js";
+import { cancelLink, enablePush, isRemoteSigned, isWaiting, pushState, remoteStatus, sendForSignature, shareLink, startRemoteWatch } from "./remote.js";
+import { SignaturePad } from "./signature.js";
+import { SignThanks, signatureArea } from "./sign-thanks.js";
+import { invoiceToText, invoiceToUrl } from "./codec.js";
+import { qrCanvas } from "./qr.js";
+import { printInvoice } from "./printer.js";
+import { chooseReceiptSize, shareInvoicePdf } from "./share.js";
+import { hideDashboard, initDashboard, showDashboard } from "./dashboard.js";
+import { Listener, canListen, dictate } from "./voice.js";
+import { bestParse, bestParseSegments } from "./voice-parse.js";
+import { reviewSpokenInvoice } from "./voice-review.js";
+import { buzz, showThanks } from "./thanks.js";
+import { paymentPage } from "./payment.js";
+
+const $ = (id) => document.getElementById(id);
+const el = {
+  main: $("invoice-screen"), dash: $("dashboard"), setup: $("setup"), gate: $("gate"), company: $("company-name"), no: $("invoice-no"), signedBadge: $("signed-badge"),
+  store: $("store"), storeList: $("store-list"), address: $("address"), date: $("date"),
+  list: $("prod-list"), addForm: $("prod-add"), addName: $("prod-add-name"),
+  grandTotal: $("grand-total"), grandCount: $("grand-count"), grandAmount: $("grand-amount"), creditRows: $("credit-rows"), proBar: $("pro-bar"),
+  signCard: $("sign-card"), signCanvas: $("sign-canvas"), signStatus: $("sign-status"), signTip: $("sign-tip"), signClear: $("sign-clear"),
+  signDone: $("sign-done"), finish: $("finish-btn"), signPad: $("sign-pad"),
+  remoteStatus: $("remote-status"), sendSign: $("send-sign-btn"), remoteHint: $("remote-hint"),
+  qrCard: $("qr-card"), qrBox: $("qr-box"), qrCaption: $("qr-caption"), qrToggle: $("qr-toggle"),
+  print: $("print-btn"), sharePdf: $("share-pdf-btn"), receiptSize: $("receipt-size-btn"),
+  newBtn: $("new-btn"), saveStatus: $("save-status"),
+  bar: $("total-bar"), barCount: $("bar-count"), barAmount: $("bar-amount"),
+  update: $("update-banner"), updateBtn: $("update-btn"), brandBar: $("brand-bar"),
+  mic: $("mic-btn"), micLabel: $("mic-label"), voicePanel: $("voice-panel"), voiceState: $("voice-state"),
+  voiceMode: $("voice-mode"), voiceText: $("voice-text"), voiceTip: $("voice-tip"),
+  install: $("install-card"), installIos: $("install-ios"), installAndroid: $("install-android"),
+  installBtn: $("install-btn"), installDismiss: $("install-dismiss"),
+};
+
+const state = {
+  products: [],       // the product list (visible products, in order)
+  extra: [],          // products on this invoice that were later removed from the list: [{ id, name }]
+  lines: new Map(),   // productId → { on, qty, price, name } — qty/price exactly as typed
+  inv: { signature: null, signedAt: null }, // id, number, createdAt once saved
+  nextNumber: 1,
+  stores: [],
+  qrMode: "link",
+  savedAt: null,
+  paymentSet: false,  // this invoice's payment is recorded (owner only: it's never shown on this screen)
+  creditAvail: [],    // Marlon Pro: this store's credit notes with credit left [{ id, number, left }] (db.js applies them on save)
+};
+const rows = new Map(); // productId → { li, cb, qty, price, total, detail, product }
+let pad = null;
+let isRep = false; // a team sales rep: no owner dashboard on this phone (the boss has the dashboard)
+let thanks = null; // the signing thank-you: "Thank you" writes itself as the customer signs
+
+const itemsText = (n) => `${n} item${n === 1 ? "" : "s"}`;
+const timeText = (d) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+// ── Startup ──────────────────────────────────────────────────────────────
+
+async function start() {
+  try {
+    await initDb();
+  } catch (e) {
+    console.error(e);
+    el.main.replaceChildren(h("p", { class: "fatal" }, e?.message || "This browser can't save invoices. Open the app in Safari or Chrome."));
+    signalReady();
+    return;
+  }
+  // Offline support installs on the very first open, even while the business is still typing its setup.
+  registerServiceWorker();
+  setupInstall();
+  // Only phones activated through a buyer's personal link get in (see license.js).
+  const access = await ensureAccess(el.gate);
+  if (!access.ok) { blockApp(); signalReady(); return; }
+  document.addEventListener("app:blocked", blockApp); // switched off by the maker while open
+  isRep = Boolean(access.team);
+  if (isRep) document.getElementById("owner-link").hidden = true; // reps don't get the dashboard button
+  // A new phone: the business sets itself up first (company, address, phone, products and prices).
+  let me = await profile.get();
+  if (!me) {
+    el.main.hidden = true;
+    el.brandBar.classList.add("is-setup");
+    el.setup.hidden = false;
+    signalReady();
+    me = await runSetup(el.setup, { team: access.team, company: access.company, repName: access.repName });
+    el.setup.hidden = true;
+    el.setup.replaceChildren();
+    el.main.hidden = false;
+    window.scrollTo(0, 0);
+    track("setup");
+  }
+  setBusiness(me);
+  renderCompany();
+  if (access.team) {
+    startTeamSync(); // team rep: invoices go to the boss whenever there's internet
+    document.addEventListener("team:paid", (e) => toast(`Your boss marked ${e.detail.changed} invoice${e.detail.changed === 1 ? "" : "s"} as paid.`));
+  }
+  track("open");
+  state.qrMode = (await settings.get("qrMode", "link")) === "text" ? "text" : "link";
+  state.products = await products.all();
+  pad = new SignaturePad(el.signCanvas, { onChange: onSigned, baseArea: signatureArea });
+  thanks = new SignThanks({ pad: el.signPad, canvas: el.signCanvas, signature: pad, name: () => el.store.value, onChange: () => renderSignState() });
+
+  const currentId = await settings.get("currentId", null);
+  const current = currentId ? await invoices.get(currentId) : null;
+  if (current) await loadInvoice(current);
+  else await newDraft();
+  refreshStores();
+
+  wireEvents();
+  // Marlon Pro: Return (credit notes) and Shelf photo, only when the company has Pro on (remembered for offline).
+  setupPro({ bar: el.proBar, pro: access.pro, getStore: () => el.store.value.trim(), getAddress: () => el.address.value.trim(),
+    onCreditCreated: () => refreshCredit(),
+    // Shelf Order: "Done" sends the order to the boss right away when there's signal (otherwise it waits on the phone).
+    onOrderSaved: () => { if (access.team) syncNow().catch(() => {}); },
+    // A delivered order becomes a new invoice: the store, address and each product with its amount and usual price.
+    invoiceFromOrder: async (order) => {
+      await flushSave();
+      const items = order.lines.map((l) => {
+        const p = state.products.find((x) => x.id === l.productId) || state.products.find((x) => storeKey(x.name) === storeKey(l.name));
+        return { productId: p?.id || null, name: p?.name || l.name, qty: l.qty, unit: l.unit, price: p?.price ?? null };
+      });
+      await newDraft({ store: order.store, address: order.address, items });
+      await flushSave();
+      go("#/");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return { id: state.inv.id, number: state.inv.number };
+    } });
+  // Marlon Pro · My Products: the company's saved products become this phone's list (kept for offline).
+  startCatalogSync({ onChanged: () => { hooks.onProductsChanged(); document.dispatchEvent(new Event("catalog:changed")); } });
+  startRemoteWatch(); // invoices sent for signature: news comes in by itself (it stops when nothing is waiting)
+  initDashboard(el.dash, hooks);
+  window.addEventListener("hashchange", route);
+  route();
+  watchTotalRow();
+  signalReady();
+}
+
+/** Only the gate screen shows (no link, no free place, or switched off). */
+function blockApp() {
+  document.documentElement.classList.add("is-blocked"); // stays blocked whatever the app was doing (CSS hides the rest)
+  el.main.hidden = true;
+  el.setup.hidden = true;
+  el.dash.hidden = true;
+  el.update.hidden = true;
+  el.brandBar.classList.add("is-setup");
+  el.gate.hidden = false;
+  window.scrollTo(0, 0);
+}
+
+/** The business's name at the top of the invoice screen. */
+function renderCompany() {
+  el.company.textContent = business.name || "Your company";
+  document.title = business.name ? `${business.name} · Marlon` : "Marlon";
+}
+
+function signalReady() {
+  if (window.__appReady) return;
+  window.__appReady = true;
+  document.dispatchEvent(new Event("app:ready"));
+}
+
+// ── Invoice state ────────────────────────────────────────────────────────
+
+/** Starts a fresh invoice, optionally copying store, address and items from another one. */
+async function newDraft(from = null) {
+  state.inv = { signature: null, signedAt: null };
+  state.paymentSet = false;
+  state.paidCredit = false;
+  state.lines = new Map();
+  state.extra = [];
+  el.store.value = from?.store || "";
+  el.address.value = from?.address || "";
+  el.date.value = todayISO();
+  for (const it of from?.items || []) addLineFromItem(it);
+  state.nextNumber = await invoices.peekNextNumber();
+  state.savedAt = null;
+  await settings.remove("currentId");
+  pad.clear();
+  thanks.reset();
+  state.creditAvail = [];
+  renderAll();
+  refreshCredit();
+  if (from) scheduleSave();
+}
+
+async function loadInvoice(inv) {
+  state.inv = { id: inv.id, number: inv.number, createdAt: inv.createdAt, signature: inv.signature || null, signedAt: inv.signedAt || null,
+    seller: inv.seller, sellerAddress: inv.sellerAddress, sellerPhone: inv.sellerPhone, // the business as it was then
+    remote: inv.remote || null, signerName: inv.signerName || null, // sent for signature: its link and status
+    credit: inv.credit || null }; // Marlon Pro: credit from credit notes taken off this invoice
+  state.paymentSet = Boolean(inv.payment);
+  state.paidCredit = inv.payment?.status === "paid"; // a paid invoice keeps the credit it had
+  state.lines = new Map();
+  state.extra = [];
+  el.store.value = inv.store || "";
+  el.address.value = inv.address || "";
+  el.date.value = inv.date || todayISO();
+  for (const it of inv.items || []) addLineFromItem(it);
+  state.nextNumber = await invoices.peekNextNumber();
+  state.savedAt = inv.updatedAt ? new Date(inv.updatedAt) : null;
+  renderAll();
+  refreshCredit();
+  await pad.fromDataURL(state.inv.signature);
+  if (state.inv.signature) thanks.showSigned(); else thanks.reset();
+  renderSignState();
+}
+
+function addLineFromItem(it) {
+  let id = it.productId;
+  if (!id || !state.products.some((p) => p.id === id)) {
+    id = id && !state.extra.some((x) => x.id === id) ? id : uid("x_");
+    state.extra.push({ id, name: it.name });
+  }
+  state.lines.set(id, { on: true, qty: qtyText(it.qty) || "1", unit: normalizeUnit(it.unit), price: priceInputText(it.price), name: it.name });
+}
+
+/** Ticked items in list order, with the names they had when ticked. */
+function currentItems() {
+  const items = [];
+  for (const p of [...state.products, ...state.extra]) {
+    const l = state.lines.get(p.id);
+    if (l?.on) items.push({ productId: p.id, name: state.products.includes(p) ? p.name : l.name || p.name, qty: parseAmount(l.qty), unit: normalizeUnit(l.unit || defaultUnitFor(p)), price: parseAmount(l.price) });
+  }
+  return items;
+}
+
+// ── Marlon Pro: credit from credit notes ─────────────────────────────────
+// db.js decides on every save which credit notes an unsigned invoice uses; this screen shows the same thing live.
+// A signed invoice (or one waiting on a signature link) keeps the credit it had.
+const creditFrozen = () => Boolean(state.inv.signature) || remoteLocked() || state.paidCredit;
+function currentCredit(subtotal) {
+  return creditFrozen() ? cleanCreditOn(state.inv.credit, subtotal) : allocateCredit(state.creditAvail, subtotal);
+}
+let creditSeq = 0;
+async function refreshCredit() {
+  const seq = ++creditSeq;
+  const avail = await credits.availableFor(el.store.value, state.inv.id || null, el.date.value || todayISO()).catch(() => []);
+  if (seq !== creditSeq) return;
+  state.creditAvail = avail;
+  renderTotals();
+  scheduleQr();
+}
+const scheduleCredit = debounce(refreshCredit, 250);
+
+/** The invoice as it stands now (number shown even before the first save). */
+function draft() {
+  const items = currentItems();
+  return withTotals({
+    ...state.inv,
+    seller: state.inv.seller ?? business.name,
+    sellerAddress: state.inv.sellerAddress ?? business.address,
+    sellerPhone: state.inv.sellerPhone ?? business.phone,
+    number: state.inv.number || state.nextNumber,
+    store: el.store.value.trim(),
+    address: el.address.value.trim(),
+    date: el.date.value || todayISO(),
+    items,
+    credit: currentCredit(sumTotals(items)),
+  });
+}
+
+const hasContent = (d) => Boolean(d.store || d.items.length);
+
+// ── Saving ───────────────────────────────────────────────────────────────
+
+let saveChain = Promise.resolve();
+const scheduleSave = debounce(() => { saveChain = saveChain.then(saveNow, saveNow); }, 500);
+
+async function saveNow() {
+  const d = draft();
+  if (!hasContent(d)) { renderSaveStatus(); return; }
+  try {
+    const first = !state.inv.number;
+    const saved = await invoices.put({ ...d, number: state.inv.number || undefined });
+    if (first) track("invoice");
+    Object.assign(state.inv, { id: saved.id, number: saved.number, createdAt: saved.createdAt, credit: saved.credit || null });
+    state.savedAt = new Date(saved.updatedAt);
+    await settings.set("currentId", saved.id); // prices stay on this invoice only: the next one starts fresh
+    renderNumber();
+    renderSaveStatus();
+  } catch (e) {
+    console.error(e);
+    el.saveStatus.textContent = "Couldn't save on this phone. Free up some space, then try again.";
+  }
+}
+
+async function flushSave() {
+  scheduleSave.flush();
+  await saveChain;
+}
+
+function changed() {
+  scheduleCredit();
+  renderTotals();
+  renderSaveStatus(true);
+  scheduleSave();
+  scheduleQr();
+}
+
+// ── Rendering ────────────────────────────────────────────────────────────
+
+function renderAll() {
+  renderList();
+  renderNumber();
+  renderTotals();
+  renderSignState();
+  renderSaveStatus();
+  renderQr();
+}
+
+function renderNumber() {
+  el.no.textContent = `No. ${invoiceNo(state.inv.number || state.nextNumber)}`;
+}
+
+function renderSaveStatus(pending = false) {
+  if (pending) { el.saveStatus.textContent = "Saving…"; return; }
+  el.saveStatus.textContent = state.savedAt ? `Saved on this phone · ${timeText(state.savedAt)}` : "Not saved yet";
+}
+
+function renderTotals() {
+  const items = currentItems();
+  const subtotal = sumTotals(items);
+  const credit = currentCredit(subtotal);
+  const total = credit ? (toCents(subtotal) - toCents(credit.amount)) / 100 : subtotal;
+  el.creditRows.hidden = !credit;
+  el.creditRows.replaceChildren(...(credit ? [
+    h("p", { class: "credit-row" }, h("span", {}, "Subtotal"), h("span", { class: "num" }, money(subtotal))),
+    h("p", { class: "credit-row is-credit" }, h("span", {}, creditLabel(credit), h("small", {}, "returned goods")), h("span", { class: "num" }, `-${money(credit.amount)}`)),
+  ] : []));
+  el.grandAmount.textContent = money(total);
+  el.grandCount.textContent = items.length ? itemsText(items.length) : "No items yet";
+  el.barAmount.textContent = money(total);
+  el.barCount.textContent = itemsText(items.length);
+  el.bar.classList.toggle("has-items", items.length > 0);
+}
+
+const CHECK_PATH = "M5.5 12.5 10 17l8.5-9.5";
+function svgIcon(d, cls = "icon") {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", cls);
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", d);
+  svg.append(path);
+  return svg;
+}
+
+function renderList() {
+  rows.clear();
+  const all = [...state.products, ...state.extra.map((x) => ({ ...x, removed: true }))];
+  el.list.replaceChildren(...all.map(buildRow));
+  if (!all.length) el.list.append(h("li", { class: "prod-empty" }, isRep ? "No products yet. Add one below." : "No products yet. Add one below — or all of them, with prices, in the owner dashboard → Settings."));
+}
+
+function buildRow(p) {
+  const l = state.lines.get(p.id);
+  const id = `p-${p.id}`;
+  const cb = h("input", { type: "checkbox", class: "prod-cb", id: `${id}-cb`, "aria-describedby": `${id}-total` });
+  cb.checked = Boolean(l?.on);
+  const qty = h("input", { type: "text", class: "qty-input num", inputmode: "decimal", autocomplete: "off", enterkeyhint: "next", "aria-label": `Quantity of ${p.name}` });
+  const price = h("input", { type: "text", class: "price-input num", inputmode: "decimal", autocomplete: "off", enterkeyhint: "done", placeholder: "Add price", "aria-label": `Unit price of ${p.name}` });
+  const unitNow = l?.unit || defaultUnitFor(p);
+  const unit = h("select", { class: "unit-select", "aria-label": `Unit for ${p.name}` },
+    UNITS.map((u) => h("option", { value: u }, UNIT_NAMES[u])));
+  unit.value = unitNow;
+  qty.value = l?.qty ?? "1";
+  price.value = l?.price ?? "";
+  const total = h("output", { class: "line-total num", id: `${id}-total` });
+  const detail = h("div", { class: "prod-detail" },
+    h("div", { class: "qty" },
+      h("button", { type: "button", class: "qty-btn", dataset: { step: "-1" }, "aria-label": `One less ${p.name}` }, "−"),
+      qty,
+      h("button", { type: "button", class: "qty-btn", dataset: { step: "1" }, "aria-label": `One more ${p.name}` }, "+")),
+    unit,
+    h("span", { class: "price-wrap" },
+      h("span", { class: "times", "aria-hidden": "true" }, "×"),
+      h("label", { class: "price" }, h("span", { class: "price-cur", "aria-hidden": "true" }, "$"), price)),
+    total);
+  const li = h("li", { class: "prod-row", dataset: { id: p.id } },
+    h("label", { class: "prod-check", for: `${id}-cb` },
+      cb,
+      h("span", { class: "prod-box", "aria-hidden": "true" }, svgIcon(CHECK_PATH)),
+      h("span", { class: "prod-name" }, p.name, p.removed ? h("span", { class: "prod-removed" }, "removed from list") : null)),
+    detail);
+  rows.set(p.id, { li, cb, qty, unit, price, total, detail, product: p });
+  updateRow(p.id);
+  return li;
+}
+
+function updateRow(pid) {
+  const r = rows.get(pid);
+  if (!r) return;
+  const l = state.lines.get(pid);
+  const on = Boolean(l?.on);
+  r.li.classList.toggle("is-on", on);
+  r.cb.checked = on;
+  r.detail.hidden = !on;
+  if (!on) return;
+  r.unit.value = l.unit || defaultUnitFor(r.product);
+  const hasPrice = parseAmount(l.price) !== null;
+  r.total.textContent = hasPrice ? money(lineTotal(l.qty, l.price)) : "—";
+  r.li.classList.toggle("needs-price", !hasPrice);
+}
+
+function lineFor(pid) {
+  let l = state.lines.get(pid);
+  if (!l) {
+    const r = rows.get(pid);
+    l = { on: false, qty: r?.qty.value || "1", unit: r?.unit.value || "each", price: r?.price.value ?? "", name: r?.product.name || "" };
+    state.lines.set(pid, l);
+  }
+  return l;
+}
+
+function setOn(pid, on) {
+  const r = rows.get(pid);
+  const l = lineFor(pid);
+  l.on = on;
+  l.name = r.product.name;
+  l.unit = l.unit || defaultUnitFor(r.product);
+  if (on && !(parseAmount(l.qty) > 0)) l.qty = "1";
+  // The product's usual price, when none is typed yet (it can be changed on this invoice).
+  if (on && !String(l.price ?? "").trim() && r.product.price != null && normalizeUnit(l.unit) === defaultUnitFor(r.product)) l.price = priceInputText(r.product.price);
+  r.qty.value = l.qty;
+  r.price.value = l.price;
+  updateRow(pid);
+  changed();
+}
+
+function step(pid, dir) {
+  const r = rows.get(pid);
+  const l = lineFor(pid);
+  const q = parseAmount(l.qty) ?? 0;
+  const next = Math.max(1, Math.round((q + dir) * 1000) / 1000);
+  l.qty = qtyText(next);
+  r.qty.value = l.qty;
+  updateRow(pid);
+  changed();
+}
+
+// ── QR code ──────────────────────────────────────────────────────────────
+
+const scheduleQr = debounce(renderQr, 250);
+
+function renderQr() {
+  const d = draft();
+  const textMode = state.qrMode === "text";
+  el.qrToggle.textContent = textMode ? "Customer has internet? Use the link QR instead" : "Their phone has no internet? Use the text-only QR";
+  el.qrCaption.textContent = textMode
+    ? "Shows the whole invoice as plain text. Works with no internet at all."
+    : "Customer: scan with your phone camera to see this invoice.";
+  el.qrBox.replaceChildren();
+  el.qrBox.classList.toggle("is-empty", !hasContent(d));
+  if (!hasContent(d)) {
+    el.qrBox.append(h("p", { class: "qr-empty" }, "Add a store and products to make the QR code."));
+    return;
+  }
+  try {
+    const canvas = textMode ? qrCanvas(invoiceToText(d), { px: 300, ecc: "L" }) : qrCanvas(invoiceToUrl(d), { px: 240 });
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", textMode ? "QR code with this invoice as text" : "QR code that opens this invoice on the customer's phone");
+    el.qrBox.append(canvas);
+  } catch {
+    el.qrBox.append(h("p", { class: "qr-empty" }, "This invoice is too long for one QR code. Use the link QR or share the PDF."));
+  }
+}
+
+// ── Signature ────────────────────────────────────────────────────────────
+
+function onSigned() {
+  state.inv.signature = pad.toDataURL();
+  state.inv.signedAt = state.inv.signature ? new Date().toISOString() : null;
+  renderSignState();
+  changed();
+}
+
+function clearSignature() {
+  pad.clear();
+  thanks.reset();
+  state.inv.signature = null;
+  state.inv.signedAt = null;
+  renderSignState();
+  changed();
+}
+
+/** Sent for signature and still waiting, or signed through the link: the invoice can't be changed here. */
+const remoteLocked = () => isWaiting(state.inv) || isRemoteSigned(state.inv);
+const needsAsk = () => Boolean(state.inv.signature) || remoteLocked();
+
+function renderRemote() {
+  const st = remoteStatus(state.inv), r = state.inv.remote;
+  const box = el.remoteStatus;
+  box.replaceChildren();
+  box.hidden = !st;
+  box.className = `remote-status is-${st || "none"}`;
+  pad.setDisabled(remoteLocked());
+  el.sendSign.hidden = st === "sent" || st === "opened" || st === "signed" || (Boolean(state.inv.signature) && !r);
+  el.sendSign.lastChild.textContent = st === "expired" ? " Send for signature again" : " Send for signature";
+  el.remoteHint.hidden = el.sendSign.hidden;
+  if (!st) return;
+  const when = (iso) => signedOnText(iso);
+  if (st === "signed") {
+    box.append(h("p", { class: "remote-title" }, `Signed by ${state.inv.signerName} on ${when(state.inv.signedAt)}`),
+      h("p", { class: "remote-sub" }, "Signed through the link on the buyer's phone. This invoice is locked and can't be changed."));
+    return;
+  }
+  if (st === "expired") {
+    box.append(h("p", { class: "remote-title" }, "Link expired, not signed"), h("p", { class: "remote-sub" }, `The link stopped working on ${when(r.expires)}. Send a new one below, or change the invoice first.`));
+    return;
+  }
+  box.append(h("p", { class: "remote-title" }, st === "opened" ? `Opened by the buyer${r.openedAt ? ` on ${when(r.openedAt)}` : ""}, waiting for their signature` : `Sent for signature, waiting for ${el.store.value.trim() || "the buyer"}`),
+    h("p", { class: "remote-sub" }, `The link works until ${when(r.expires)}. You'll get the signed copy here by itself.`),
+    h("div", { class: "remote-btns" },
+      h("button", { type: "button", class: "btn btn-small btn-primary", onclick: async () => { const how = await shareLink(state.inv); if (how === "copied") toast("Link copied. Paste it into WhatsApp, Instagram, email or a text."); if (how === "shown") alertSheet({ title: "The signing link", message: state.inv.remote.link }); } }, "Share link again"),
+      h("button", { type: "button", class: "btn btn-small", onclick: () => allowChange() }, "Cancel and edit")));
+  renderPushOffer(box);
+}
+
+/** While waiting: offer alerts that work with Marlon closed (web push), or say they're on / blocked. */
+async function renderPushOffer(box) {
+  const st = await pushState();
+  if (st === "unsupported" || !box.isConnected) return;
+  const row = h("div", { class: "remote-push" });
+  if (st === "on") row.append(h("p", { class: "remote-sub" }, "🔔 You'll get an alert when it's signed, even with Marlon closed."));
+  else if (st === "denied") row.append(h("p", { class: "remote-sub" }, "Alerts are blocked for Marlon in your phone's settings. Turn them on there to hear when it's signed."));
+  else row.append(h("button", { type: "button", class: "btn btn-small btn-alert", onclick: async (e) => {
+    e.currentTarget.disabled = true;
+    const r = await enablePush();
+    if (r.ok) toast("Alerts are on. You'll hear when a buyer signs, even with Marlon closed.");
+    else alertSheet({ title: "Alerts aren't on", message: r.error });
+    renderRemote();
+  } }, "🔔 Alert me when they sign"));
+  box.querySelector(".remote-push")?.remove();
+  box.append(row);
+}
+
+async function onSendForSignature() {
+  if (el.sendSign.getAttribute("aria-busy") === "true") return;
+  await flushSave();
+  const d = draft();
+  if (!state.inv.id) { toast("Add the buyer's name and items first."); return; }
+  el.sendSign.setAttribute("aria-busy", "true");
+  const r = await sendForSignature({ ...d, id: state.inv.id, number: state.inv.number, createdAt: state.inv.createdAt });
+  el.sendSign.removeAttribute("aria-busy");
+  if (r.error) { alertSheet({ title: "Can't send yet", message: r.error }); return; }
+  state.inv.remote = r.remote;
+  renderSignState();
+  if (r.how === "copied") toast("Link copied. Paste it into WhatsApp, Instagram, email or a text.");
+  else if (r.how === "shown") alertSheet({ title: "Send this link to your buyer", message: r.link });
+  else toast("Sent for signature. You'll see here when it's signed.");
+}
+
+function renderSignState() {
+  const signed = Boolean(state.inv.signature);
+  el.signCard.classList.toggle("is-signed", signed);
+  el.signedBadge.hidden = !signed;
+  el.signClear.hidden = !signed;
+  el.signDone.hidden = !signed || Boolean(thanks?.busy); // Done comes once the thank-you has settled
+  el.finish.hidden = !signed || state.paymentSet;
+  el.signStatus.textContent = signed ? `Signed ✓${state.inv.signedAt ? " " + timeText(new Date(state.inv.signedAt)) : ""}` : "Not signed yet";
+  el.signTip.textContent = signed ? "Signed. Changing the invoice will ask first." : "Ask the customer to sign here with a finger.";
+  if (isRemoteSigned(state.inv)) {
+    el.signClear.hidden = true;
+    el.signStatus.textContent = `Signed by ${state.inv.signerName} ✓`;
+    el.signTip.textContent = "Signed through the link. Locked.";
+  } else if (isWaiting(state.inv)) {
+    el.signTip.textContent = "Sent for signature: the buyer signs on their own phone.";
+    el.signStatus.textContent = "Waiting for the buyer";
+  }
+  renderRemote();
+}
+
+/** On a signed invoice, any change first asks; yes clears the signature. */
+async function allowChange() {
+  if (isRemoteSigned(state.inv)) {
+    await alertSheet({ title: "This invoice is signed", message: `Signed by ${state.inv.signerName} on ${signedOnText(state.inv.signedAt)}. A signed invoice can't be changed. Start a new invoice instead.` });
+    return false;
+  }
+  if (isWaiting(state.inv)) {
+    const ok = await confirmSheet({ title: "Sent for signature", message: "The buyer has a link to this invoice. To change it, the link is cancelled first, and you send them a new one afterwards.", okText: "Cancel link and edit", cancelText: "Keep it" });
+    if (!ok) return false;
+    const r = await cancelLink({ ...draft(), id: state.inv.id });
+    if (r.error) { await alertSheet({ title: "Couldn't cancel the link", message: r.error }); const fresh = await invoices.get(state.inv.id); if (fresh) await loadInvoice(fresh); return false; }
+    state.inv.remote = null;
+    renderSignState();
+    toast("Link cancelled. You can change the invoice now.");
+    return true;
+  }
+  if (!state.inv.signature) return true;
+  const ok = await confirmSheet({
+    title: "Remove the signature?",
+    message: "Changing the invoice removes the customer's signature. They'll need to sign again.",
+    okText: "Change invoice",
+    cancelText: "Keep it",
+  });
+  if (ok) clearSignature();
+  return ok;
+}
+
+// ── Events ───────────────────────────────────────────────────────────────
+
+function wireEvents() {
+  // Signed-invoice guard for typing: ask before the first keystroke can land.
+  el.main.addEventListener("focusin", (e) => {
+    const t = e.target;
+    if (!needsAsk() || !t.matches("input, textarea, select") || t === el.addName) return; // adding is guarded on submit
+    if (t.closest(".sign-card")) return;
+    t.blur();
+    allowChange().then((ok) => { if (ok) t.focus(); });
+  });
+
+  // Ticks and steppers (guarded on a signed invoice).
+  el.list.addEventListener("click", (e) => {
+    const stepBtn = e.target.closest(".qty-btn");
+    const check = e.target.closest(".prod-check");
+    if (!stepBtn && !check) return;
+    const pid = e.target.closest(".prod-row")?.dataset.id;
+    if (!pid) return;
+    if (needsAsk()) {
+      // Stop the tick (or the label forwarding its click) until they confirm.
+      e.preventDefault();
+      allowChange().then((ok) => {
+        if (!ok) return;
+        if (stepBtn) step(pid, Number(stepBtn.dataset.step));
+        else setOn(pid, !state.lines.get(pid)?.on);
+      });
+      return;
+    }
+    if (stepBtn) step(pid, Number(stepBtn.dataset.step));
+  });
+  el.list.addEventListener("change", (e) => {
+    if (e.target.matches(".unit-select")) {
+      const pid = e.target.closest(".prod-row").dataset.id;
+      const r = rows.get(pid), l = lineFor(pid);
+      l.unit = normalizeUnit(e.target.value); // the price box is now per this unit
+      updateRow(pid);
+      changed();
+      return;
+    }
+    if (!e.target.matches(".prod-cb")) return;
+    setOn(e.target.closest(".prod-row").dataset.id, e.target.checked);
+  });
+  el.list.addEventListener("input", (e) => {
+    const t = e.target;
+    const pid = t.closest(".prod-row")?.dataset.id;
+    if (!pid) return;
+    const l = lineFor(pid);
+    if (t.matches(".qty-input")) l.qty = t.value;
+    else if (t.matches(".price-input")) l.price = t.value;
+    else return;
+    updateRow(pid);
+    changed();
+  });
+  el.list.addEventListener("focusout", (e) => {
+    const t = e.target;
+    const pid = t.closest(".prod-row")?.dataset.id;
+    const l = pid && state.lines.get(pid);
+    if (!l) return;
+    if (t.matches(".price-input")) {
+      const v = parseAmount(t.value);
+      t.value = l.price = v === null ? (t.value.trim() ? t.value : "") : priceInputText(v);
+    } else if (t.matches(".qty-input") && parseAmount(t.value) === null) {
+      t.value = l.qty = "1";
+      updateRow(pid);
+      changed();
+    }
+  });
+
+  // Customer fields.
+  el.store.addEventListener("input", () => {
+    const known = state.stores.find((s) => storeKey(s.name) === storeKey(el.store.value));
+    if (known?.address && !el.address.value.trim()) {
+      el.address.value = known.address;
+      toast("Address filled in from last time");
+    }
+    changed();
+  });
+  el.address.addEventListener("input", changed);
+  el.date.addEventListener("change", () => { if (!el.date.value) el.date.value = todayISO(); changed(); });
+
+  // Add a product (it joins the list for good, ticked on this invoice).
+  el.addForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = el.addName.value.trim();
+    if (!name) { el.addName.focus(); return; }
+    if (!(await allowChange())) return;
+    try {
+      const p = await products.add(name);
+      state.products = await products.all();
+      state.extra = state.extra.filter((x) => x.name.toLowerCase() !== p.name.toLowerCase());
+      renderList();
+      el.addName.value = "";
+      setOn(p.id, true);
+      toast(`${p.name} added to your products`);
+      rows.get(p.id)?.price.focus();
+    } catch (err) {
+      toast(err?.message || "Couldn't add that product.");
+    }
+  });
+
+  // Signature. Done: the customer's thank-you, then back to the invoice and its QR code.
+  el.signClear.addEventListener("click", clearSignature);
+  el.sendSign.addEventListener("click", onSendForSignature);
+  // A buyer signed through a link (or opened it): show it straight away if that invoice is on screen.
+  document.addEventListener("remote:signed", async (e) => {
+    const inv = e.detail.inv;
+    toast(`${inv.signerName} signed invoice No. ${invoiceNo(inv.number)}`, { ms: 4200 });
+    if (inv.id === state.inv.id) { await loadInvoice(inv); }
+  });
+  document.addEventListener("remote:changed", async (e) => {
+    if (!e.detail.ids.includes(state.inv.id)) return;
+    const fresh = await invoices.get(state.inv.id);
+    if (fresh && !isRemoteSigned(fresh)) { state.inv.remote = fresh.remote || null; renderSignState(); }
+  });
+  el.signDone.addEventListener("click", onDone);
+  el.finish.addEventListener("click", () => finishInvoice());
+
+  // Voice entry: one tap starts listening, the next tap stops.
+  el.mic.addEventListener("click", onMic);
+
+  // QR mode.
+  el.qrToggle.addEventListener("click", () => {
+    state.qrMode = state.qrMode === "text" ? "link" : "text";
+    settings.set("qrMode", state.qrMode);
+    renderQr();
+  });
+
+  // Print and share — called straight from the tap so Bluetooth/share keep the user's gesture.
+  el.print.addEventListener("click", (e) => output(e.currentTarget, printInvoice));
+  el.sharePdf.addEventListener("click", (e) => output(e.currentTarget, shareInvoicePdf));
+  el.receiptSize.addEventListener("click", (e) => output(e.currentTarget, chooseReceiptSize));
+
+  // A signed invoice with no payment recorded goes through the payment page first (it can be skipped).
+  el.newBtn.addEventListener("click", () => {
+    if (state.inv.signature && !state.paymentSet) finishInvoice({ fromNew: true });
+    else startNewInvoice();
+  });
+
+  // Never lose typing when the app is closed or switched away from.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "hidden") return;
+    flushSave();
+    if (voice.listener?.active) finishListening(); // phone locked or app switched: keep what was heard
+  });
+  window.addEventListener("pagehide", () => { flushSave(); });
+}
+
+async function startNewInvoice(message = "") {
+  await flushSave();
+  await newDraft();
+  refreshStores();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  toast(message || `New invoice No. ${invoiceNo(state.nextNumber)}`);
+}
+
+// ── Done, thank you, payment ─────────────────────────────────────────────
+
+/** The customer has signed and taps Done: a gentle buzz and the thank-you, then the invoice with its QR code. */
+async function onDone() {
+  if (!state.inv.signature || el.signDone.getAttribute("aria-busy") === "true") return;
+  buzz(); // straight from the tap: phones only buzz for a tap
+  el.signDone.setAttribute("aria-busy", "true");
+  const d = draft();
+  flushSave();
+  try {
+    await showThanks({ store: d.store, number: d.number, total: d.total });
+  } finally {
+    el.signDone.removeAttribute("aria-busy");
+  }
+  el.qrCard.scrollIntoView({ block: "center", behavior: "smooth" });
+  el.qrCard.classList.remove("is-ready");
+  void el.qrCard.offsetWidth; // restart the highlight
+  el.qrCard.classList.add("is-ready");
+  setTimeout(() => el.qrCard.classList.remove("is-ready"), 1600);
+}
+
+/**
+ * The private payment page (owner or sales rep only), once the customer has their receipt:
+ * Cash → Paid; 7 or 14 days → Unpaid with its own due date. Then a new invoice starts.
+ * fromNew: opened by "New invoice"; skipping it still starts the new invoice.
+ */
+async function finishInvoice({ fromNew = false } = {}) {
+  await flushSave();
+  const saved = state.inv.id ? await invoices.get(state.inv.id) : null;
+  if (!saved) { if (fromNew) await startNewInvoice(); return; }
+  if (saved.payment) { state.paymentSet = true; renderSignState(); if (fromNew) await startNewInvoice(); return; }
+  const payment = await paymentPage(withTotals(saved), { skipText: fromNew ? "Skip for now" : "Not now" });
+  if (!payment) { if (fromNew) await startNewInvoice(); return; }
+  try {
+    await invoices.setPayment(saved.id, payment);
+  } catch (e) {
+    toast(e?.message || "Couldn't save that. Please try again.");
+    return;
+  }
+  state.paymentSet = true;
+  await startNewInvoice(`Saved to your dashboard. New invoice No. ${invoiceNo(await invoices.peekNextNumber())}`);
+}
+
+async function output(button, action) {
+  if (button.getAttribute("aria-busy") === "true") return;
+  const d = draft();
+  if (!d.items.length) { toast("Tick at least one product first."); return; }
+  const missing = itemsMissingPrice(d);
+  if (missing.length) {
+    const ok = await confirmSheet({
+      title: `${missing.length} ${missing.length === 1 ? "item has" : "items have"} no price`,
+      message: "They'll show as “(no price)” and $0.00 on the receipt.",
+      okText: "Continue anyway",
+      cancelText: "Add prices",
+    });
+    if (!ok) { rows.get(missing[0].productId)?.price.focus(); return; }
+  }
+  const run = action(d); // first thing after the tap: Bluetooth and share need the tap's permission
+  track(button === el.print ? "print" : button === el.sharePdf ? "pdf" : "picture");
+  button.setAttribute("aria-busy", "true");
+  flushSave();
+  try { await run; } finally { button.removeAttribute("aria-busy"); }
+}
+
+// ── Voice entry: tap the mic, say the whole invoice, tap again, check, done ─
+
+const voice = { listener: null, busy: false };
+
+function showListening(on) {
+  el.mic.classList.toggle("is-listening", on);
+  el.mic.setAttribute("aria-pressed", String(on));
+  el.micLabel.textContent = on ? "Stop listening" : "Speak the invoice";
+}
+
+function onMic() {
+  if (voice.listener?.active) { finishListening(); return; }
+  if (voice.busy) return;
+  if (!state.products.length) { toast(isRep ? "Add your products first (below), then speak the invoice." : "Add your products first (below, or owner dashboard → Settings), then speak the invoice.", { ms: 4200 }); return; }
+  if (!canListen()) { typedInvoice("unsupported", ""); return; }
+  startListening();
+}
+
+function startListening() {
+  const listener = new Listener({
+    onText: (text) => { el.voiceText.textContent = text || "…"; el.voiceText.classList.toggle("is-hint", !text); },
+    onFail: (code, text) => { if (voice.listener === listener) voice.listener = null; showListening(false); el.voicePanel.hidden = true; typedInvoice(code, text); },
+  });
+  voice.listener = listener;
+  el.voiceState.textContent = "Listening…";
+  el.voiceMode.textContent = "";
+  el.voiceText.textContent = "Say the store, the address, then each product with its amount and price.";
+  el.voiceText.classList.add("is-hint");
+  el.voiceTip.textContent = "Tap the mic again when you're done.";
+  el.voicePanel.hidden = false;
+  el.voicePanel.classList.remove("is-working");
+  showListening(true);
+  listener.start().then(({ mode, downloading }) => {
+    if (mode === "on-device") el.voiceMode.textContent = "On this phone · works offline";
+    else if (downloading) el.voiceMode.textContent = "Offline speech is downloading for next time";
+  }).catch((e) => {
+    if (voice.listener === listener) voice.listener = null;
+    showListening(false);
+    el.voicePanel.hidden = true;
+    typedInvoice(e?.code || "error", "");
+  });
+}
+
+async function finishListening() {
+  const listener = voice.listener;
+  voice.listener = null;
+  voice.busy = true;
+  showListening(false);
+  el.voiceState.textContent = "Working it out…";
+  el.voiceTip.textContent = "";
+  el.voicePanel.classList.add("is-working");
+  try {
+    const { text, candidates, segments } = await listener.stop();
+    el.voicePanel.hidden = true;
+    if (!text) { toast("I didn't hear anything. Tap the mic and try again."); return; }
+    await reviewAndApply(candidates, segments, text);
+  } finally {
+    voice.busy = false;
+    el.voicePanel.hidden = true;
+  }
+}
+
+/** The fallback when listening isn't possible: the keyboard's microphone (or typing). */
+async function typedInvoice(reason, text) {
+  voice.busy = true;
+  try {
+    const said = await dictate({ reason, text });
+    if (said) await reviewAndApply([said], null, said);
+  } finally {
+    voice.busy = false;
+  }
+}
+
+/**
+ * Lines said without a price get the product's usual price (a price said out loud always wins, for this invoice).
+ * A product priced by the dozen keeps its dozens ("2 dozen" stays 2 dozen at the dozen price).
+ */
+function applyListPrices(parsed) {
+  for (const line of parsed.lines) {
+    const p = line.productId && state.products.find((x) => x.id === line.productId);
+    if (fillUsualPrice(line, p) && line.issue?.kind === "noPrice") line.issue = null;
+  }
+}
+
+/** The phone's guesses → the reading that matches the most products → review → invoice. Nothing said is dropped. */
+async function reviewAndApply(candidates, segments = null, rawText = "") {
+  const ctx = { products: state.products, stores: state.stores, today: todayISO() };
+  const parsed = segments?.length ? bestParseSegments(segments, ctx) : bestParse(candidates, ctx);
+  applyListPrices(parsed);
+  parsed.raw = rawText || parsed.transcript; // shown on the review screen exactly as the phone heard it
+  parsed.guesses = segments || [];
+  const result = await reviewSpokenInvoice(parsed, {
+    products: state.products,
+    currentDate: el.date.value || todayISO(),
+    onSpeakAgain: () => { voice.busy = false; if (canListen()) startListening(); else typedInvoice("unsupported", ""); },
+  });
+  if (result) await applyVoice(result);
+}
+
+/** Puts the reviewed lines on the invoice: ticks the products and fills amount, unit and price. */
+async function applyVoice(result) {
+  if (!(await allowChange())) return;
+  const had = currentItems().length;
+  let mode = "replace";
+  if (had) {
+    mode = await choiceSheet({
+      title: "This invoice already has products",
+      message: `Replace the ${had} product${had === 1 ? "" : "s"} on it with what you said, or add to them?`,
+      choices: [{ label: "Cancel", value: null }, { label: "Add to them", value: "add" }, { label: "Replace", value: "replace", primary: true }],
+    });
+    if (!mode) return;
+  }
+  if (result.date) el.date.value = result.date;
+  // The address is only ever what was said (or picked) on the review screen; it's optional, so it may stay blank.
+  // A different store than the one on the invoice takes its own address (or none), never the old store's.
+  const otherStore = result.store && storeKey(result.store) !== storeKey(el.store.value);
+  if (result.store) el.store.value = result.store;
+  if (result.address || otherStore) el.address.value = result.address || "";
+  if (mode === "replace") for (const l of state.lines.values()) l.on = false;
+  for (const line of result.lines) {
+    const p = state.products.find((x) => x.id === line.productId);
+    if (!p) continue;
+    const l = lineFor(p.id);
+    const sameUnit = normalizeUnit(l.unit || defaultUnitFor(p)) === line.unit;
+    l.qty = qtyText(mode === "add" && l.on && sameUnit ? (parseAmount(l.qty) || 0) + line.qty : line.qty);
+    l.on = true;
+    l.unit = line.unit;
+    l.name = p.name;
+    if (line.price !== null) l.price = priceInputText(line.price); // this invoice only — never changes the product's price
+    else if (!(mode === "add" && sameUnit)) l.price = "";
+  }
+  track("voice");
+  renderList();
+  changed();
+  el.list.closest(".block").scrollIntoView({ behavior: "smooth", block: "start" });
+  toast("Filled in from your voice. Check it, then ask the customer to sign.", { ms: 4200 });
+}
+
+// ── Stores ───────────────────────────────────────────────────────────────
+
+async function refreshStores() {
+  state.stores = await invoices.knownStores();
+  el.storeList.replaceChildren(...state.stores.map((s) => h("option", { value: s.name })));
+}
+
+// ── Dashboard hooks and routing ──────────────────────────────────────────
+
+const hooks = {
+  /** The business edited its details in Settings. */
+  async onBusinessChanged() {
+    setBusiness(await profile.get());
+    renderCompany();
+    scheduleQr();
+  },
+  async openInvoice(id) {
+    const inv = await invoices.get(id);
+    if (!inv) { toast("That invoice no longer exists."); return; }
+    await flushSave();
+    await loadInvoice(inv);
+    await settings.set("currentId", inv.id);
+    go("#/");
+  },
+  async duplicateInvoice(id) {
+    const inv = await invoices.get(id);
+    if (!inv) { toast("That invoice no longer exists."); return; }
+    await flushSave();
+    await newDraft({ ...inv, items: inv.items.map((it) => ({ ...it })) });
+    go("#/");
+    toast(`Copied into new invoice No. ${invoiceNo(state.nextNumber)}`);
+  },
+  async newInvoice() {
+    await flushSave();
+    await newDraft();
+    go("#/");
+  },
+  async onProductsChanged() {
+    state.products = await products.all();
+    // Ticked products that were removed from the list stay on this invoice (shown at the end).
+    for (const [pid, l] of state.lines) {
+      if (l.on && !state.products.some((p) => p.id === pid) && !state.extra.some((x) => x.id === pid)) state.extra.push({ id: pid, name: l.name });
+    }
+    state.extra = state.extra.filter((x) => !state.products.some((p) => p.id === x.id));
+    renderList();
+    renderTotals();
+    scheduleQr();
+  },
+  close() { go("#/"); },
+};
+
+function go(hash) {
+  if (location.hash === hash || (hash === "#/" && !location.hash)) route();
+  else location.hash = hash;
+}
+
+async function route() {
+  if (isRep && location.hash === "#/owner") { history.replaceState(null, "", "#/"); } // typing the address doesn't open it either
+  const owner = !isRep && location.hash === "#/owner";
+  if (owner && voice.listener) { voice.listener.abort(); voice.listener = null; showListening(false); el.voicePanel.hidden = true; }
+  el.main.hidden = owner;
+  el.brandBar.hidden = owner;
+  if (owner) {
+    await flushSave();
+    showDashboard();
+    return;
+  }
+  hideDashboard();
+  // The open invoice may have been deleted from the dashboard, or its payment recorded there.
+  const open = state.inv.id ? await invoices.get(state.inv.id) : null;
+  if (state.inv.id && !open) {
+    await newDraft();
+    refreshStores();
+  } else {
+    state.paymentSet = Boolean(open?.payment);
+    state.paidCredit = open?.payment?.status === "paid";
+    if (open) state.inv.credit = open.credit || null;
+    renderSignState();
+    state.nextNumber = await invoices.peekNextNumber();
+    renderNumber();
+  }
+}
+
+// ── Sticky total bar (shown while the real total row is off screen) ──────
+
+function watchTotalRow() {
+  if (!("IntersectionObserver" in window)) return;
+  new IntersectionObserver(([entry]) => {
+    el.bar.classList.toggle("is-near", entry.isIntersecting || entry.boundingClientRect.top < 0);
+  }).observe(el.grandTotal);
+  el.bar.addEventListener("click", () => el.grandTotal.scrollIntoView({ behavior: "smooth", block: "center" }));
+}
+
+// ── Install prompts ──────────────────────────────────────────────────────
+
+function setupInstall() {
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  let dismissed = false;
+  try { dismissed = localStorage.getItem("installDismissed") === "1"; } catch { /* private mode */ }
+  if (standalone || dismissed) return;
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (isIOS) { el.installIos.hidden = false; el.install.hidden = false; }
+  let deferred = null;
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferred = e;
+    el.installAndroid.hidden = false;
+    el.installBtn.hidden = false;
+    el.install.hidden = false;
+  });
+  el.installBtn.addEventListener("click", async () => {
+    if (!deferred) return;
+    deferred.prompt();
+    try { await deferred.userChoice; } catch { /* ignore */ }
+    deferred = null;
+    el.install.hidden = true;
+  });
+  el.installDismiss.addEventListener("click", () => {
+    el.install.hidden = true;
+    try { localStorage.setItem("installDismissed", "1"); } catch { /* private mode */ }
+  });
+  window.addEventListener("appinstalled", () => { el.install.hidden = true; });
+}
+
+// ── Offline + updates ────────────────────────────────────────────────────
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  const hadController = Boolean(navigator.serviceWorker.controller); // false on the very first visit
+  let reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloading) return; // first install: this page already is the newest version
+    if (document.getElementById("splash")) {
+      // Still on the splash, so nothing is being typed: swap in the new version unseen (without a second splash).
+      reloading = true;
+      try { sessionStorage.setItem("skipSplashOnce", "1"); } catch { /* private mode */ }
+      location.reload();
+      return;
+    }
+    // Mid-work: offer it. The next launch uses the new version anyway.
+    el.update.hidden = false;
+    el.updateBtn.onclick = () => {
+      reloading = true;
+      el.updateBtn.disabled = true;
+      flushSave().finally(() => location.reload());
+    };
+  });
+  navigator.serviceWorker.register("/sw.js").then((reg) => {
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(() => {}); });
+  }).catch((e) => console.warn("Offline mode isn't available:", e));
+}
+
+start();

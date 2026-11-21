@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security and privacy · Draxly</title>
+  <meta name="description" content="How Draxly protects your sales data: separate storage per company, AES-256-GCM encryption at rest, single sign-on, two-factor sign-in, roles and a full activity log.">
+  <link rel="canonical" href="__SITE_URL__/security">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Draxly">
+  <meta property="og:title" content="Security and privacy · Draxly">
+  <meta property="og:description" content="How Draxly protects your sales data: separate storage per company, AES-256-GCM encryption at rest, single sign-on, two-factor sign-in, roles and a full activity log.">
+  <meta property="og:url" content="__SITE_URL__/security">
+  <meta name="theme-color" content="#0b1f3a">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site-chrome.css">
+  <link rel="stylesheet" href="/site.css">
+  <script src="/site.js" defer></script>
+</head>
+<body class="site page-security">
+<a class="skip" href="#main">Skip to content</a>
+<header class="sitenav" data-site-header>
+  <div class="nav-in">
+    <a class="logo" href="/" aria-label="Draxly home"><img src="/icon.svg" alt="" width="30" height="30"><span>Draxly</span></a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu"><span class="sr">Menu</span><span class="bars" aria-hidden="true"></span></button>
+    <nav class="nav-menu" id="nav-menu" aria-label="Main">
+      <a href="/how-it-works" data-nav="how-it-works">How it works</a>
+      <a href="/integrations" data-nav="integrations">Integrations</a>
+      <a href="/security" data-nav="security">Security</a>
+      <a href="/pricing" data-nav="pricing">Pricing</a>
+      <a href="/faq" data-nav="faq">FAQ</a>
+      <a href="/about" data-nav="about">About</a>
+      <a href="/contact" data-nav="contact">Contact</a>
+      <span class="nav-cta">
+        <a class="btn btn-ghost" href="/app">Sign in</a>
+        <a class="btn btn-primary" href="/free-demo">Free demo</a>
+      </span>
+    </nav>
+  </div>
+</header>
+<main id="main">
+<section class="page-head">
+  <div class="wrap">
+    <span class="eyebrow">Security and privacy</span>
+    <h1>Your sales data, kept apart and encrypted</h1>
+    <p class="lead">An overview for IT and security teams. It describes what the service does today; there are no promises here about features that don't exist yet.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap doc-grid">
+    <nav class="toc" aria-label="On this page">
+      <b>On this page</b>
+      <a href="#hosting">Where it runs</a>
+      <a href="#isolation">Data kept apart</a>
+      <a href="#encryption">Encryption</a>
+      <a href="#signin">Signing in</a>
+      <a href="#roles">Roles</a>
+      <a href="#log">Activity log</a>
+      <a href="#api">API and connections</a>
+      <a href="#vendors">Services we use</a>
+      <a href="#demo">The open demo</a>
+      <a href="#privacy">Privacy and deletion</a>
+      <a href="#certs">Certifications</a>
+    </nav>
+    <div class="prose">
+      <h2 id="hosting">Where it runs</h2>
+      <p>Draxly runs on Cloudflare (Workers and Durable Objects). Every connection uses HTTPS, and browsers are told to use HTTPS only (HSTS). The pages use a strict Content Security Policy, and no third-party scripts, trackers or advertising tags are loaded.</p>
+
+      <h2 id="isolation">Each company's data is kept apart</h2>
+      <ul>
+        <li>Each company's sales, forecasts, stock levels, connections and activity log live in that company's own separate storage object, never in a shared table.</li>
+        <li>Every request works out the company from the signed-in session or API key, never from anything the browser or caller names. Asking for another company's records by their ID returns "not found". Automated tests cover this.</li>
+      </ul>
+
+      <h2 id="encryption">Encryption</h2>
+      <ul>
+        <li><b>In transit:</b> HTTPS (TLS) for every request, including the connections Draxly makes to your systems.</li>
+        <li><b>At rest:</b> sales figures, product, store and region names, forecasts, accuracy results, stock levels, connection credentials and two-factor secrets are encrypted by the application with AES-256-GCM before they're stored. The key is held in Cloudflare's secret store, not in the code.</li>
+        <li>Some details are stored without application-level encryption because the service needs to search or show them directly: company names, user names and email addresses, upload names, and activity-log entries.</li>
+        <li>When you upload a spreadsheet, it's read in your browser. Only monthly totals are sent; the file itself never leaves your computer.</li>
+      </ul>
+
+      <h2 id="signin">Signing in</h2>
+      <ul>
+        <li><b>Single sign-on</b> with Microsoft (Entra ID) and Google, using OpenID Connect with PKCE. ID-token signatures, issuer, audience, expiry and a one-time nonce are all checked. For Microsoft, Draxly relies on the tenant-verified sign-in name, not the editable email claim; for Google, only verified emails are accepted. Admins can require single sign-on for everyone and choose which email domains may join automatically (as viewers).</li>
+        <li><b>Two-factor sign-in</b> with any authenticator app (TOTP, RFC 6238), with one-time backup codes. Admins can require two-factor for everyone.</li>
+        <li><b>Passwords</b> are stored only as salted PBKDF2-SHA256 hashes. The work factor is currently 5,000 rounds, set by the hosting plan's processing limit; it moves to 600,000 rounds on the production plan, and existing users are upgraded at their next sign-in.</li>
+        <li><b>Limits on guessing:</b> after 5 wrong passwords, two-factor codes or recovery codes, that account waits 15 minutes. Wrong answers look the same whether or not an account exists. Password reset links and invites are single-use and expire after 24 hours and 7 days respectively, and only their hashes are stored.</li>
+        <li><b>Sessions</b> are random 256-bit tokens that last 30 days. Admins can switch a user off, which ends their sessions immediately, or sign everyone else out at once.</li>
+      </ul>
+
+      <h2 id="roles">Roles</h2>
+      <p>Three roles, enforced on the server for every request. Every company always keeps at least one admin.</p>
+      <ul>
+        <li><b>Viewer:</b> can see forecasts, stock and reports.</li>
+        <li><b>Manager:</b> can also upload data, run forecasts and manage stock levels.</li>
+        <li><b>Admin:</b> can also manage the team, security settings, connections, API keys and the activity log.</li>
+      </ul>
+
+      <h2 id="log">Activity log</h2>
+      <p>Draxly records every sign-in (successful or failed), change to users, roles or security settings, upload, deletion, forecast, connection change, sync, API call that changes data, API key change, and email sent. Each entry shows who, when and from which IP address. Admins can view and download the log.</p>
+
+      <h2 id="api">API and connections</h2>
+      <ul>
+        <li>API keys are shown once and then stored only as SHA-256 hashes. Each key has its own permissions (send sales, send stock, read forecasts), is limited to 120 calls a minute, and can be revoked at any time.</li>
+        <li>Credentials for connected systems (NetSuite, SAP, Dynamics 365, QuickBooks, Shopify, Square) are encrypted at rest and used only to read sales and stock. Ask your administrators to grant read-only access.</li>
+      </ul>
+
+      <h2 id="vendors">Other services we use</h2>
+      <ul>
+        <li><b>Cloudflare:</b> hosting, storage and secrets.</li>
+        <li><b>Resend:</b> sending email (invites, invoices and payment reminders, weekly reports, low-stock alerts), when email is switched on.</li>
+        <li><b>Microsoft and Google:</b> single sign-on, when you use it.</li>
+        <li><b>ntfy.sh:</b> the operator's phone alerts. When someone asks for a password reset link, the alert contains their company name and email. When someone sends the contact form or requests access from the demo, it contains the name, company and email they entered.</li>
+        <li><b>The systems you connect</b>, which Draxly contacts on your behalf.</li>
+      </ul>
+
+      <h2 id="demo">The open demo</h2>
+      <p>The <a href="/demo">demo</a> needs no sign-up and shows no sample data. A visitor's spreadsheet is read in their own browser. Only monthly totals per product are sent to Draxly, in small batches, to be forecast in memory and sent straight back. They're never stored, and nothing about them stays after the page is closed.</p>
+      <p>For each forecast run we record the time, the approximate city and country (from Cloudflare's view of the visitor's network), the type of device, the page that linked to the demo, and the size of the file (number of products and months). We don't record IP addresses, file names, product names or sales figures for demo runs.</p>
+
+      <h2 id="privacy">Privacy and deleting data</h2>
+      <ul>
+        <li>Your data is used only to provide Draxly to you. We don't sell it, share it for advertising, or use it to serve other customers.</li>
+        <li>Admins can delete any upload. When an account is closed, all of that company's stored data is deleted: sales, forecasts, stock, connections, the activity log, users and API keys.</li>
+        <li>See the <a href="/privacy">Privacy Policy</a> and the <a href="/dpa">Data Processing Addendum</a> for the details.</li>
+      </ul>
+
+      <h2 id="certs">Certifications</h2>
+      <p>Draxly doesn't currently hold SOC 2 or ISO 27001 certification. We're happy to complete your security questionnaire: email <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a>.</p>
+    </div>
+  </div>
+</section>
+</main>
+<footer class="foot-site" data-site-footer>
+  <div class="foot-in">
+    <div class="foot-brand">
+      <a class="logo" href="/"><img src="/icon.svg" alt="" width="26" height="26"><span>Draxly</span></a>
+      <p>Know what to stock before you need it.</p>
+      <p>Sales forecasting for US food and drink distributors and wholesalers.</p>
+      <p><a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+    </div>
+    <div class="foot-col">
+      <h2>Product</h2>
+      <a href="/how-it-works">How it works</a>
+      <a href="/integrations">Integrations</a>
+      <a href="/pricing">Pricing and contract</a>
+      <a href="/free-demo">Free test demo</a>
+      <a href="/docs">API guide</a>
+    </div>
+    <div class="foot-col">
+      <h2>Company</h2>
+      <a href="/about">About</a>
+      <a href="/security">Security and privacy</a>
+      <a href="/faq">FAQ</a>
+      <a href="/contact">Contact us</a>
+      <a href="/app">Customer sign-in</a>
+    </div>
+    <div class="foot-col">
+      <h2>Legal</h2>
+      <a href="/terms">Terms of Service</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/dpa">Data Processing Addendum</a>
+      <a href="/legal">All legal documents</a>
+    </div>
+  </div>
+  <div class="foot-base">
+    <p>© 2026 M. D. Williams Enterprise, trading as Draxly. All rights reserved.</p>
+    <p>Contact us: <a href="mailto:draxlyforecast@gmail.com">draxlyforecast@gmail.com</a></p>
+  </div>
+</footer>
+</body>
+</html>

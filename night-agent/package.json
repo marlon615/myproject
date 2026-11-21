@@ -1,0 +1,6 @@
+{
+  "name": "night-agent",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node tests/scout.test.cjs" }
+}
